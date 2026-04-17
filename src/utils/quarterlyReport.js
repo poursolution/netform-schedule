@@ -148,20 +148,29 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
   });
 
   // --- PT 집계 (정산담당자 7명만, 승/무/지원만 — 패 제외) ---
+  // ⚠️ 정산 기준일: 결과 확정일(resultConfirmDate)
+  //  - PT 진행일이 아닌 "승/무/패가 확정된 시점"이 분기 내 들어가야 함
+  //  - 예: 3/28에 진행한 PT라도 결과가 4/2에 확정되면 → 2분기 정산
+  //  - 예: 2/15에 진행한 PT가 3/30에 확정되면 → 1분기 정산
+  //  - resultConfirmDate가 없으면 s.date로 fallback (레거시 데이터)
   const SETTLEMENT_RESULTS = new Set(['승', '무', '지원']);
   const ptVerified = [];        // 정산 대상 (승/무/지원 + 검증통과)
   const ptUnverified = [];      // 관리자 확인 필요
   ptSchedules.forEach(s => {
-    if (!s.date || !inRange(s.date, range)) return;
+    if (!s.date) return;
     if (s.dateType && s.dateType !== 'confirmed') return;
     const assignees = parseAssignees(s.ptAssignee);
     assignees.forEach(a => {
       if (!SETTLEMENT_ASSIGNEES_SET.has(a)) return;
       const result = getPtResult(s, a);
       if (!SETTLEMENT_RESULTS.has(result)) return; // 패·미입력 제외
+      // 정산 기준일: resultConfirmDate (없으면 s.date fallback)
+      const confirmDate = (s.resultConfirmDate && s.resultConfirmDate[a]) || s.date;
+      if (!inRange(confirmDate, range)) return;
       const verified = isPtVerified(s, a);
       const row = {
         date: s.date,
+        confirmDate,
         bidNo: s.bidNo || '',
         siteName: s.siteName || '',
         assignee: a,

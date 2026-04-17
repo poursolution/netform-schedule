@@ -8,6 +8,13 @@ import {
   getQuarterDeadline,
   buildReportHTML,
 } from './utils/quarterlyReport.js';
+import {
+  setJandiConfig,
+  getJandiConfig,
+  notifyCrossCheck,
+  notifySettlementRequest,
+  notifyReportSent,
+} from './utils/jandi.js';
 
     // 시스템 명칭 상수
     const APP_NAME = 'POUR영업운영시스템';
@@ -563,6 +570,11 @@ import {
       const [quarterReportYear, setQuarterReportYear] = useState(new Date().getFullYear());
       const [quarterReportQuarter, setQuarterReportQuarter] = useState(1);
       const [quarterReportBusy, setQuarterReportBusy] = useState(false);
+
+      // 잔디 웹훅 설정
+      const [jandiUrl, setJandiUrl] = useState('');
+      const [jandiEnabled, setJandiEnabled] = useState(true);
+      const [showJandiModal, setShowJandiModal] = useState(false);
 
       // 공법 선택 모달
       const [showMethodSelectionModal, setShowMethodSelectionModal] = useState(false);
@@ -1346,6 +1358,15 @@ import {
         qcRef.on('value', (snapshot) => {
           const data = snapshot.val();
           setQuarterConfirmations(data || {});
+        });
+
+        // 잔디 웹훅 설정 로드
+        const jandiRef = database.ref('config/jandi');
+        jandiRef.on('value', (snapshot) => {
+          const data = snapshot.val() || {};
+          setJandiUrl(data.url || '');
+          setJandiEnabled(data.enabled !== false);
+          setJandiConfig({ url: data.url || '', enabled: data.enabled !== false });
         });
 
         // CRM 영업 데이터 로드
@@ -2465,6 +2486,17 @@ import {
         setShowResultReasonModal(false);
         setResultReasonData({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false });
 
+        // 결과 = 승 → 잔디 크로스체크 알림 (admin이 K-APT 공고 확인)
+        if (result === '승' && targetAssignee) {
+          notifyCrossCheck({
+            assignee: targetAssignee,
+            siteName: updatedSchedule.siteName,
+            bidNo: updatedSchedule.bidNo,
+            ptDate: updatedSchedule.date,
+            by: currentUser?.name,
+          });
+        }
+
         // 승/무 결과 시 정산요청 확인 (패 제외)
         if ((result === '승' || result === '무') && targetAssignee) {
           setTimeout(() => {
@@ -2474,6 +2506,15 @@ import {
                 database.ref(`pt/${scheduleId}`).update(settlementUpdate);
               }
               setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), requested: true } } } : s));
+              // 잔디 정산요청 알림 (admin에게 확인 요청)
+              notifySettlementRequest({
+                assignee: targetAssignee,
+                siteName: updatedSchedule.siteName,
+                bidNo: updatedSchedule.bidNo,
+                result,
+                amount: result === '승' ? 500000 : 250000,
+                by: currentUser?.name,
+              });
             }
           }, 300);
         }
@@ -2711,6 +2752,14 @@ import {
                   database.ref(`pt/${schedule.id}`).update(settlementUpdate);
                 }
                 setPtSchedules(prev => prev.map(s => s.id === schedule.id ? { ...s, settlement: { ...(s.settlement || {}), [assignee]: { ...(s.settlement?.[assignee] || {}), requested: true } } } : s));
+                notifySettlementRequest({
+                  assignee,
+                  siteName: schedule.siteName,
+                  bidNo: schedule.bidNo,
+                  result: '지원',
+                  amount: 250000,
+                  by: currentUser?.name,
+                });
               }
             }, 300);
           }
@@ -5305,11 +5354,18 @@ import {
               >+일정추가</button>
               <button onClick={() => setShowMeetingModal(true)} style={{ background: '#4b5563', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}>+ 회의</button>
               {currentUser?.isAdmin && (
-                <button
-                  onClick={() => setShowQuarterReportModal(true)}
-                  style={{ background: '#7c3aed', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
-                  title="김유림에게 분기 종합 보고서 발송 (주말출근 + PT + 일정)"
-                >📊 분기보고서</button>
+                <>
+                  <button
+                    onClick={() => setShowQuarterReportModal(true)}
+                    style={{ background: '#7c3aed', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
+                    title="김유림에게 분기 종합 보고서 발송 (PT 정산 + 주말출근)"
+                  >📊 분기보고서</button>
+                  <button
+                    onClick={() => setShowJandiModal(true)}
+                    style={{ background: jandiUrl ? (jandiEnabled ? '#fbbf24' : '#94a3b8') : '#dc2626', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
+                    title="잔디 웹훅 설정 (정산요청·크로스체크·보고서 발송 알림)"
+                  >🔔 잔디 {jandiUrl ? (jandiEnabled ? 'ON' : 'OFF') : '미설정'}</button>
+                </>
               )}
             </div>
           </div>
@@ -13893,6 +13949,70 @@ import {
             </div>
           )}
 
+          {/* 잔디 웹훅 설정 모달 */}
+          {showJandiModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 16 }}>
+              <div style={{ background: 'white', borderRadius: 12, maxWidth: 560, width: '100%', padding: 24 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#1e293b' }}>🔔 잔디 웹훅 설정</h2>
+                  <button onClick={() => setShowJandiModal(false)} style={{ background: 'transparent', border: 'none', fontSize: 24, cursor: 'pointer', color: '#64748b' }}>×</button>
+                </div>
+                <div style={{ fontSize: 13, color: '#475569', marginBottom: 16, lineHeight: 1.6 }}>
+                  잔디 채널의 <strong>Incoming Webhook URL</strong>을 등록하면, 다음 이벤트 발생 시 채널에 자동 알림이 발송됩니다:
+                  <ul style={{ margin: '8px 0 0 16px', padding: 0, fontSize: 12, color: '#64748b' }}>
+                    <li>PT 결과 "승" 입력 시 → 크로스체크 요청</li>
+                    <li>담당자 정산요청 시 → admin 확인 요청</li>
+                    <li>김유림 분기 보고서 발송 완료 시</li>
+                  </ul>
+                </div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#475569', display: 'block', marginBottom: 6 }}>웹훅 URL</label>
+                <input
+                  type="text"
+                  value={jandiUrl}
+                  onChange={e => setJandiUrl(e.target.value)}
+                  placeholder="https://wh.jandi.com/connect-api/webhook/..."
+                  style={{ width: '100%', padding: 10, border: '1px solid #cbd5e1', borderRadius: 6, fontSize: 13, fontFamily: 'monospace', boxSizing: 'border-box' }}
+                />
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, fontSize: 13, color: '#475569', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={jandiEnabled} onChange={e => setJandiEnabled(e.target.checked)} style={{ width: 16, height: 16 }} />
+                  알림 활성화 (off로 두면 등록된 URL 무시)
+                </label>
+                <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+                  <button
+                    onClick={() => {
+                      const trimmed = jandiUrl.trim();
+                      if (firebaseEnabled && database) {
+                        database.ref('config/jandi').set({ url: trimmed, enabled: jandiEnabled });
+                      }
+                      setJandiConfig({ url: trimmed, enabled: jandiEnabled });
+                      alert('잔디 웹훅 설정이 저장되었습니다.');
+                      setShowJandiModal(false);
+                    }}
+                    style={{ flex: 1, padding: 12, background: '#16a34a', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}
+                  >저장</button>
+                  <button
+                    onClick={async () => {
+                      const trimmed = jandiUrl.trim();
+                      if (!trimmed) { alert('URL을 먼저 입력해주세요.'); return; }
+                      setJandiConfig({ url: trimmed, enabled: true });
+                      const { sendJandiNotification } = await import('./utils/jandi.js');
+                      await sendJandiNotification({
+                        body: '🔔 [POUR영업운영시스템] 잔디 웹훅 테스트',
+                        connectColor: '#2563eb',
+                        connectInfo: [{ title: '연결 성공', description: `테스트 발송: ${new Date().toLocaleString('ko-KR')}\n발송자: ${currentUser?.name || '-'}` }],
+                      });
+                      alert('테스트 메시지를 발송했습니다. 잔디 채널을 확인해주세요.\n(no-cors 모드라 실제 도착 여부는 채널에서만 확인 가능)');
+                    }}
+                    style={{ flex: 1, padding: 12, background: '#2563eb', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}
+                  >🧪 테스트 발송</button>
+                </div>
+                <div style={{ marginTop: 12, padding: 10, background: '#f8fafc', borderRadius: 6, fontSize: 11, color: '#64748b', lineHeight: 1.6 }}>
+                  💡 잔디 채널 → 우측 상단 톱니바퀴 → 잔디 커넥트 → Incoming Webhook → 추가
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* 분기 종합 보고서 모달 (admin 확인 → 김유림 발송) */}
           {showQuarterReportModal && (() => {
             const allData = {
@@ -13950,6 +14070,12 @@ import {
                 setTimeout(() => {
                   window.location.href = buildMailtoLink(report, 'yurim@netformrnd.com');
                 }, 500);
+                // 잔디 알림 (발송 완료)
+                notifyReportSent({
+                  year: quarterReportYear,
+                  quarter: quarterReportQuarter,
+                  summary: `정산금액 ${report.totals.settlementAmount.toLocaleString()}원 · PT ${report.totals.ptCount}건 · 주말환산 ${report.totals.weekendWeighted.toFixed(1)}일`,
+                });
               } catch (e) {
                 alert('처리 실패: ' + e.message);
               } finally {
