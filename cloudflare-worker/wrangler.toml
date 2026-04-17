@@ -2,6 +2,7 @@
 name = "kapt-verify-worker"
 main = "src/index.js"
 compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 # 환경 변수 (실제 값은 wrangler secret put 으로 등록)
@@ -15,6 +16,10 @@ OUR_COMPANY_NAMES = "넷폼,(주)넷폼,넷폼R&D,(주)넷폼R&D,POUR솔루션,(
 # Cron trigger: 매일 02:00 KST (= 17:00 UTC) K-APT 신규 공고 수집
 [triggers]
 crons = ["0 17 * * *"]
+
+# Browser Rendering (Paid plan 필수 — K-APT PDF 다운로드용)
+[browser]
+binding = "BROWSER"
 
 # CORS 허용 도메인
 [env.production]

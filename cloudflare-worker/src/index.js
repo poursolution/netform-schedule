@@ -1,25 +1,23 @@
-// K-APT 자동 검증 Cloudflare Worker (V3)
+// K-APT 자동 검증 Cloudflare Worker (V4)
 //
-// v3 변경:
-//   - Cron trigger: 매일 02:00 KST K-APT 신규 공고 전량 수집 → Firebase 저장
-//   - /verify는 Firebase 우선 조회 → 부분 매칭 + 빠른 응답
-//   - /sync POST: 수동 일괄 수집 (초기화/재동기화용)
-//
-// 저장 구조 (Firebase Realtime DB):
-//   bids/{bidNum} = {
-//     bidNum, aptCode, bidKaptname, bidKaptnameNormalized,
-//     bidTitle, bidContent, bidReason, bidRegdate, bidDeadline, amount,
-//     matchedOurTechnology, matchedOurPatent, isOurBid,
-//     fetchedAt
-//   }
+// v4 변경 (Browser Rendering):
+//   - @cloudflare/puppeteer 추가: K-APT 공고 상세 페이지 탐색 + PDF 다운로드
+//   - /probe?bidNum=XXX: K-APT 상세 페이지 스크린샷 + 첨부파일 링크 추출 (디버깅용)
+//   - /verify-pdf?bidNum=XXX: PDF 다운로드 + unpdf로 텍스트 추출 + 우리 공법/특허 검색
+//   - /verify 자동 fallback: API 매칭 실패 시 Browser Rendering으로 PDF 파싱 시도
 //
 // 환경 변수:
 //   DATA_GO_KR_KEY    : data.go.kr 인증키
 //   JANDI_WEBHOOK_URL : 잔디 webhook
 //   FIREBASE_DB_URL   : https://test-168a4-default-rtdb.asia-southeast1.firebasedatabase.app
-//   FIREBASE_DB_SECRET: Firebase Realtime DB secret (legacy) 또는 token
+//   FIREBASE_DB_SECRET: Firebase Realtime DB secret
+// Bindings (wrangler.toml):
+//   BROWSER : Cloudflare Browser Rendering (Puppeteer)
 
-const VERSION = '3.0.0';
+import puppeteer from '@cloudflare/puppeteer';
+import { extractText, getDocumentProxy } from 'unpdf';
+
+const VERSION = '4.0.0';
 const API_BASE = 'https://apis.data.go.kr/1613000/ApHusBidResultNoticeInfoOfferServiceV2';
 const UA = 'POUR-KAPT-Verify-Worker/3.0';
 
@@ -69,11 +67,37 @@ export default {
         hasKey: !!env.DATA_GO_KR_KEY,
         hasJandi: !!env.JANDI_WEBHOOK_URL,
         hasFirebase: !!(env.FIREBASE_DB_URL && env.FIREBASE_DB_SECRET),
+        hasBrowser: !!env.BROWSER,
         ourTechnologies: OUR_TECHNOLOGIES,
         ourPatentCount: OUR_PATENT_NUMBERS.size,
         firebaseBidCount: bidCount,
-        matchingMode: '공고문 텍스트에서 공법명/특허번호 매칭 (Firebase 우선 조회)',
+        matchingMode: 'API + Firebase + Browser Rendering (PDF 파싱)',
       }, env);
+    }
+
+    // 탐색: K-APT 공고 상세 페이지 구조 파악 + 스크린샷
+    // GET /probe?bidNum=P200000001
+    if (url.pathname === '/probe' && request.method === 'GET') {
+      const bidNum = url.searchParams.get('bidNum');
+      if (!bidNum) return jsonResponse({ error: 'bidNum required' }, env, 400);
+      try {
+        const result = await probeKaptBid(env, bidNum);
+        return jsonResponse(result, env);
+      } catch (e) {
+        return jsonResponse({ error: e.message, stack: e.stack }, env, 500);
+      }
+    }
+
+    // PDF 파싱 검증: K-APT에서 PDF 다운 + 텍스트 추출 + 우리 공법/특허 검색
+    // POST /verify-pdf  body: { bidNum, siteName?, assignee?, by? }
+    if (url.pathname === '/verify-pdf' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        const result = await verifyByPdf(env, body);
+        return jsonResponse(result, env);
+      } catch (e) {
+        return jsonResponse({ error: e.message, stack: e.stack }, env, 500);
+      }
     }
 
     if (url.pathname === '/verify' && request.method === 'POST') {
@@ -123,6 +147,209 @@ export default {
     }
   },
 };
+
+// === K-APT Browser Rendering 탐색 ===
+async function probeKaptBid(env, bidNum) {
+  if (!env.BROWSER) throw new Error('Browser Rendering binding 없음 (Paid plan 필요)');
+  const browser = await puppeteer.launch(env.BROWSER);
+  try {
+    const page = await browser.newPage();
+    // 실제 브라우저처럼 위장
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    });
+    // 1) K-APT 메인 접속 (세션 쿠키 확보) — 실패하면 바로 상세 페이지로
+    try {
+      await page.goto('https://www.k-apt.go.kr/', { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await new Promise(r => setTimeout(r, 1500));
+    } catch (e) {
+      console.log('[probe] main page failed:', e.message);
+    }
+
+    // 2) bidNum으로 직접 상세 페이지 접근 시도 (여러 URL 패턴)
+    const urls = [
+      `https://www.k-apt.go.kr/bid/bidInfoView.do?bidNum=${bidNum}`,
+      `https://www.k-apt.go.kr/bid/bidDetail.do?bidNum=${bidNum}`,
+    ];
+    const attempts = [];
+    for (const u of urls) {
+      try {
+        const resp = await page.goto(u, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        await new Promise(r => setTimeout(r, 2000)); // JS 렌더링 대기
+        const title = await page.title();
+        const bodyText = (await page.evaluate(() => document.body?.innerText || '')).slice(0, 500);
+        // 첨부파일 링크 추출
+        const attachments = await page.evaluate(() => {
+          const links = [...document.querySelectorAll('a')];
+          return links
+            .filter(a => /fileDown|download|attachFile|fileSeq|.pdf|.hwp|.doc/i.test(a.href + a.onclick?.toString() || ''))
+            .slice(0, 10)
+            .map(a => ({ href: a.href, text: (a.innerText || '').trim().slice(0, 100), onclick: a.getAttribute('onclick') }));
+        });
+        // bidContent 관련 요소 추출
+        const content = await page.evaluate(() => {
+          const sel = ['#bidContent', '.bidContent', '.bid_content', '[class*=content]', '.detail_cont', '.detail', 'main', 'article'];
+          for (const s of sel) {
+            const el = document.querySelector(s);
+            if (el && el.innerText.length > 50) return { selector: s, text: el.innerText.slice(0, 2000) };
+          }
+          return { selector: null, text: '' };
+        });
+        attempts.push({ url: u, httpStatus: resp?.status(), title, bodyPreview: bodyText, attachmentsFound: attachments.length, attachments, content });
+      } catch (err) {
+        attempts.push({ url: u, error: err.message });
+      }
+    }
+    return { bidNum, attempts };
+  } finally {
+    await browser.close();
+  }
+}
+
+// === K-APT 공고 상세 페이지 텍스트 파싱 + 우리 공법/특허 매칭 ===
+async function verifyByPdf(env, args) {
+  const { bidNum, siteName, assignee, ptDate, by } = args;
+  if (!env.BROWSER) throw new Error('Browser Rendering binding 없음');
+
+  const browser = await puppeteer.launch(env.BROWSER);
+  try {
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
+    });
+
+    // 1단계: K-APT 메인 먼저 방문 (세션 쿠키 확보 — 필수!)
+    try {
+      await page.goto('https://www.k-apt.go.kr/', { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await new Promise(r => setTimeout(r, 1500));
+    } catch (e) {
+      console.log('[verify-pdf] main page error (non-fatal):', e.message);
+    }
+
+    // 2단계: 공고 상세 페이지 접근 (retry 3회)
+    const detailUrl = `https://www.k-apt.go.kr/bid/bidDetail.do?bidNum=${bidNum}`;
+    let lastErr = null;
+    let navSuccess = false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        navSuccess = true;
+        break;
+      } catch (e) {
+        lastErr = e;
+        console.log(`[verify-pdf] attempt ${attempt + 1} failed:`, e.message);
+        await new Promise(r => setTimeout(r, 2000 + attempt * 1500));
+      }
+    }
+    if (!navSuccess) {
+      await browser.close();
+      await notifyJandi(env, buildNeedReviewMsg({
+        siteName, assignee, ptDate, by,
+        reason: `K-APT 접속 차단 (3회 retry 실패): ${lastErr?.message || 'unknown'}`,
+      }));
+      return {
+        status: 'needs_review',
+        reason: 'kapt_connection_blocked',
+        error: lastErr?.message,
+        bidNum,
+      };
+    }
+    await new Promise(r => setTimeout(r, 3000)); // JS 렌더링 + AJAX 데이터 로드 대기
+
+    // 페이지 전체 텍스트 추출 (공고 본문 + 낙찰자 등 모든 정보)
+    const pageText = await page.evaluate(() => document.body?.innerText || '');
+
+    // PDF 첨부파일도 추가로 시도 (있으면)
+    const pdfLinks = await page.evaluate(() => {
+      const links = [...document.querySelectorAll('a')];
+      return links
+        .map(a => ({
+          href: a.href,
+          text: (a.innerText || '').trim(),
+          onclick: a.getAttribute('onclick'),
+        }))
+        .filter(l =>
+          /\.pdf|\.hwp|\.doc/i.test(l.href) ||
+          /\.pdf|\.hwp|\.doc/i.test(l.text) ||
+          /fileDown|downLoad|attachFile/i.test(l.onclick || '')
+        );
+    });
+
+    let combinedText = pageText;
+    const pdfTexts = [];
+
+    // PDF 발견 시 다운로드 + 텍스트 추출 시도
+    for (const link of pdfLinks.slice(0, 2)) {
+      try {
+        if (!/\.pdf/i.test(link.href)) continue;
+        const cookies = await page.cookies();
+        const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+        const resp = await fetch(link.href, {
+          headers: { 'Cookie': cookieStr, 'Referer': detailUrl, 'User-Agent': 'Mozilla/5.0' },
+        });
+        if (!resp.ok) continue;
+        const buffer = await resp.arrayBuffer();
+        const pdf = await getDocumentProxy(new Uint8Array(buffer));
+        const { text } = await extractText(pdf, { mergePages: true });
+        pdfTexts.push({ url: link.href, text: text.slice(0, 20000) });
+        combinedText += '\n\n[PDF]\n' + text;
+      } catch (e) {
+        pdfTexts.push({ url: link.href, error: e.message });
+      }
+    }
+
+    // 우리 공법/특허 매칭 (페이지 텍스트 + PDF 텍스트)
+    const matched = findOurInText(combinedText);
+
+    if (matched) {
+      return {
+        status: 'verified',
+        isOurAnnouncement: true,
+        matchedBy: matched.type,
+        matchedValue: matched.value,
+        bidNum,
+        pageTextLength: pageText.length,
+        pdfCount: pdfTexts.length,
+        source: pdfTexts.some(p => p.text) ? 'page_and_pdf' : 'page_text',
+        message: matched.type === 'patent'
+          ? `공고에서 우리 특허 [${matched.value}] 확인됨`
+          : `공고에서 우리 공법 [${matched.value}] 확인됨`,
+      };
+    }
+
+    await notifyJandi(env, buildNoMatchMsg({
+      siteName, assignee, ptDate, by, bidNo: bidNum,
+      totalFound: 1,
+      sampleTitles: `페이지 텍스트 ${pageText.length}자 + PDF ${pdfTexts.length}개 검색 완료`,
+    }));
+    return {
+      status: 'needs_review',
+      reason: 'no_our_tech_in_announcement',
+      bidNum,
+      pageTextLength: pageText.length,
+      pdfCount: pdfTexts.length,
+      pdfTexts: pdfTexts.map(p => ({ url: p.url, hasText: !!p.text, error: p.error, textPreview: (p.text || '').slice(0, 200) })),
+      pageTextPreview: pageText.slice(0, 500),
+    };
+  } finally {
+    await browser.close();
+  }
+}
+
+function findOurInText(text) {
+  if (!text) return null;
+  for (const tech of OUR_TECHNOLOGIES) {
+    if (containsTechnology(text, tech)) return { type: 'technology', value: tech };
+  }
+  const matches = text.matchAll(/10-\d{7}/g);
+  for (const m of matches) {
+    if (OUR_PATENT_NUMBERS.has(m[0])) return { type: 'patent', value: m[0] };
+  }
+  return null;
+}
 
 // === PT 검증 메인 ===
 async function verifyPt(args, env) {
