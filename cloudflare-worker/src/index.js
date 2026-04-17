@@ -281,13 +281,16 @@ async function notifyJandi(env, message) {
     return;
   }
   try {
+    // UTF-8 바이트로 명시적 인코딩 (한글 깨짐 방지)
+    const json = JSON.stringify(message);
+    const bodyBytes = new TextEncoder().encode(json);
     await fetch(env.JANDI_WEBHOOK_URL, {
       method: 'POST',
       headers: {
         'Accept': 'application/vnd.tosslab.jandi-v2+json',
-        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Type': 'application/vnd.tosslab.jandi-v2+json',
       },
-      body: JSON.stringify(message),
+      body: bodyBytes,
     });
   } catch (e) {
     console.warn('[Jandi] failed', e);
