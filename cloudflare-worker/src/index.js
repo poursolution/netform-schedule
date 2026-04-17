@@ -145,13 +145,25 @@ async function verifyViaVps(env, args) {
   if (!env.VPS_URL || !env.VPS_AUTH_TOKEN) {
     return { status: 'error', error: 'VPS_URL 또는 VPS_AUTH_TOKEN 미설정' };
   }
+  // 클라이언트는 bidNo, VPS는 bidNum → 매핑
+  const bidNum = args.bidNum || args.bidNo;
+  if (!bidNum) {
+    return { status: 'needs_review', reason: 'no_bidNum_for_vps' };
+  }
+  const vpsArgs = {
+    bidNum,
+    siteName: args.siteName || '',
+    assignee: args.assignee || '',
+    ptDate: args.ptDate || '',
+    by: args.by || '',
+  };
   const resp = await fetch(`${env.VPS_URL}/verify`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${env.VPS_AUTH_TOKEN}`,
     },
-    body: JSON.stringify(args),
+    body: JSON.stringify(vpsArgs),
   });
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
@@ -373,9 +385,21 @@ function findOurInText(text) {
   return null;
 }
 
-// === PT 검증 메인 ===
+// === PT 검증 메인 (v5: VPS 우선, Firebase/API fallback) ===
 async function verifyPt(args, env) {
   const { siteName, bidNo, assignee, ptDate, by } = args;
+
+  // === Strategy 0: VPS 프록시로 K-APT 직접 파싱 (최우선, 가장 정확) ===
+  // 공고번호 있으면 즉시 VPS 호출
+  if (bidNo && bidNo.trim() && env.VPS_URL && env.VPS_AUTH_TOKEN) {
+    try {
+      const vpsResult = await verifyViaVps(env, args);
+      // VPS가 결과 반환하면 즉시 사용
+      if (vpsResult && vpsResult.status) return vpsResult;
+    } catch (e) {
+      console.warn('[verify] VPS failed, fallback to API:', e.message);
+    }
+  }
 
   if (!env.DATA_GO_KR_KEY) {
     await notifyJandi(env, buildNeedReviewMsg({
