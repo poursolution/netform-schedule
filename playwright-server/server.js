@@ -74,8 +74,14 @@ app.get('/health', (req, res) => {
 
 // K-APT 공고 상세 페이지 접근 + PDF 파싱 + 우리 공법/특허 매칭
 app.post('/verify', requireAuth, async (req, res) => {
-  const { bidNum, siteName, assignee, ptDate, by } = req.body || {};
-  if (!bidNum) return res.status(400).json({ error: 'bidNum required' });
+  const { bidNum, siteName, assignee, ptDate, by, dataGoKrKey } = req.body || {};
+
+  // bidNum 없으면 단지명으로 data.go.kr 검색 → bidNum 후보 찾기
+  if (!bidNum) {
+    if (!siteName) return res.status(400).json({ error: 'bidNum or siteName required' });
+    if (!dataGoKrKey) return res.status(400).json({ error: 'dataGoKrKey required when bidNum missing' });
+    return handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey }, res);
+  }
 
   const startedAt = Date.now();
   let context = null;
@@ -195,6 +201,112 @@ function containsTechnology(text, tech) {
   const escaped = tech.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(`(^|[^A-Z가-힣])${escaped}([^A-Z가-힣]|$)`, 'i');
   return re.test(text);
+}
+
+// data.go.kr 단지명 검색 → bidNum 후보들 → 각각 K-APT 파싱 시도
+async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey }, res) {
+  const startedAt = Date.now();
+  try {
+    // 최근 2년 단지명 검색
+    const year = ptDate ? parseInt(String(ptDate).slice(0, 4), 10) : new Date().getFullYear();
+    const candidates = [];
+    for (const y of [year, year - 1]) {
+      const params = new URLSearchParams({
+        serviceKey: dataGoKrKey,
+        hsmpNm: siteName,
+        srchYear: String(y),
+        pageNo: '1',
+        numOfRows: '30',
+        type: 'json',
+      });
+      const url = `https://apis.data.go.kr/1613000/ApHusBidResultNoticeInfoOfferServiceV2/getHsmpNmSearchV2?${params}`;
+      const resp = await fetch(url, { headers: { 'User-Agent': 'POUR-Verify/1.0', 'Accept': 'application/json' } });
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      const items = data?.response?.body?.items;
+      if (!items || items.length === 0) continue;
+      const arr = Array.isArray(items) ? items : [items];
+      candidates.push(...arr);
+      if (candidates.length >= 10) break;
+    }
+
+    if (candidates.length === 0) {
+      return res.json({
+        status: 'needs_review',
+        reason: 'site_not_found',
+        siteName,
+        searched: { years: [year, year - 1] },
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
+    // PT 진행일과 가까운 순 상위 3개만 K-APT 파싱 시도
+    const target = ptDate ? new Date(ptDate).getTime() : Date.now();
+    const top = candidates
+      .map(b => ({ ...b, _diff: Math.abs(new Date(b.bidRegdate || 0).getTime() - target) }))
+      .sort((a, b) => a._diff - b._diff)
+      .slice(0, 3);
+
+    const browser = await getBrowser();
+    let firstMatch = null;
+    const attempts = [];
+    for (const bid of top) {
+      let context = null;
+      try {
+        context = await browser.newContext({
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          locale: 'ko-KR',
+        });
+        const page = await context.newPage();
+        await page.goto('https://www.k-apt.go.kr/', { waitUntil: 'domcontentloaded', timeout: 20000 });
+        await page.waitForTimeout(1000);
+        const detailUrl = `https://www.k-apt.go.kr/bid/bidDetail.do?bidNum=${encodeURIComponent(bid.bidNum)}`;
+        await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.waitForTimeout(2500);
+
+        const pageText = await page.evaluate(() => document.body?.innerText || '');
+        const matched = findOurInText(pageText);
+        attempts.push({ bidNum: bid.bidNum, bidKaptname: bid.bidKaptname, bidTitle: bid.bidTitle, pageTextLength: pageText.length, matched });
+        if (matched) {
+          firstMatch = { bid, matched, pageText };
+          await context.close();
+          break;
+        }
+        await context.close();
+      } catch (e) {
+        attempts.push({ bidNum: bid.bidNum, error: e.message });
+        if (context) await context.close().catch(() => {});
+      }
+    }
+
+    if (firstMatch) {
+      return res.json({
+        status: 'verified',
+        isOurAnnouncement: true,
+        matchedBy: firstMatch.matched.type,
+        matchedValue: firstMatch.matched.value,
+        bidNum: firstMatch.bid.bidNum,
+        bidTitle: firstMatch.bid.bidTitle,
+        bidKaptname: firstMatch.bid.bidKaptname,
+        source: 'siteName_search',
+        durationMs: Date.now() - startedAt,
+        message: firstMatch.matched.type === 'patent'
+          ? `단지명 검색 후 공고에서 우리 특허 [${firstMatch.matched.value}] 확인됨`
+          : `단지명 검색 후 공고에서 우리 공법 [${firstMatch.matched.value}] 확인됨`,
+      });
+    }
+
+    return res.json({
+      status: 'needs_review',
+      reason: 'no_our_tech_in_siteName_candidates',
+      siteName,
+      candidatesFound: candidates.length,
+      attempted: attempts,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (e) {
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
 }
 
 app.listen(PORT, () => {

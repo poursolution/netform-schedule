@@ -145,17 +145,20 @@ async function verifyViaVps(env, args) {
   if (!env.VPS_URL || !env.VPS_AUTH_TOKEN) {
     return { status: 'error', error: 'VPS_URL 또는 VPS_AUTH_TOKEN 미설정' };
   }
-  // 클라이언트는 bidNo, VPS는 bidNum → 매핑
   const bidNum = args.bidNum || args.bidNo;
-  if (!bidNum) {
-    return { status: 'needs_review', reason: 'no_bidNum_for_vps' };
+  const siteName = args.siteName || '';
+  // bidNum 또는 siteName 중 하나는 있어야 함
+  if (!bidNum && !siteName) {
+    return { status: 'needs_review', reason: 'no_bidNum_or_siteName' };
   }
   const vpsArgs = {
-    bidNum,
-    siteName: args.siteName || '',
+    bidNum: bidNum || undefined,  // 없으면 siteName 경로
+    siteName,
     assignee: args.assignee || '',
     ptDate: args.ptDate || '',
     by: args.by || '',
+    // VPS가 bidNum 없을 때 data.go.kr로 단지명 검색하려면 API키 필요
+    dataGoKrKey: bidNum ? undefined : env.DATA_GO_KR_KEY,
   };
   const resp = await fetch(`${env.VPS_URL}/verify`, {
     method: 'POST',
@@ -390,11 +393,10 @@ async function verifyPt(args, env) {
   const { siteName, bidNo, assignee, ptDate, by } = args;
 
   // === Strategy 0: VPS 프록시로 K-APT 직접 파싱 (최우선, 가장 정확) ===
-  // 공고번호 있으면 즉시 VPS 호출
-  if (bidNo && bidNo.trim() && env.VPS_URL && env.VPS_AUTH_TOKEN) {
+  // bidNo 있으면 직접 파싱 / 없으면 단지명 검색 후 후보 파싱
+  if (env.VPS_URL && env.VPS_AUTH_TOKEN) {
     try {
       const vpsResult = await verifyViaVps(env, args);
-      // VPS가 결과 반환하면 즉시 사용
       if (vpsResult && vpsResult.status) return vpsResult;
     } catch (e) {
       console.warn('[verify] VPS failed, fallback to API:', e.message);
