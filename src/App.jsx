@@ -10,10 +10,8 @@ import {
 } from './utils/quarterlyReport.js';
 import {
   setJandiConfig,
-  getJandiConfig,
   notifyCrossCheck,
   notifySettlementRequest,
-  notifyReportSent,
 } from './utils/jandi.js';
 
     // 시스템 명칭 상수
@@ -14070,12 +14068,6 @@ import {
                 setTimeout(() => {
                   window.location.href = buildMailtoLink(report, 'yurim@netformrnd.com');
                 }, 500);
-                // 잔디 알림 (발송 완료)
-                notifyReportSent({
-                  year: quarterReportYear,
-                  quarter: quarterReportQuarter,
-                  summary: `정산금액 ${report.totals.settlementAmount.toLocaleString()}원 · PT ${report.totals.ptCount}건 · 주말환산 ${report.totals.weekendWeighted.toFixed(1)}일`,
-                });
               } catch (e) {
                 alert('처리 실패: ' + e.message);
               } finally {
