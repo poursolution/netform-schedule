@@ -1,14 +1,14 @@
-// K-APT 자동 검증 Cloudflare Worker
+// K-APT 자동 검증 Cloudflare Worker (V2)
 //
 // 역할:
-//   1. 클라이언트(POUR영업운영시스템)에서 PT "승" 결과 입력 시 호출됨
-//   2. data.go.kr 공동주택 입찰결과 OpenAPI 호출 → 우리 회사 낙찰 여부 판정
-//   3. 검증 실패(공고 못 찾음 / 우리 회사 낙찰 아님) 시 잔디 채널에 알림
-//   4. 응답: { status, found, isOurWin, awardAmount, message }
+//   클라이언트(POUR영업운영시스템)에서 PT "승" 결과 입력 시 호출됨
+//   data.go.kr 공동주택 입찰결과 OpenAPI(V2)를 호출하여 우리 회사 낙찰 여부 판정
+//   검증 실패 시(공고 못 찾음 / 우리 회사 낙찰 아님) 잔디 채널에 알림
 //
 // 엔드포인트:
 //   POST /verify
-//     body: { siteName, workType, bidNo, ourTechnologies, assignee, ptDate, by }
+//     body: { siteName, workType, bidNo, assignee, ptDate, by }
+//     response: { status, found, isOurWin, winnerName, awardAmount, message }
 //   GET /health
 //     200 OK { status: 'ok', version, hasKey, hasJandi }
 //
@@ -16,22 +16,26 @@
 //   DATA_GO_KR_KEY    : data.go.kr 인증키
 //   JANDI_WEBHOOK_URL : 잔디 incoming webhook URL
 // vars (wrangler.toml):
-//   OUR_COMPANY_NAMES : 콤마 구분 우리 회사 명칭
+//   OUR_COMPANY_NAMES : 콤마 구분 우리 회사 명칭 (낙찰자 매칭)
+//
+// data.go.kr API:
+//   - 입찰결과 V2: https://apis.data.go.kr/1613000/ApHusBidResultNoticeInfoOfferServiceV2
+//   - 입찰공고 V2: https://apis.data.go.kr/1613000/ApHusBidPblAncInfoOfferServiceV2
+//   주요 endpoint:
+//     /getHsmpNmSearchV2     - 단지명 + 검색년도 → 입찰 리스트
+//     /getBidEntrpsInfoSearchV2 - 입찰번호 → 응찰업체 + 낙찰여부
+//     /getPblAncDeSearchV2   - 입찰공고일 → 입찰 리스트
+//   주요 응답 필드:
+//     bidNum, aptCode, bidKaptname, bidTitle, bidDeadline, amount, bidReason
+//     companyName, bidSuccessfulYn ('Y'=낙찰)
 
-const VERSION = '1.0.0';
-
-// data.go.kr 공동주택 입찰결과 정보 OpenAPI
-// 단지명 검색은 직접 안 됨 → 단지목록 API로 단지코드 조회 → 입찰결과 API 호출
-const DATA_GO_KR = {
-  bidResultBase: 'https://apis.data.go.kr/1613000/ApHusBidResultNoticeInfoOfferService1',
-  bidNoticeBase: 'https://apis.data.go.kr/1613000/ApHusBidNoticeInfoOfferService1',
-};
+const VERSION = '2.0.0';
+const API_BASE = 'https://apis.data.go.kr/1613000/ApHusBidResultNoticeInfoOfferServiceV2';
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders(env) });
     }
@@ -42,7 +46,7 @@ export default {
         version: VERSION,
         hasKey: !!env.DATA_GO_KR_KEY,
         hasJandi: !!env.JANDI_WEBHOOK_URL,
-        ourCompanies: (env.OUR_COMPANY_NAMES || '').split(',').map(s => s.trim()).filter(Boolean),
+        ourCompanies: parseCompanies(env),
       }, env);
     }
 
@@ -53,19 +57,21 @@ export default {
         return jsonResponse(result, env);
       } catch (e) {
         console.error('[verify] error', e);
-        return jsonResponse({ status: 'error', error: e.message }, env, 500);
+        return jsonResponse({ status: 'error', error: e.message, stack: e.stack }, env, 500);
       }
     }
 
-    return jsonResponse({ error: 'Not found', endpoints: ['POST /verify', 'GET /health'] }, env, 404);
+    return jsonResponse({
+      error: 'Not found',
+      endpoints: ['POST /verify', 'GET /health'],
+    }, env, 404);
   },
 };
 
 // === PT 검증 메인 ===
 async function verifyPt(args, env) {
-  const { siteName, workType, bidNo, assignee, ptDate, by } = args;
-  const ourCompanies = (env.OUR_COMPANY_NAMES || '')
-    .split(',').map(s => s.trim()).filter(Boolean);
+  const { siteName, bidNo, assignee, ptDate, by } = args;
+  const ourCompanies = parseCompanies(env);
 
   if (!env.DATA_GO_KR_KEY) {
     await notifyJandi(env, buildNeedReviewMsg({
@@ -75,115 +81,168 @@ async function verifyPt(args, env) {
     return { status: 'needs_review', reason: 'no_api_key' };
   }
 
-  // 1) 공고번호가 있으면 입찰결과 직접 조회 (가장 정확)
-  // 2) 공고번호 없으면 단지명으로 검색 시도 (정확도 낮음)
-  let bids = [];
-  let lookupReason = '';
+  // === Strategy 1: 공고번호(bidNum)가 있으면 직접 응찰업체 조회 ===
   if (bidNo && bidNo.trim()) {
-    bids = await fetchBidResultsByBidNo(bidNo.trim(), env.DATA_GO_KR_KEY).catch(e => {
-      lookupReason = `공고번호 조회 실패: ${e.message}`;
-      return [];
-    });
-  } else {
-    bids = await fetchBidResultsBySiteName(siteName, env.DATA_GO_KR_KEY).catch(e => {
-      lookupReason = `단지명 조회 실패: ${e.message}`;
-      return [];
+    const trimmed = bidNo.trim();
+    const entries = await fetchBidEntries(trimmed, env.DATA_GO_KR_KEY);
+    if (entries.length === 0) {
+      await notifyJandi(env, buildNeedReviewMsg({
+        siteName, assignee, ptDate, by,
+        reason: `공고번호 [${trimmed}]로 응찰업체 정보를 찾을 수 없음 (K-APT 미등록)`,
+      }));
+      return { status: 'needs_review', reason: 'bid_not_found', searched: { bidNo: trimmed } };
+    }
+    return judgeAndNotify({
+      entries, ourCompanies, env,
+      msgArgs: { siteName, assignee, ptDate, by, bidNo: trimmed },
     });
   }
 
-  if (bids.length === 0) {
+  // === Strategy 2: 단지명으로 입찰 리스트 검색 → bidNum 후보 → 응찰업체 조회 ===
+  const yearGuess = extractYear(ptDate) || new Date().getFullYear();
+  const yearsToTry = [yearGuess, yearGuess - 1]; // 작년/올해
+  let allBids = [];
+  for (const y of yearsToTry) {
+    const bids = await fetchBidsBySiteName(siteName, y, env.DATA_GO_KR_KEY);
+    allBids = allBids.concat(bids);
+    if (allBids.length >= 10) break;
+  }
+
+  if (allBids.length === 0) {
     await notifyJandi(env, buildNeedReviewMsg({
       siteName, assignee, ptDate, by,
-      reason: lookupReason || `K-APT에서 공고를 찾을 수 없음 (${bidNo ? `공고번호: ${bidNo}` : '단지명 기반 검색'})`,
+      reason: `단지명 [${siteName}]로 K-APT 검색 결과 없음 (정확한 단지명 또는 공고번호 입력 필요)`,
     }));
-    return { status: 'needs_review', reason: 'bid_not_found', searched: { bidNo, siteName }, lookupReason };
+    return { status: 'needs_review', reason: 'site_not_found', searched: { siteName, years: yearsToTry } };
   }
 
-  // 우리 회사 낙찰 여부 확인
-  const ourWin = bids.find(b => isOurCompany(b.winnerName, ourCompanies));
+  // 후보 bidNum 중 PT 진행일과 가까운 것 우선 (시간 가까운 순 최대 5개)
+  const candidates = pickClosestBids(allBids, ptDate, 5);
+  let allEntries = [];
+  for (const b of candidates) {
+    const entries = await fetchBidEntries(b.bidNum, env.DATA_GO_KR_KEY);
+    entries.forEach(e => { e._bidNum = b.bidNum; e._bidKaptname = b.bidKaptname; e._amount = b.amount; });
+    allEntries = allEntries.concat(entries);
+  }
+
+  if (allEntries.length === 0) {
+    await notifyJandi(env, buildNeedReviewMsg({
+      siteName, assignee, ptDate, by,
+      reason: `단지 [${siteName}] 후보 ${candidates.length}건 중 응찰업체 정보 없음`,
+    }));
+    return { status: 'needs_review', reason: 'no_entries', searched: { siteName, candidates: candidates.length } };
+  }
+
+  return judgeAndNotify({
+    entries: allEntries, ourCompanies, env,
+    msgArgs: { siteName, assignee, ptDate, by, candidatesNote: `단지명 검색 ${candidates.length}건 후보` },
+  });
+}
+
+// === 판정 + 잔디 알림 ===
+function judgeAndNotify({ entries, ourCompanies, env, msgArgs }) {
+  // 낙찰업체만 필터
+  const winners = entries.filter(e => (e.bidSuccessfulYn || '').toUpperCase() === 'Y');
+  const ourWin = winners.find(w => isOurCompany(w.companyName, ourCompanies));
+
   if (ourWin) {
     return {
       status: 'verified',
-      found: bids.length,
       isOurWin: true,
-      winnerName: ourWin.winnerName,
-      awardAmount: ourWin.awardAmount,
-      message: `K-APT 낙찰 확인됨: ${ourWin.winnerName}`,
+      winnerName: ourWin.companyName,
+      awardAmount: ourWin._amount || null,
+      bidNum: ourWin._bidNum || null,
+      message: `K-APT 낙찰 확인됨: ${ourWin.companyName}`,
     };
   }
 
-  // 우리 회사 낙찰 아님 → 잔디 알림 + needs_review
-  const winnersText = bids.slice(0, 3).map(b => `${b.winnerName || '(정보 없음)'} ${b.awardAmount ? `(${b.awardAmount.toLocaleString()}원)` : ''}`).join(', ');
-  await notifyJandi(env, buildNotOurWinMsg({
-    siteName, assignee, ptDate, by, bidNo,
+  const winnersText = winners.length > 0
+    ? winners.slice(0, 3).map(w => `${w.companyName}${w._amount ? ` (${w._amount.toLocaleString()}원)` : ''}`).join(', ')
+    : '(낙찰자 정보 없음 — 유찰/취소 가능성)';
+
+  return notifyJandi(env, buildNotOurWinMsg({
+    ...msgArgs,
     winners: winnersText,
-  }));
-  return {
+    totalEntries: entries.length,
+  })).then(() => ({
     status: 'needs_review',
     reason: 'not_our_win',
-    found: bids.length,
     isOurWin: false,
-    winners: bids.slice(0, 5).map(b => ({ name: b.winnerName, amount: b.awardAmount })),
-  };
-}
-
-// === data.go.kr API 호출 ===
-async function fetchBidResultsByBidNo(bidNo, serviceKey) {
-  // 정확한 endpoint는 공식 문서에서 확인 필요 (2026 시점). 임시로 주요 매개변수 형식만 정의.
-  // 실제 배포 시 wrangler tail로 응답 형식 확인 후 파싱 보정.
-  const params = new URLSearchParams({
-    serviceKey,
-    bidNum: bidNo,
-    pageNo: '1',
-    numOfRows: '20',
-    type: 'json',
-  });
-  const url = `${DATA_GO_KR.bidResultBase}/getBidMethodSearch1?${params}`;
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const data = await resp.json();
-  return parseBidResultResponse(data);
-}
-
-async function fetchBidResultsBySiteName(siteName, serviceKey) {
-  // 단지명 직접 검색은 API에서 제한적임. 일단 단지검색 후 단지코드로 조회하는 방식 권장.
-  // 임시 단순 구현: 동일 endpoint에 aptName 파라미터로 시도
-  const params = new URLSearchParams({
-    serviceKey,
-    aptName: siteName,
-    pageNo: '1',
-    numOfRows: '20',
-    type: 'json',
-  });
-  const url = `${DATA_GO_KR.bidResultBase}/getBidMethodSearch1?${params}`;
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const data = await resp.json();
-  return parseBidResultResponse(data);
-}
-
-function parseBidResultResponse(data) {
-  // data.go.kr 응답 표준 구조: { response: { body: { items: { item: [...] } } } }
-  const items = data?.response?.body?.items?.item;
-  if (!items) return [];
-  const arr = Array.isArray(items) ? items : [items];
-  return arr.map(it => ({
-    bidNo: it.bidNum || it.bidNo || '',
-    aptName: it.aptName || '',
-    winnerName: it.cmpyNm || it.winnerName || it.bidCmpyNm || '',
-    awardAmount: parseInt(it.awardAmount || it.bidAmount || it.cntrPrice || 0, 10) || 0,
-    bidStatus: it.bidStatus || it.status || '',
-    bidDate: it.bidDate || it.noticeDate || '',
+    totalEntries: entries.length,
+    totalWinners: winners.length,
+    winners: winners.slice(0, 5).map(w => ({
+      companyName: w.companyName,
+      amount: w._amount,
+      bidNum: w._bidNum,
+    })),
   }));
 }
 
+// === API 호출 ===
+async function fetchBidEntries(bidNum, serviceKey) {
+  const params = new URLSearchParams({
+    serviceKey, bidNum, pageNo: '1', numOfRows: '50', type: 'json',
+  });
+  const resp = await fetch(`${API_BASE}/getBidEntrpsInfoSearchV2?${params}`);
+  if (!resp.ok) throw new Error(`getBidEntrpsInfoSearchV2 HTTP ${resp.status}`);
+  const data = await resp.json();
+  const items = data?.response?.body?.items;
+  if (!items || items.length === 0) return [];
+  // items는 항상 배열로 반환됨 (확인됨)
+  return Array.isArray(items) ? items : [items];
+}
+
+async function fetchBidsBySiteName(hsmpNm, year, serviceKey) {
+  const params = new URLSearchParams({
+    serviceKey, hsmpNm, srchYear: String(year),
+    pageNo: '1', numOfRows: '50', type: 'json',
+  });
+  const resp = await fetch(`${API_BASE}/getHsmpNmSearchV2?${params}`);
+  if (!resp.ok) throw new Error(`getHsmpNmSearchV2 HTTP ${resp.status}`);
+  const data = await resp.json();
+  const items = data?.response?.body?.items;
+  if (!items || items.length === 0) return [];
+  const arr = Array.isArray(items) ? items : [items];
+  return arr.map(it => ({
+    bidNum: it.bidNum,
+    aptCode: it.aptCode,
+    bidKaptname: it.bidKaptname,
+    bidTitle: it.bidTitle,
+    bidRegdate: it.bidRegdate,
+    bidDeadline: it.bidDeadline,
+    amount: parseInt(it.amount || 0, 10) || 0,
+    bidReason: it.bidReason,
+    bidState: it.bidState,
+  }));
+}
+
+// === Helpers ===
 function isOurCompany(winnerName, ourCompanies) {
   if (!winnerName) return false;
-  const norm = String(winnerName).replace(/\s+/g, '').toUpperCase();
+  const norm = String(winnerName).replace(/[\s().,\-]/g, '').toUpperCase();
   return ourCompanies.some(name => {
-    const n = String(name).replace(/\s+/g, '').toUpperCase();
+    const n = String(name).replace(/[\s().,\-]/g, '').toUpperCase();
     return n && norm.includes(n);
   });
+}
+
+function parseCompanies(env) {
+  return (env.OUR_COMPANY_NAMES || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function extractYear(dateStr) {
+  if (!dateStr) return null;
+  const m = String(dateStr).match(/^(\d{4})/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+function pickClosestBids(bids, ptDate, n) {
+  if (!ptDate) return bids.slice(0, n);
+  const target = new Date(ptDate).getTime();
+  return [...bids]
+    .map(b => ({ ...b, _diff: Math.abs(new Date(b.bidRegdate || b.bidDeadline || 0).getTime() - target) }))
+    .sort((a, b) => a._diff - b._diff)
+    .slice(0, n);
 }
 
 // === 잔디 알림 ===
@@ -217,13 +276,13 @@ function buildNeedReviewMsg({ siteName, assignee, ptDate, by, reason }) {
         `진행일: ${ptDate || '-'}`,
         `입력자: ${by || '-'}`,
         '',
-        '👉 K-APT 사이트에서 직접 공고/낙찰 결과를 확인 후 정산 승인 부탁드립니다.',
+        '👉 K-APT 사이트(www.k-apt.go.kr)에서 직접 공고/낙찰 결과를 확인 후 정산 승인 부탁드립니다.',
       ].join('\n'),
     }],
   };
 }
 
-function buildNotOurWinMsg({ siteName, assignee, ptDate, by, bidNo, winners }) {
+function buildNotOurWinMsg({ siteName, assignee, ptDate, by, bidNo, winners, totalEntries, candidatesNote }) {
   return {
     body: '⚠️ PT 결과 = 승, 그러나 K-APT 낙찰자 = 우리 회사 아님',
     connectColor: '#dc2626',
@@ -231,17 +290,19 @@ function buildNotOurWinMsg({ siteName, assignee, ptDate, by, bidNo, winners }) {
       title: `${siteName || '단지명 미입력'} — ${assignee || '담당자 미상'}`,
       description: [
         `진행일: ${ptDate || '-'}`,
-        bidNo ? `공고번호: ${bidNo}` : '공고번호 미입력 — 단지명 기반 검색',
-        `K-APT 낙찰자: ${winners || '(정보 없음)'}`,
+        bidNo ? `공고번호: ${bidNo}` : (candidatesNote || '공고번호 미입력 — 단지명 기반 검색'),
+        `K-APT 낙찰자: ${winners}`,
+        `총 응찰업체: ${totalEntries}곳`,
         `입력자: ${by || '-'}`,
         '',
-        '👉 결과 [승]이 잘못 입력된 것일 수 있습니다. 시스템에서 결과를 재확인하거나, 영업적 승리 예외 신청을 검토해주세요.',
+        '👉 결과 [승]이 잘못 입력된 것일 수 있습니다.',
+        '   시스템에서 결과를 재확인하거나, 영업적 승리 예외 신청을 검토해주세요.',
       ].join('\n'),
     }],
   };
 }
 
-// === Helpers ===
+// === HTTP Helpers ===
 function corsHeaders(env) {
   const origin = env.ALLOWED_ORIGIN || '*';
   return {

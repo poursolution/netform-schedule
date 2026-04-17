@@ -27,12 +27,35 @@ PT 결과 "승" 입력 시 클라이언트에서 호출되어 K-APT(공동주택
 ### 1. data.go.kr API 키 발급 (사용자 작업)
 
 1. <https://www.data.go.kr> 회원가입
-2. 다음 두 API에 활용신청:
-   - **공동주택 입찰결과 정보제공 서비스** (`ApHusBidResultNoticeInfoOfferService1`)
-     <https://www.data.go.kr/data/15059177/openapi.do>
-   - **공동주택 입찰공고 정보제공 서비스** (`ApHusBidNoticeInfoOfferService1`)
-     <https://www.data.go.kr/data/15058166/openapi.do>
+2. 다음 두 API V2에 활용신청 (필수: 입찰결과 / 권장: 입찰공고):
+   - **공동주택 입찰결과공지 정보제공 서비스 V2** ★ 필수
+     End Point: `https://apis.data.go.kr/1613000/ApHusBidResultNoticeInfoOfferServiceV2`
+   - **공동주택 입찰공고 정보제공 서비스 V2** (선택)
+     End Point: `https://apis.data.go.kr/1613000/ApHusBidPblAncInfoOfferServiceV2`
 3. 승인 후 마이페이지 → 개발계정 → 일반 인증키(Encoding) 복사
+
+### 사용하는 API endpoint
+
+| 호출 시점 | endpoint | 용도 |
+|---|---|---|
+| 공고번호 입력 시 | `/getBidEntrpsInfoSearchV2?bidNum=...` | 응찰업체 + 낙찰여부 직접 조회 |
+| 단지명만 있을 때 | `/getHsmpNmSearchV2?hsmpNm=...&srchYear=...` | 단지명으로 입찰 후보 검색 → 후보 N개로 위 endpoint 호출 |
+
+### 응답 핵심 필드
+
+**`/getHsmpNmSearchV2`** 응답:
+- `bidNum` 입찰번호
+- `aptCode` 단지코드
+- `bidKaptname` 단지명
+- `bidTitle` 입찰제목
+- `bidRegdate`/`bidDeadline` 등록일/마감일
+- `amount` 낙찰금액
+- `bidReason` 낙찰/유찰 사유
+
+**`/getBidEntrpsInfoSearchV2`** 응답:
+- `companyName` 응찰회사 ★
+- `competentName` 담당자
+- `bidSuccessfulYn` 낙찰여부 ('Y' = 낙찰) ★
 
 ### 2. Cloudflare 계정 + Wrangler 설치
 

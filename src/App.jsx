@@ -598,6 +598,7 @@ import { sendJandiNotification } from './utils/jandi.js';
       // K-APT 자동 검증 (Cloudflare Worker)
       const [kaptWorkerUrl, setKaptWorkerUrl] = useState('');
       const [kaptEnabled, setKaptEnabled] = useState(true);
+      const [showKaptModal, setShowKaptModal] = useState(false);
 
       // 예외 신청 승인 큐 (admin)
       const [showExceptionQueueModal, setShowExceptionQueueModal] = useState(false);
@@ -5444,6 +5445,11 @@ import { sendJandiNotification } from './utils/jandi.js';
                     style={{ background: jandiUrl ? (jandiEnabled ? '#fbbf24' : '#94a3b8') : '#dc2626', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
                     title="잔디 웹훅 설정 (정산요청·크로스체크·보고서 발송 알림)"
                   >🔔 잔디 {jandiUrl ? (jandiEnabled ? 'ON' : 'OFF') : '미설정'}</button>
+                  <button
+                    onClick={() => setShowKaptModal(true)}
+                    style={{ background: kaptWorkerUrl ? (kaptEnabled ? '#10b981' : '#94a3b8') : '#dc2626', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
+                    title="K-APT 자동 검증 Worker URL 설정"
+                  >🏢 K-APT {kaptWorkerUrl ? (kaptEnabled ? 'ON' : 'OFF') : '미설정'}</button>
                 </>
               )}
             </div>
@@ -14224,6 +14230,68 @@ import { sendJandiNotification } from './utils/jandi.js';
               </div>
             );
           })()}
+
+          {/* K-APT Worker URL 설정 모달 */}
+          {showKaptModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 16 }}>
+              <div style={{ background: 'white', borderRadius: 12, maxWidth: 600, width: '100%', padding: 24 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#1e293b' }}>🏢 K-APT 자동 검증 설정</h2>
+                  <button onClick={() => setShowKaptModal(false)} style={{ background: 'transparent', border: 'none', fontSize: 24, cursor: 'pointer', color: '#64748b' }}>×</button>
+                </div>
+                <div style={{ fontSize: 13, color: '#475569', marginBottom: 16, lineHeight: 1.6 }}>
+                  Cloudflare Worker URL을 등록하면, PT 결과 <strong>"승"</strong> 입력 시 자동으로 K-APT(공동주택관리정보시스템)에서 낙찰 결과를 조회하고 검증합니다.
+                  <ul style={{ margin: '8px 0 0 16px', padding: 0, fontSize: 12, color: '#64748b' }}>
+                    <li>우리 회사 낙찰 확인 → 검증 통과</li>
+                    <li>공고 못 찾음 / 타사 낙찰 → 잔디 채널 자동 알림 + admin 확인 필요</li>
+                  </ul>
+                </div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#475569', display: 'block', marginBottom: 6 }}>Worker URL</label>
+                <input
+                  type="text"
+                  value={kaptWorkerUrl}
+                  onChange={e => setKaptWorkerUrl(e.target.value)}
+                  placeholder="https://kapt-verify-worker.xxx.workers.dev"
+                  style={{ width: '100%', padding: 10, border: '1px solid #cbd5e1', borderRadius: 6, fontSize: 13, fontFamily: 'monospace', boxSizing: 'border-box' }}
+                />
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, fontSize: 13, color: '#475569', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={kaptEnabled} onChange={e => setKaptEnabled(e.target.checked)} style={{ width: 16, height: 16 }} />
+                  자동 검증 활성화 (off로 두면 등록된 URL 무시)
+                </label>
+                <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+                  <button
+                    onClick={() => {
+                      const trimmed = kaptWorkerUrl.trim().replace(/\/$/, '');
+                      if (firebaseEnabled && database) {
+                        database.ref('config/kaptWorker').set({ url: trimmed, enabled: kaptEnabled });
+                      }
+                      setKaptVerifyConfig({ workerUrl: trimmed, enabled: kaptEnabled });
+                      alert('K-APT Worker 설정이 저장되었습니다.');
+                      setShowKaptModal(false);
+                    }}
+                    style={{ flex: 1, padding: 12, background: '#16a34a', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}
+                  >저장</button>
+                  <button
+                    onClick={async () => {
+                      const trimmed = kaptWorkerUrl.trim().replace(/\/$/, '');
+                      if (!trimmed) { alert('URL을 먼저 입력해주세요.'); return; }
+                      try {
+                        const resp = await fetch(`${trimmed}/health`);
+                        const data = await resp.json();
+                        alert(`✅ Worker 헬스체크 성공\n\n버전: ${data.version}\nAPI 키 등록: ${data.hasKey ? 'OK' : '❌ 미등록'}\n잔디 URL: ${data.hasJandi ? 'OK' : '❌ 미등록'}\n우리 회사명: ${(data.ourCompanies || []).join(', ')}`);
+                      } catch (e) {
+                        alert(`❌ Worker 호출 실패: ${e.message}\n\nURL이 올바른지, Worker가 배포되었는지 확인해주세요.`);
+                      }
+                    }}
+                    style={{ flex: 1, padding: 12, background: '#2563eb', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}
+                  >🩺 헬스체크</button>
+                </div>
+                <div style={{ marginTop: 12, padding: 10, background: '#f8fafc', borderRadius: 6, fontSize: 11, color: '#64748b', lineHeight: 1.6 }}>
+                  💡 Worker 배포: <code style={{ background: '#f1f5f9', padding: '1px 4px', borderRadius: 3 }}>cloudflare-worker/README.md</code> 참조
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* 잔디 웹훅 설정 모달 */}
           {showJandiModal && (
