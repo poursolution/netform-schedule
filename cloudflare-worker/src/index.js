@@ -1,23 +1,20 @@
-// K-APT 자동 검증 Cloudflare Worker (V4)
+// K-APT 자동 검증 Cloudflare Worker (V5)
 //
-// v4 변경 (Browser Rendering):
-//   - @cloudflare/puppeteer 추가: K-APT 공고 상세 페이지 탐색 + PDF 다운로드
-//   - /probe?bidNum=XXX: K-APT 상세 페이지 스크린샷 + 첨부파일 링크 추출 (디버깅용)
-//   - /verify-pdf?bidNum=XXX: PDF 다운로드 + unpdf로 텍스트 추출 + 우리 공법/특허 검색
-//   - /verify 자동 fallback: API 매칭 실패 시 Browser Rendering으로 PDF 파싱 시도
+// v5 변경 (VPS 프록시):
+//   - Browser Rendering 제거 (K-APT가 Cloudflare IP 차단)
+//   - AWS Lightsail Seoul VPS의 Playwright 서버로 프록시
+//   - /verify-pdf → VPS /verify 호출
+//   - /probe → VPS /verify 호출 (동일, 디버깅용)
 //
-// 환경 변수:
+// 환경 변수 (wrangler secret):
 //   DATA_GO_KR_KEY    : data.go.kr 인증키
 //   JANDI_WEBHOOK_URL : 잔디 webhook
 //   FIREBASE_DB_URL   : https://test-168a4-default-rtdb.asia-southeast1.firebasedatabase.app
 //   FIREBASE_DB_SECRET: Firebase Realtime DB secret
-// Bindings (wrangler.toml):
-//   BROWSER : Cloudflare Browser Rendering (Puppeteer)
+//   VPS_URL           : http://13.209.81.200:8080 (한국 VPS)
+//   VPS_AUTH_TOKEN    : VPS Bearer token
 
-import puppeteer from '@cloudflare/puppeteer';
-import { extractText, getDocumentProxy } from 'unpdf';
-
-const VERSION = '4.0.0';
+const VERSION = '5.0.0';
 const API_BASE = 'https://apis.data.go.kr/1613000/ApHusBidResultNoticeInfoOfferServiceV2';
 const UA = 'POUR-KAPT-Verify-Worker/3.0';
 
@@ -61,39 +58,34 @@ export default {
 
     if (url.pathname === '/health') {
       const bidCount = await countFirebaseBids(env).catch(() => null);
+      let vpsStatus = null;
+      if (env.VPS_URL) {
+        try {
+          const vpsResp = await fetch(`${env.VPS_URL}/health`, { method: 'GET' });
+          vpsStatus = vpsResp.ok ? await vpsResp.json() : { error: `HTTP ${vpsResp.status}` };
+        } catch (e) { vpsStatus = { error: e.message }; }
+      }
       return jsonResponse({
         status: 'ok',
         version: VERSION,
         hasKey: !!env.DATA_GO_KR_KEY,
         hasJandi: !!env.JANDI_WEBHOOK_URL,
         hasFirebase: !!(env.FIREBASE_DB_URL && env.FIREBASE_DB_SECRET),
-        hasBrowser: !!env.BROWSER,
+        hasVps: !!(env.VPS_URL && env.VPS_AUTH_TOKEN),
         ourTechnologies: OUR_TECHNOLOGIES,
         ourPatentCount: OUR_PATENT_NUMBERS.size,
         firebaseBidCount: bidCount,
-        matchingMode: 'API + Firebase + Browser Rendering (PDF 파싱)',
+        vpsStatus,
+        matchingMode: 'API + Firebase + VPS Playwright (K-APT 직접 파싱)',
       }, env);
     }
 
-    // 탐색: K-APT 공고 상세 페이지 구조 파악 + 스크린샷
-    // GET /probe?bidNum=P200000001
-    if (url.pathname === '/probe' && request.method === 'GET') {
-      const bidNum = url.searchParams.get('bidNum');
-      if (!bidNum) return jsonResponse({ error: 'bidNum required' }, env, 400);
-      try {
-        const result = await probeKaptBid(env, bidNum);
-        return jsonResponse(result, env);
-      } catch (e) {
-        return jsonResponse({ error: e.message, stack: e.stack }, env, 500);
-      }
-    }
-
-    // PDF 파싱 검증: K-APT에서 PDF 다운 + 텍스트 추출 + 우리 공법/특허 검색
+    // VPS 기반 검증: 공고번호 → K-APT 직접 파싱 + 우리 공법/특허 매칭
     // POST /verify-pdf  body: { bidNum, siteName?, assignee?, by? }
     if (url.pathname === '/verify-pdf' && request.method === 'POST') {
       try {
         const body = await request.json();
-        const result = await verifyByPdf(env, body);
+        const result = await verifyViaVps(env, body);
         return jsonResponse(result, env);
       } catch (e) {
         return jsonResponse({ error: e.message, stack: e.stack }, env, 500);
@@ -148,8 +140,38 @@ export default {
   },
 };
 
-// === K-APT Browser Rendering 탐색 ===
-async function probeKaptBid(env, bidNum) {
+// === VPS 프록시 (한국 Lightsail Seoul → K-APT 직접 접근) ===
+async function verifyViaVps(env, args) {
+  if (!env.VPS_URL || !env.VPS_AUTH_TOKEN) {
+    return { status: 'error', error: 'VPS_URL 또는 VPS_AUTH_TOKEN 미설정' };
+  }
+  const resp = await fetch(`${env.VPS_URL}/verify`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${env.VPS_AUTH_TOKEN}`,
+    },
+    body: JSON.stringify(args),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`VPS HTTP ${resp.status}: ${text.slice(0, 200)}`);
+  }
+  const result = await resp.json();
+  // 검증 실패 시 잔디 알림
+  if (result.status === 'needs_review') {
+    await notifyJandi(env, buildNoMatchMsg({
+      siteName: args.siteName, assignee: args.assignee,
+      ptDate: args.ptDate, by: args.by, bidNo: args.bidNum,
+      totalFound: 1,
+      sampleTitles: `K-APT ${result.pageTextLength}\uc790 \ud30c\uc2f1 \ub418\uc5c8\uc73c\ub098 \uc6b0\ub9ac \uacf5\ubc95/\ud2b9\ud5c8 \ubbf8\ubc1c\uacac`,
+    }));
+  }
+  return result;
+}
+
+// === (deprecated) Browser Rendering 탐색 — 남겨둠 (사용 안 함) ===
+async function probeKaptBid_deprecated(env, bidNum) {
   if (!env.BROWSER) throw new Error('Browser Rendering binding 없음 (Paid plan 필요)');
   const browser = await puppeteer.launch(env.BROWSER);
   try {
