@@ -12,6 +12,10 @@ workers_dev = true
 [vars]
 OUR_COMPANY_NAMES = "넷폼,(주)넷폼,넷폼R&D,(주)넷폼R&D,POUR솔루션,(주)POUR솔루션,아파트스퀘어,(주)아파트스퀘어,POUR,넷폼알엔디"
 
+# Cron trigger: 매일 02:00 KST (= 17:00 UTC) K-APT 신규 공고 수집
+[triggers]
+crons = ["0 17 * * *"]
+
 # CORS 허용 도메인
 [env.production]
 vars = { ALLOWED_ORIGIN = "https://schedules-cip.pages.dev" }

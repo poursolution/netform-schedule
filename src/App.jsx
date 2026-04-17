@@ -13863,14 +13863,30 @@ import { sendJandiNotification } from './utils/jandi.js';
                         📋 공고 정보 (K-APT 자동검증용)
                       </div>
                       <div style={{ marginBottom: 10 }}>
-                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>공고번호</label>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>
+                          공고번호
+                          {resultReasonData.result === '승' && !resultReasonData.bidNo?.trim() && (
+                            <span style={{ color: '#dc2626', marginLeft: 6 }}>⚠️ 입력 권장</span>
+                          )}
+                        </label>
                         <input
                           type="text"
                           value={resultReasonData.bidNo || ''}
                           onChange={e => setResultReasonData(prev => ({ ...prev, bidNo: e.target.value }))}
                           placeholder="예: P202412345 (K-APT 입찰공고 번호)"
-                          style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box', fontFamily: 'monospace' }}
+                          style={{
+                            width: '100%', padding: '8px', borderRadius: '6px',
+                            border: resultReasonData.result === '승' && !resultReasonData.bidNo?.trim() ? '1px solid #fca5a5' : '1px solid #e2e8f0',
+                            fontSize: '12px', boxSizing: 'border-box', fontFamily: 'monospace',
+                            background: resultReasonData.result === '승' && !resultReasonData.bidNo?.trim() ? '#fef2f2' : '#fff',
+                          }}
                         />
+                        {resultReasonData.result === '승' && !resultReasonData.bidNo?.trim() && (
+                          <div style={{ fontSize: '10px', color: '#dc2626', fontWeight: '500', marginTop: '4px', lineHeight: 1.5 }}>
+                            공고번호 없이 저장 가능하지만, K-APT 자동검증 실패 확률이 높아집니다.<br />
+                            K-APT 공고 페이지에서 복사하여 입력해주세요. (공고문 없는 현장은 아래 예외 신청)
+                          </div>
+                        )}
                       </div>
                       <div>
                         <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>

@@ -1,31 +1,38 @@
-// K-APT 자동 검증 Cloudflare Worker (V2.1)
+// K-APT 자동 검증 Cloudflare Worker (V3)
 //
-// 역할:
-//   클라이언트(POUR영업운영시스템)에서 PT "승" 결과 입력 시 호출
-//   data.go.kr 공동주택 입찰결과 OpenAPI(V2)를 호출하여 공고문 텍스트에
-//   우리 회사 공법(POUR/CNC/DO/DETEX/시멘트분말) 키워드 포함 여부를 검사
-//   - 포함: verified (우리 협약번호로 진행된 공고 → 승)
-//   - 미포함/공고 없음: needs_review (잔디 알림 + admin 확인 필요)
+// v3 변경:
+//   - Cron trigger: 매일 02:00 KST K-APT 신규 공고 전량 수집 → Firebase 저장
+//   - /verify는 Firebase 우선 조회 → 부분 매칭 + 빠른 응답
+//   - /sync POST: 수동 일괄 수집 (초기화/재동기화용)
 //
-// 변경 사항 (v2.1):
-//   - 낙찰자 매칭(companyName) 로직 제거
-//   - 공고문(bidTitle + bidContent + bidReason) 텍스트에서 우리 공법 키워드 검색
-//   - 단어 경계 매칭으로 DO 같은 짧은 키워드 false positive 차단
-//   - 잔디 Content-Type에 charset=utf-8 추가 (한글 깨짐 수정)
+// 저장 구조 (Firebase Realtime DB):
+//   bids/{bidNum} = {
+//     bidNum, aptCode, bidKaptname, bidKaptnameNormalized,
+//     bidTitle, bidContent, bidReason, bidRegdate, bidDeadline, amount,
+//     matchedOurTechnology, matchedOurPatent, isOurBid,
+//     fetchedAt
+//   }
 //
-// 엔드포인트:
-//   POST /verify  body: { siteName, workType, bidNo, assignee, ptDate, by }
-//   GET  /health  → { status, version, hasKey, hasJandi, ourTechnologies }
+// 환경 변수:
+//   DATA_GO_KR_KEY    : data.go.kr 인증키
+//   JANDI_WEBHOOK_URL : 잔디 webhook
+//   FIREBASE_DB_URL   : https://test-168a4-default-rtdb.asia-southeast1.firebasedatabase.app
+//   FIREBASE_DB_SECRET: Firebase Realtime DB secret (legacy) 또는 token
 
-const VERSION = '2.1.0';
+const VERSION = '3.0.0';
 const API_BASE = 'https://apis.data.go.kr/1613000/ApHusBidResultNoticeInfoOfferServiceV2';
-const UA = 'POUR-KAPT-Verify-Worker/2.1';
+const UA = 'POUR-KAPT-Verify-Worker/3.0';
 
-// 우리 회사 공법 5종 (공고문 텍스트 매칭용)
 const OUR_TECHNOLOGIES = ['POUR', 'CNC', 'DO', 'DETEX', '시멘트분말'];
 
-// 우리 회사 특허번호 85건 (전체특허리스트_26.03.27.xlsx 기반)
-// 공고문에 특허번호가 기재된 경우에도 우리 공고로 인정
+// 도장/방수/보수 관련 키워드 (Firebase 저장 필터)
+// bidTitle에 하나라도 포함된 공고만 저장 → 노이즈 90% 감소
+const RELEVANT_KEYWORDS = [
+  '도장', '재도장', '방수', '외벽', '크랙', '균열', '보수', '리모델링',
+  '복도', '계단실', '지하주차장', '옥상', '도장공사', '방수공사', '외벽공사',
+  '실링', '코킹', '에폭시', 'POUR', 'CNC', 'DETEX', '시멘트',
+  '발코니', '난간', '주차장', '바닥재', '도색',
+];
 const OUR_PATENT_NUMBERS = new Set([
   '10-1520738', '10-1703553', '10-1828211', '10-1831299', '10-1883132',
   '10-1885983', '10-1905536', '10-1923102', '10-1935719', '10-1994773',
@@ -55,14 +62,17 @@ export default {
     }
 
     if (url.pathname === '/health') {
+      const bidCount = await countFirebaseBids(env).catch(() => null);
       return jsonResponse({
         status: 'ok',
         version: VERSION,
         hasKey: !!env.DATA_GO_KR_KEY,
         hasJandi: !!env.JANDI_WEBHOOK_URL,
+        hasFirebase: !!(env.FIREBASE_DB_URL && env.FIREBASE_DB_SECRET),
         ourTechnologies: OUR_TECHNOLOGIES,
         ourPatentCount: OUR_PATENT_NUMBERS.size,
-        matchingMode: '공고문 텍스트에서 공법명 또는 특허번호(10-XXXXXXX) 매칭',
+        firebaseBidCount: bidCount,
+        matchingMode: '공고문 텍스트에서 공법명/특허번호 매칭 (Firebase 우선 조회)',
       }, env);
     }
 
@@ -77,7 +87,40 @@ export default {
       }
     }
 
-    return jsonResponse({ error: 'Not found', endpoints: ['POST /verify', 'GET /health'] }, env, 404);
+    // 수동 동기화: POST /sync?days=90
+    if (url.pathname === '/sync' && request.method === 'POST') {
+      try {
+        const days = parseInt(url.searchParams.get('days') || '7', 10);
+        const result = await syncRecentBids(env, days);
+        return jsonResponse(result, env);
+      } catch (e) {
+        console.error('[sync] error', e);
+        return jsonResponse({ status: 'error', error: e.message }, env, 500);
+      }
+    }
+
+    // 디버그: GET /bid/:bidNum — Firebase 조회
+    if (url.pathname.startsWith('/bid/') && request.method === 'GET') {
+      const bidNum = url.pathname.split('/')[2];
+      const bid = await getFirebaseBid(env, bidNum);
+      return jsonResponse(bid || { error: 'not found' }, env);
+    }
+
+    return jsonResponse({
+      error: 'Not found',
+      endpoints: ['POST /verify', 'POST /sync?days=N', 'GET /bid/:bidNum', 'GET /health'],
+    }, env, 404);
+  },
+
+  async scheduled(event, env, ctx) {
+    // 매일 02:00 KST (= 17:00 UTC) 실행 → 전날 공고 수집
+    console.log('[cron] triggered', new Date().toISOString());
+    try {
+      const result = await syncRecentBids(env, 2); // 어제+오늘 안전하게 2일
+      console.log('[cron] result', result);
+    } catch (e) {
+      console.error('[cron] failed', e);
+    }
   },
 };
 
@@ -88,202 +131,337 @@ async function verifyPt(args, env) {
   if (!env.DATA_GO_KR_KEY) {
     await notifyJandi(env, buildNeedReviewMsg({
       siteName, assignee, ptDate, by,
-      reason: 'data.go.kr API 키가 Worker에 등록되지 않음 — 수동 확인 필요',
+      reason: 'data.go.kr API 키 미등록',
     }));
     return { status: 'needs_review', reason: 'no_api_key' };
   }
 
-  // 공고 후보 수집
-  const { bids, searchMeta } = await collectBidCandidates({ siteName, bidNo, ptDate, serviceKey: env.DATA_GO_KR_KEY });
-
-  if (bids.length === 0) {
-    await notifyJandi(env, buildNeedReviewMsg({
-      siteName, assignee, ptDate, by,
-      reason: `K-APT 검색 결과 없음 (${searchMeta}) — 정확한 공고번호/단지명 재확인 필요`,
-    }));
-    return { status: 'needs_review', reason: 'bid_not_found', searchMeta };
-  }
-
-  // 공고문 텍스트에서 우리 공법/특허번호 검색
-  const matches = bids.map(b => ({
-    bid: b,
-    matched: findOurTechnology(b),
-  })).filter(x => x.matched);
-
-  if (matches.length > 0) {
-    const top = matches[0];
-    return {
-      status: 'verified',
-      isOurAnnouncement: true,
-      matchedBy: top.matched.type, // 'technology' | 'patent'
-      matchedValue: top.matched.value,
-      matchedBid: {
-        bidNum: top.bid.bidNum,
-        bidTitle: top.bid.bidTitle,
-        bidKaptname: top.bid.bidKaptname,
-        bidRegdate: top.bid.bidRegdate,
-        amount: top.bid.amount,
-      },
-      totalFound: bids.length,
-      matchedCount: matches.length,
-      message: top.matched.type === 'patent'
-        ? `공고문에 우리 특허번호 [${top.matched.value}] 확인됨`
-        : `공고문에 우리 공법 [${top.matched.value}] 확인됨`,
-    };
-  }
-
-  // 매칭 실패 → 잔디 알림
-  const sampleTitles = bids.slice(0, 3).map(b => `「${b.bidTitle}」`).join(', ');
-  await notifyJandi(env, buildNoMatchMsg({
-    siteName, assignee, ptDate, by, bidNo,
-    totalFound: bids.length,
-    sampleTitles,
-  }));
-  return {
-    status: 'needs_review',
-    reason: 'no_our_technology_in_announcement',
-    isOurAnnouncement: false,
-    totalFound: bids.length,
-    sampleBids: bids.slice(0, 5).map(b => ({
-      bidNum: b.bidNum,
-      bidTitle: b.bidTitle,
-      bidKaptname: b.bidKaptname,
-    })),
-  };
-}
-
-// === 공고 후보 수집 ===
-async function collectBidCandidates({ siteName, bidNo, ptDate, serviceKey }) {
-  // 공고번호 있으면 단지명 검색 후 해당 bidNum 필터링
+  // Strategy 1: 공고번호 직접 조회 (Firebase 우선)
   if (bidNo && bidNo.trim()) {
     const trimmed = bidNo.trim();
-    // 단지명으로 검색 후 bidNum 매칭 (bidNum 직접 조회 endpoint 없음)
-    if (siteName && siteName.trim()) {
-      const year = extractYear(ptDate) || new Date().getFullYear();
-      const bids = [];
-      for (const y of [year, year - 1]) {
-        const arr = await fetchBidsBySiteName(siteName, y, serviceKey).catch(() => []);
-        bids.push(...arr);
-        if (bids.length >= 50) break;
-      }
-      const exact = bids.filter(b => b.bidNum === trimmed);
-      if (exact.length > 0) return { bids: exact, searchMeta: `공고번호[${trimmed}] 정확 매칭` };
-      return { bids, searchMeta: `공고번호[${trimmed}] 없음 — 단지명 전체 ${bids.length}건 대상` };
+    const fbBid = await getFirebaseBid(env, trimmed);
+    if (fbBid) {
+      return judgeAgainstBid(fbBid, { siteName, assignee, ptDate, by, bidNo: trimmed }, env);
+    }
+    // Firebase 없으면 data.go.kr 시도 (직접 조회는 불가 — 단지명 기반 검색)
+    if (siteName) {
+      const apiBids = await fetchAndCacheBidsBySiteName(env, siteName, ptDate);
+      const match = apiBids.find(b => b.bidNum === trimmed);
+      if (match) return judgeAgainstBid(match, { siteName, assignee, ptDate, by, bidNo: trimmed }, env);
     }
   }
 
-  // 단지명 검색 (기본)
-  if (!siteName || !siteName.trim()) {
-    return { bids: [], searchMeta: '단지명 미입력' };
+  // Strategy 2: 단지명 기반 (Firebase 먼저, 없으면 API)
+  if (siteName && siteName.trim()) {
+    // Firebase 부분 매칭
+    const fbMatches = await queryFirebaseByAptName(env, siteName, ptDate);
+    if (fbMatches.length > 0) {
+      const ourBids = fbMatches.filter(b => b.isOurBid);
+      if (ourBids.length > 0) {
+        return judgeAgainstBid(ourBids[0], { siteName, assignee, ptDate, by }, env);
+      }
+      // Firebase 조회됐는데 우리 공고 없으면 → 통과 못 함
+      await notifyJandi(env, buildNoMatchMsg({
+        siteName, assignee, ptDate, by, bidNo,
+        totalFound: fbMatches.length,
+        sampleTitles: fbMatches.slice(0, 3).map(b => `「${b.bidTitle}」`).join(', '),
+      }));
+      return {
+        status: 'needs_review',
+        reason: 'no_our_bid_in_firebase',
+        totalFound: fbMatches.length,
+        source: 'firebase',
+        samples: fbMatches.slice(0, 5).map(b => ({ bidNum: b.bidNum, bidTitle: b.bidTitle, bidKaptname: b.bidKaptname })),
+      };
+    }
+
+    // Firebase에 없으면 data.go.kr 직접
+    const apiBids = await fetchAndCacheBidsBySiteName(env, siteName, ptDate);
+    if (apiBids.length === 0) {
+      await notifyJandi(env, buildNeedReviewMsg({
+        siteName, assignee, ptDate, by,
+        reason: `K-APT 검색 결과 없음 (단지명: ${siteName})`,
+      }));
+      return { status: 'needs_review', reason: 'bid_not_found', source: 'api' };
+    }
+    const ourBid = apiBids.find(b => b.isOurBid);
+    if (ourBid) return judgeAgainstBid(ourBid, { siteName, assignee, ptDate, by }, env);
+    await notifyJandi(env, buildNoMatchMsg({
+      siteName, assignee, ptDate, by, bidNo,
+      totalFound: apiBids.length,
+      sampleTitles: apiBids.slice(0, 3).map(b => `「${b.bidTitle}」`).join(', '),
+    }));
+    return {
+      status: 'needs_review',
+      reason: 'no_our_technology_in_announcement',
+      totalFound: apiBids.length,
+      source: 'api',
+    };
   }
+
+  await notifyJandi(env, buildNeedReviewMsg({
+    siteName, assignee, ptDate, by,
+    reason: '단지명·공고번호 모두 미입력',
+  }));
+  return { status: 'needs_review', reason: 'no_search_key' };
+}
+
+function judgeAgainstBid(bid, ctx, env) {
+  if (bid.isOurBid) {
+    return {
+      status: 'verified',
+      isOurAnnouncement: true,
+      matchedBy: bid.matchedOurPatent ? 'patent' : 'technology',
+      matchedValue: bid.matchedOurPatent || bid.matchedOurTechnology,
+      matchedBid: {
+        bidNum: bid.bidNum, bidTitle: bid.bidTitle,
+        bidKaptname: bid.bidKaptname, bidRegdate: bid.bidRegdate, amount: bid.amount,
+      },
+      message: bid.matchedOurPatent
+        ? `공고문에 우리 특허번호 [${bid.matchedOurPatent}] 확인됨`
+        : `공고문에 우리 공법 [${bid.matchedOurTechnology}] 확인됨`,
+    };
+  }
+  // 우리 공고 아님 → 잔디 알림
+  return notifyJandi(env, buildNoMatchMsg({
+    ...ctx, totalFound: 1, sampleTitles: `「${bid.bidTitle}」`,
+  })).then(() => ({
+    status: 'needs_review',
+    reason: 'no_our_technology',
+    bidNum: bid.bidNum,
+    bidTitle: bid.bidTitle,
+  }));
+}
+
+// === K-APT 수집 + Firebase 저장 (batch PATCH) ===
+async function syncRecentBids(env, days) {
+  if (!env.DATA_GO_KR_KEY) return { error: 'no_api_key' };
+  if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) return { error: 'no_firebase_config' };
+
+  const results = { total: 0, stored: 0, ourBids: 0, errors: 0, dates: [] };
+  const today = new Date();
+  // Cloudflare Workers free plan: 최대 50 subrequest
+  // 날짜당 API 1회(페이지1) + Firebase batch 1회 = 2 subrequest
+  // 따라서 최대 ~20일까지만 안전. pageNo=1만 사용 (numOfRows=1000로 대부분 커버)
+  const safeDays = Math.min(days, 20);
+  for (let d = 0; d < safeDays; d++) {
+    const date = new Date(today.getTime() - d * 86400000);
+    const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+    try {
+      const bids = await fetchBidsByAnnouncementDate(dateStr, env.DATA_GO_KR_KEY);
+      results.total += bids.length;
+      // 엔리치 + 관련 공고만 필터 (도장/방수/보수)
+      const batch = {};
+      let relevantCount = 0;
+      for (const bid of bids) {
+        const enriched = enrichBid(bid);
+        if (!enriched.isRelevant) continue; // 관련 공고만 저장
+        relevantCount++;
+        const safe = enriched.bidNum.replace(/[.#$\[\]\/]/g, '_');
+        batch[safe] = enriched;
+        if (enriched.isOurBid) results.ourBids++;
+      }
+      if (Object.keys(batch).length > 0) {
+        await storeFirebaseBidsBatch(env, batch);
+        results.stored += Object.keys(batch).length;
+      }
+      results.dates.push({ date: dateStr, fetched: bids.length, relevant: relevantCount });
+    } catch (e) {
+      console.warn(`[sync] ${dateStr} error`, e);
+      results.errors++;
+      results.dates.push({ date: dateStr, error: e.message });
+    }
+  }
+  if (days > safeDays) {
+    results.note = `Cloudflare subrequest 한도로 ${safeDays}일만 수집. 남은 날짜는 여러 번 sync 호출 필요.`;
+  }
+  return results;
+}
+
+async function storeFirebaseBidsBatch(env, batch) {
+  const url = `${env.FIREBASE_DB_URL}/bids.json?auth=${env.FIREBASE_DB_SECRET}`;
+  const resp = await fetch(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(batch),
+  });
+  if (!resp.ok) throw new Error(`Firebase PATCH HTTP ${resp.status}: ${await resp.text().catch(() => '')}`);
+  return true;
+}
+
+async function fetchBidsByAnnouncementDate(pblancDe, serviceKey) {
+  // 하루 공고는 통상 수백~수천 건 → numOfRows=1000 단일 호출로 충분
+  // Cloudflare subrequest 한도 절약
+  const params = new URLSearchParams({
+    serviceKey, pblancDe, pageNo: '1', numOfRows: '1000', type: 'json',
+  });
+  const resp = await fetch(`${API_BASE}/getPblAncDeSearchV2?${params}`, {
+    headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+  const items = data?.response?.body?.items;
+  if (!items) return [];
+  return Array.isArray(items) ? items : [items];
+}
+
+async function fetchAndCacheBidsBySiteName(env, hsmpNm, ptDate) {
+  if (!env.DATA_GO_KR_KEY) return [];
   const year = extractYear(ptDate) || new Date().getFullYear();
   const combined = [];
   const seen = new Set();
   for (const y of [year, year - 1]) {
-    const arr = await fetchBidsBySiteName(siteName, y, serviceKey).catch(() => []);
-    for (const b of arr) {
-      if (!seen.has(b.bidNum)) {
-        seen.add(b.bidNum);
-        combined.push(b);
+    const params = new URLSearchParams({
+      serviceKey: env.DATA_GO_KR_KEY, hsmpNm, srchYear: String(y),
+      pageNo: '1', numOfRows: '100', type: 'json',
+    });
+    const resp = await fetch(`${API_BASE}/getHsmpNmSearchV2?${params}`, {
+      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+    });
+    if (!resp.ok) continue;
+    const data = await resp.json();
+    const items = data?.response?.body?.items;
+    if (!items) continue;
+    const arr = Array.isArray(items) ? items : [items];
+    for (const it of arr) {
+      if (seen.has(it.bidNum)) continue;
+      seen.add(it.bidNum);
+      const enriched = enrichBid(it);
+      combined.push(enriched);
+      // 발견된 것들 Firebase에 캐시
+      if (env.FIREBASE_DB_URL && env.FIREBASE_DB_SECRET) {
+        storeFirebaseBid(env, enriched).catch(() => {});
       }
     }
-    if (combined.length >= 30) break;
   }
-  // PT 진행일과 가까운 순 정렬
-  const sorted = pickClosestBids(combined, ptDate, 30);
-  return { bids: sorted, searchMeta: `단지명[${siteName}] ${year}/${year - 1}년 ${sorted.length}건` };
+  return combined;
 }
 
-// === data.go.kr API ===
-async function fetchBidsBySiteName(hsmpNm, year, serviceKey) {
-  const params = new URLSearchParams({
-    serviceKey, hsmpNm, srchYear: String(year),
-    pageNo: '1', numOfRows: '100', type: 'json',
-  });
-  const resp = await fetch(`${API_BASE}/getHsmpNmSearchV2?${params}`, {
-    headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-  });
-  if (!resp.ok) throw new Error(`getHsmpNmSearchV2 HTTP ${resp.status}`);
-  const data = await resp.json();
-  const items = data?.response?.body?.items;
-  if (!items || items.length === 0) return [];
-  const arr = Array.isArray(items) ? items : [items];
-  return arr.map(it => ({
-    bidNum: it.bidNum,
-    aptCode: it.aptCode,
-    bidKaptname: it.bidKaptname,
-    bidTitle: it.bidTitle || '',
-    bidContent: it.bidContent || '',
-    bidReason: it.bidReason || '',
-    bidRegdate: it.bidRegdate,
-    bidDeadline: it.bidDeadline,
-    amount: parseInt(it.amount || 0, 10) || 0,
-    bidState: it.bidState,
-  }));
+function enrichBid(raw) {
+  const bid = {
+    bidNum: raw.bidNum,
+    aptCode: raw.aptCode,
+    bidKaptname: raw.bidKaptname || '',
+    bidKaptnameNormalized: normalizeKoreanName(raw.bidKaptname || ''),
+    bidTitle: raw.bidTitle || '',
+    bidContent: raw.bidContent || '',
+    bidReason: raw.bidReason || '',
+    bidRegdate: raw.bidRegdate,
+    bidDeadline: raw.bidDeadline,
+    amount: parseInt(raw.amount || 0, 10) || 0,
+    bidState: raw.bidState,
+    bidFileSeq: raw.bidFileSeq, // PDF 파싱용 첨부파일 ID
+    codeKind: raw.codeKind,
+    codeClassifyType1: raw.codeClassifyType1,
+    codeClassifyType2: raw.codeClassifyType2,
+    codeClassifyType3: raw.codeClassifyType3,
+    fetchedAt: new Date().toISOString(),
+  };
+  const matched = findOurInBid(bid);
+  bid.matchedOurTechnology = matched?.type === 'technology' ? matched.value : null;
+  bid.matchedOurPatent = matched?.type === 'patent' ? matched.value : null;
+  bid.isOurBid = !!matched;
+  bid.isRelevant = isPaintingOrWaterproofingBid(bid);
+  return bid;
 }
 
-// === 우리 공법/특허 매칭 (공고문 텍스트 검색) ===
-// 반환: { type: 'technology'|'patent', value: string } 또는 null
-function findOurTechnology(bid) {
-  const combined = [bid.bidTitle, bid.bidContent, bid.bidReason]
-    .filter(Boolean).join(' ');
+// 도장/방수 관련 공고인지 (필터용)
+function isPaintingOrWaterproofingBid(bid) {
+  const text = `${bid.bidTitle} ${bid.bidContent || ''}`.toLowerCase();
+  return RELEVANT_KEYWORDS.some(kw => text.includes(kw.toLowerCase()));
+}
 
-  // 1) 공법명 매칭 (POUR/CNC/DO/DETEX/시멘트분말)
+function findOurInBid(bid) {
+  const combined = [bid.bidTitle, bid.bidContent, bid.bidReason].filter(Boolean).join(' ');
   for (const tech of OUR_TECHNOLOGIES) {
-    if (containsTechnology(combined, tech)) {
-      return { type: 'technology', value: tech };
-    }
+    if (containsTechnology(combined, tech)) return { type: 'technology', value: tech };
   }
-
-  // 2) 특허번호 매칭 (10-XXXXXXX 형태로 우리 특허 85건 중 매칭)
-  const patentMatches = combined.matchAll(/10-\d{7}/g);
-  for (const m of patentMatches) {
-    if (OUR_PATENT_NUMBERS.has(m[0])) {
-      return { type: 'patent', value: m[0] };
-    }
+  const matches = combined.matchAll(/10-\d{7}/g);
+  for (const m of matches) {
+    if (OUR_PATENT_NUMBERS.has(m[0])) return { type: 'patent', value: m[0] };
   }
-
   return null;
 }
 
 function containsTechnology(text, tech) {
   if (!text || !tech) return false;
-  // 한글 기술명: 단순 포함 매칭
-  if (/[가-힣]/.test(tech)) {
-    return text.includes(tech);
-  }
-  // 영문 기술명: 단어 경계 매칭 (DO 같은 짧은 키워드 false positive 차단)
+  if (/[가-힣]/.test(tech)) return text.includes(tech);
   const escaped = tech.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(`(^|[^A-Z가-힣])${escaped}([^A-Z가-힣]|$)`, 'i');
   return re.test(text);
 }
 
-// === Helpers ===
-function extractYear(dateStr) {
-  if (!dateStr) return null;
-  const m = String(dateStr).match(/^(\d{4})/);
-  return m ? parseInt(m[1], 10) : null;
+function normalizeKoreanName(s) {
+  return String(s || '').replace(/\s+/g, '').replace(/[()()[\]]/g, '').toLowerCase();
 }
 
-function pickClosestBids(bids, ptDate, n) {
-  if (!ptDate) return bids.slice(0, n);
-  const target = new Date(ptDate).getTime();
-  return [...bids]
-    .map(b => ({ ...b, _diff: Math.abs(new Date(b.bidRegdate || b.bidDeadline || 0).getTime() - target) }))
-    .sort((a, b) => a._diff - b._diff)
-    .slice(0, n);
+// === Firebase REST API ===
+async function storeFirebaseBid(env, bid) {
+  const safe = bid.bidNum.replace(/[.#$\[\]\/]/g, '_');
+  const url = `${env.FIREBASE_DB_URL}/bids/${safe}.json?auth=${env.FIREBASE_DB_SECRET}`;
+  const resp = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(bid),
+  });
+  if (!resp.ok) throw new Error(`Firebase PUT HTTP ${resp.status}`);
+  return true;
 }
 
-// === 잔디 알림 ===
-async function notifyJandi(env, message) {
-  if (!env.JANDI_WEBHOOK_URL) {
-    console.log('[Jandi] skip (no webhook URL)', message.body);
-    return;
+async function getFirebaseBid(env, bidNum) {
+  if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) return null;
+  const safe = bidNum.replace(/[.#$\[\]\/]/g, '_');
+  const url = `${env.FIREBASE_DB_URL}/bids/${safe}.json?auth=${env.FIREBASE_DB_SECRET}`;
+  const resp = await fetch(url);
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  return data || null;
+}
+
+async function queryFirebaseByAptName(env, siteName, ptDate) {
+  if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) return [];
+  // 전체 bids를 가져와서 부분 매칭 (데이터 양 많으면 orderBy 인덱스 필요)
+  // 임시: numOfRows 제한으로 최근 것만
+  const url = `${env.FIREBASE_DB_URL}/bids.json?auth=${env.FIREBASE_DB_SECRET}&orderBy="bidKaptnameNormalized"&startAt="${normalizeKoreanName(siteName)}"&endAt="${normalizeKoreanName(siteName)}\uf8ff"&limitToFirst=20`;
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    // 인덱스 미설정 시 실패 가능 → fallback: 전체 조회 + 필터
+    return queryFirebaseByAptNameFallback(env, siteName, ptDate);
   }
+  const data = await resp.json();
+  if (!data) return [];
+  const arr = Object.values(data);
+  return arr.sort((a, b) => (b.bidRegdate || '').localeCompare(a.bidRegdate || ''));
+}
+
+async function queryFirebaseByAptNameFallback(env, siteName, ptDate) {
+  const target = normalizeKoreanName(siteName);
+  const url = `${env.FIREBASE_DB_URL}/bids.json?auth=${env.FIREBASE_DB_SECRET}&shallow=false`;
+  const resp = await fetch(url);
+  if (!resp.ok) return [];
+  const data = await resp.json();
+  if (!data) return [];
+  const arr = Object.values(data).filter(b => {
+    const n = b.bidKaptnameNormalized || normalizeKoreanName(b.bidKaptname || '');
+    return n.includes(target) || target.includes(n);
+  });
+  return arr.sort((a, b) => (b.bidRegdate || '').localeCompare(a.bidRegdate || '')).slice(0, 20);
+}
+
+async function countFirebaseBids(env) {
+  if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) return null;
+  const url = `${env.FIREBASE_DB_URL}/bids.json?auth=${env.FIREBASE_DB_SECRET}&shallow=true`;
+  const resp = await fetch(url);
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  return data ? Object.keys(data).length : 0;
+}
+
+// === 잔디 ===
+async function notifyJandi(env, message) {
+  if (!env.JANDI_WEBHOOK_URL) return;
   try {
-    // UTF-8 바이트로 명시적 인코딩 (한글 깨짐 방지)
-    const json = JSON.stringify(message);
-    const bodyBytes = new TextEncoder().encode(json);
+    const bodyBytes = new TextEncoder().encode(JSON.stringify(message));
     await fetch(env.JANDI_WEBHOOK_URL, {
       method: 'POST',
       headers: {
@@ -292,9 +470,7 @@ async function notifyJandi(env, message) {
       },
       body: bodyBytes,
     });
-  } catch (e) {
-    console.warn('[Jandi] failed', e);
-  }
+  } catch (e) { console.warn('[Jandi] failed', e); }
 }
 
 function buildNeedReviewMsg({ siteName, assignee, ptDate, by, reason }) {
@@ -308,7 +484,7 @@ function buildNeedReviewMsg({ siteName, assignee, ptDate, by, reason }) {
         `진행일: ${ptDate || '-'}`,
         `입력자: ${by || '-'}`,
         '',
-        '👉 K-APT 사이트(www.k-apt.go.kr)에서 직접 공고 내용을 확인해주세요.',
+        '👉 K-APT 사이트(www.k-apt.go.kr)에서 직접 공고를 확인해주세요.',
       ].join('\n'),
     }],
   };
@@ -316,29 +492,34 @@ function buildNeedReviewMsg({ siteName, assignee, ptDate, by, reason }) {
 
 function buildNoMatchMsg({ siteName, assignee, ptDate, by, bidNo, totalFound, sampleTitles }) {
   return {
-    body: '⚠️ PT 결과 = 승, 그러나 공고문에 우리 공법(POUR/CNC/DO/DETEX/시멘트분말) 미확인',
+    body: '⚠️ 공고문에 우리 공법/특허 미확인',
     connectColor: '#dc2626',
     connectInfo: [{
       title: `${siteName || '단지명 미입력'} — ${assignee || '담당자 미상'}`,
       description: [
         `진행일: ${ptDate || '-'}`,
         bidNo ? `공고번호: ${bidNo}` : '공고번호 미입력',
-        `K-APT 검색 결과: ${totalFound}건`,
-        totalFound > 0 ? `공고 제목 샘플: ${sampleTitles}` : '',
+        `K-APT 검색: ${totalFound}건`,
+        sampleTitles ? `샘플: ${sampleTitles}` : '',
         `입력자: ${by || '-'}`,
         '',
-        '👉 공고문에 POUR공법 협약번호 등 우리 공법 표기가 없습니다.',
-        '   결과 [승]이 맞다면 "영업적 승리 예외 신청"을 검토해주세요.',
+        '👉 공고문에 POUR/CNC/DO/DETEX/시멘트분말 또는 우리 특허번호(10-XXXXXXX) 미확인.',
+        '   결과 [승]이 맞다면 "영업적 승리" 또는 "공고문 없는 현장" 예외 신청 검토.',
       ].filter(Boolean).join('\n'),
     }],
   };
 }
 
-// === HTTP ===
+// === Helpers ===
+function extractYear(dateStr) {
+  if (!dateStr) return null;
+  const m = String(dateStr).match(/^(\d{4})/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 function corsHeaders(env) {
-  const origin = env.ALLOWED_ORIGIN || '*';
   return {
-    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN || '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Max-Age': '86400',
@@ -348,9 +529,6 @@ function corsHeaders(env) {
 function jsonResponse(data, env, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
-    headers: {
-      ...corsHeaders(env),
-      'Content-Type': 'application/json; charset=utf-8',
-    },
+    headers: { ...corsHeaders(env), 'Content-Type': 'application/json; charset=utf-8' },
   });
 }

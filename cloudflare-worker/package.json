@@ -10,5 +10,8 @@
   },
   "devDependencies": {
     "wrangler": "^3.78.0"
+  },
+  "dependencies": {
+    "unpdf": "^1.6.0"
   }
 }
