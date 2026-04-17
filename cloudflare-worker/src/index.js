@@ -141,23 +141,22 @@ export default {
 };
 
 // === VPS 프록시 (한국 Lightsail Seoul → K-APT 직접 접근) ===
+// 검증 성공(verified) 시 → Firebase pt/{scheduleId}에 공고번호·공법 자동 기록 (크로스체크 자동화)
 async function verifyViaVps(env, args) {
   if (!env.VPS_URL || !env.VPS_AUTH_TOKEN) {
     return { status: 'error', error: 'VPS_URL 또는 VPS_AUTH_TOKEN 미설정' };
   }
   const bidNum = args.bidNum || args.bidNo;
   const siteName = args.siteName || '';
-  // bidNum 또는 siteName 중 하나는 있어야 함
   if (!bidNum && !siteName) {
     return { status: 'needs_review', reason: 'no_bidNum_or_siteName' };
   }
   const vpsArgs = {
-    bidNum: bidNum || undefined,  // 없으면 siteName 경로
+    bidNum: bidNum || undefined,
     siteName,
     assignee: args.assignee || '',
     ptDate: args.ptDate || '',
     by: args.by || '',
-    // VPS가 bidNum 없을 때 data.go.kr로 단지명 검색하려면 API키 필요
     dataGoKrKey: bidNum ? undefined : env.DATA_GO_KR_KEY,
   };
   const resp = await fetch(`${env.VPS_URL}/verify`, {
@@ -173,13 +172,72 @@ async function verifyViaVps(env, args) {
     throw new Error(`VPS HTTP ${resp.status}: ${text.slice(0, 200)}`);
   }
   const result = await resp.json();
-  // 검증 실패 시 잔디 알림
+
+  // === 검증 성공 → Firebase pt/{scheduleId}에 자동 기록 (크로스체크 자동화 핵심) ===
+  if (result.status === 'verified' && args.scheduleId && env.FIREBASE_DB_URL && env.FIREBASE_DB_SECRET) {
+    try {
+      const foundBidNum = result.bidNum || result.matchedBid?.bidNum || bidNum;
+      const matchedTech = result.matchedValue || null;
+      const matchedBy = result.matchedBy || 'technology';
+      const update = {
+        bidNo: foundBidNum,
+        announcementMethods: matchedTech,
+        kaptVerified: {
+          status: 'verified',
+          matchedBy,
+          matchedValue: matchedTech,
+          bidNum: foundBidNum,
+          bidTitle: result.bidTitle || result.matchedBid?.bidTitle || null,
+          bidKaptname: result.bidKaptname || result.matchedBid?.bidKaptname || null,
+          verifiedAt: new Date().toISOString(),
+          verifiedBy: 'auto-kapt-worker',
+          source: result.source || 'vps',
+        },
+      };
+      const url = `${env.FIREBASE_DB_URL}/pt/${args.scheduleId}.json?auth=${env.FIREBASE_DB_SECRET}`;
+      await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(update),
+      });
+      result.firebaseUpdated = true;
+    } catch (e) {
+      console.warn('[verify] Firebase PT update failed:', e.message);
+      result.firebaseUpdateError = e.message;
+    }
+  }
+
+  // 검증 실패 시 잔디 알림 + Firebase에 확인필요 마커
   if (result.status === 'needs_review') {
+    if (args.scheduleId && env.FIREBASE_DB_URL && env.FIREBASE_DB_SECRET) {
+      try {
+        const url = `${env.FIREBASE_DB_URL}/pt/${args.scheduleId}/kaptVerified.json?auth=${env.FIREBASE_DB_SECRET}`;
+        await fetch(url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: 'needs_review',
+            reason: result.reason || 'unknown',
+            verifiedAt: new Date().toISOString(),
+            verifiedBy: 'auto-kapt-worker',
+          }),
+        });
+      } catch (e) { console.warn('[verify] Firebase needs_review mark failed'); }
+    }
+    // 순위별 시도 결과 요약 메시지
+    let sampleTitles = `단지명 [${siteName}] 검색 결과 없음`;
+    if (result.rankedAttempts && result.rankedAttempts.length > 0) {
+      sampleTitles = result.rankedAttempts.map(a =>
+        `${a.rank}순위 "${a.bidKaptname}" (유사도 ${a.nameScore}) → ${a.matched ? '매칭✓' : '매칭X'}`
+      ).join('\n   ');
+    } else if (result.pageTextLength) {
+      sampleTitles = `K-APT ${result.pageTextLength}자 파싱 완료, 우리 공법/특허 미발견`;
+    }
     await notifyJandi(env, buildNoMatchMsg({
       siteName: args.siteName, assignee: args.assignee,
-      ptDate: args.ptDate, by: args.by, bidNo: args.bidNum,
-      totalFound: 1,
-      sampleTitles: `K-APT ${result.pageTextLength}\uc790 \ud30c\uc2f1 \ub418\uc5c8\uc73c\ub098 \uc6b0\ub9ac \uacf5\ubc95/\ud2b9\ud5c8 \ubbf8\ubc1c\uacac`,
+      ptDate: args.ptDate, by: args.by, bidNo: bidNum,
+      totalFound: result.totalCandidates || 1,
+      sampleTitles,
     }));
   }
   return result;

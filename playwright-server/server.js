@@ -203,54 +203,128 @@ function containsTechnology(text, tech) {
   return re.test(text);
 }
 
-// data.go.kr 단지명 검색 → bidNum 후보들 → 각각 K-APT 파싱 시도
+// === 단지명 정규화 + 유사도 계산 ===
+function normalizeAptName(s) {
+  return String(s || '')
+    .replace(/\s+/g, '')
+    .replace(/[()[\]()]/g, '')
+    .replace(/(아파트|주공|입대의|관리사무소|차)$/g, '')
+    .toLowerCase();
+}
+
+// Levenshtein 거리
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const matrix = Array.from({ length: b.length + 1 }, (_, i) => [i]);
+  matrix[0] = Array.from({ length: a.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      const cost = b[i - 1] === a[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return matrix[b.length][a.length];
+}
+
+// 유사도 (0~1, 1이 정확 일치)
+function similarityScore(name1, name2) {
+  const n1 = normalizeAptName(name1);
+  const n2 = normalizeAptName(name2);
+  if (n1 === n2) return 1.0;
+  if (!n1 || !n2) return 0;
+  // 포함 관계: 짧은 쪽이 긴 쪽에 포함되면 높은 점수
+  if (n1.includes(n2) || n2.includes(n1)) {
+    const ratio = Math.min(n1.length, n2.length) / Math.max(n1.length, n2.length);
+    return 0.6 + ratio * 0.4; // 0.6 ~ 1.0
+  }
+  // Levenshtein 기반 유사도
+  const dist = levenshtein(n1, n2);
+  const maxLen = Math.max(n1.length, n2.length);
+  return Math.max(0, 1 - dist / maxLen) * 0.6; // 0 ~ 0.6
+}
+
+// data.go.kr 단지명 검색 → 유사도 1/2/3순위 → K-APT 파싱 시도
 async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey }, res) {
   const startedAt = Date.now();
   try {
-    // 최근 2년 단지명 검색
+    // 최근 3년 단지명 검색 (더 많은 후보 확보)
     const year = ptDate ? parseInt(String(ptDate).slice(0, 4), 10) : new Date().getFullYear();
-    const candidates = [];
-    for (const y of [year, year - 1]) {
+    const allCandidates = [];
+    const seen = new Set();
+    for (const y of [year, year - 1, year - 2]) {
       const params = new URLSearchParams({
         serviceKey: dataGoKrKey,
         hsmpNm: siteName,
         srchYear: String(y),
         pageNo: '1',
-        numOfRows: '30',
+        numOfRows: '100',
         type: 'json',
       });
       const url = `https://apis.data.go.kr/1613000/ApHusBidResultNoticeInfoOfferServiceV2/getHsmpNmSearchV2?${params}`;
-      const resp = await fetch(url, { headers: { 'User-Agent': 'POUR-Verify/1.0', 'Accept': 'application/json' } });
-      if (!resp.ok) continue;
-      const data = await resp.json();
-      const items = data?.response?.body?.items;
-      if (!items || items.length === 0) continue;
-      const arr = Array.isArray(items) ? items : [items];
-      candidates.push(...arr);
-      if (candidates.length >= 10) break;
+      try {
+        const resp = await fetch(url, { headers: { 'User-Agent': 'POUR-Verify/1.0', 'Accept': 'application/json' } });
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        const items = data?.response?.body?.items;
+        if (!items) continue;
+        const arr = Array.isArray(items) ? items : [items];
+        for (const it of arr) {
+          if (!seen.has(it.bidNum)) {
+            seen.add(it.bidNum);
+            allCandidates.push(it);
+          }
+        }
+      } catch (e) { /* continue */ }
     }
 
-    if (candidates.length === 0) {
+    if (allCandidates.length === 0) {
       return res.json({
         status: 'needs_review',
         reason: 'site_not_found',
         siteName,
-        searched: { years: [year, year - 1] },
+        searched: { years: [year, year - 1, year - 2] },
         durationMs: Date.now() - startedAt,
       });
     }
 
-    // PT 진행일과 가까운 순 상위 3개만 K-APT 파싱 시도
+    // === 유사도 점수 + 시기 근접 복합 정렬 ===
     const target = ptDate ? new Date(ptDate).getTime() : Date.now();
-    const top = candidates
-      .map(b => ({ ...b, _diff: Math.abs(new Date(b.bidRegdate || 0).getTime() - target) }))
-      .sort((a, b) => a._diff - b._diff)
-      .slice(0, 3);
+    const ONE_YEAR = 365 * 86400 * 1000;
+    const ranked = allCandidates
+      .map(b => {
+        const nameScore = similarityScore(siteName, b.bidKaptname);
+        const daysDiff = Math.abs(new Date(b.bidRegdate || 0).getTime() - target) / ONE_YEAR;
+        const timeScore = Math.max(0, 1 - daysDiff / 3); // 3년 이상이면 0
+        const totalScore = nameScore * 0.7 + timeScore * 0.3;
+        return { ...b, _nameScore: nameScore, _timeScore: timeScore, _totalScore: totalScore };
+      })
+      .filter(b => b._nameScore >= 0.3) // 너무 다른 단지 제외
+      .sort((a, b) => b._totalScore - a._totalScore);
 
+    if (ranked.length === 0) {
+      return res.json({
+        status: 'needs_review',
+        reason: 'no_similar_name_candidates',
+        siteName,
+        totalCandidates: allCandidates.length,
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
+    // === 상위 1/2/3순위를 K-APT에서 파싱 ===
+    const top3 = ranked.slice(0, 3);
     const browser = await getBrowser();
     let firstMatch = null;
     const attempts = [];
-    for (const bid of top) {
+
+    for (let rank = 0; rank < top3.length; rank++) {
+      const bid = top3[rank];
       let context = null;
       try {
         context = await browser.newContext({
@@ -266,15 +340,26 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
 
         const pageText = await page.evaluate(() => document.body?.innerText || '');
         const matched = findOurInText(pageText);
-        attempts.push({ bidNum: bid.bidNum, bidKaptname: bid.bidKaptname, bidTitle: bid.bidTitle, pageTextLength: pageText.length, matched });
+        attempts.push({
+          rank: rank + 1,
+          bidNum: bid.bidNum,
+          bidKaptname: bid.bidKaptname,
+          bidTitle: bid.bidTitle,
+          bidRegdate: bid.bidRegdate,
+          nameScore: Number(bid._nameScore.toFixed(3)),
+          timeScore: Number(bid._timeScore.toFixed(3)),
+          totalScore: Number(bid._totalScore.toFixed(3)),
+          pageTextLength: pageText.length,
+          matched,
+        });
         if (matched) {
-          firstMatch = { bid, matched, pageText };
+          firstMatch = { rank: rank + 1, bid, matched };
           await context.close();
           break;
         }
         await context.close();
       } catch (e) {
-        attempts.push({ bidNum: bid.bidNum, error: e.message });
+        attempts.push({ rank: rank + 1, bidNum: bid.bidNum, bidKaptname: bid.bidKaptname, error: e.message });
         if (context) await context.close().catch(() => {});
       }
     }
@@ -285,23 +370,25 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
         isOurAnnouncement: true,
         matchedBy: firstMatch.matched.type,
         matchedValue: firstMatch.matched.value,
+        matchedRank: firstMatch.rank,
         bidNum: firstMatch.bid.bidNum,
         bidTitle: firstMatch.bid.bidTitle,
         bidKaptname: firstMatch.bid.bidKaptname,
-        source: 'siteName_search',
+        source: 'siteName_ranked_search',
+        rankedAttempts: attempts,
         durationMs: Date.now() - startedAt,
         message: firstMatch.matched.type === 'patent'
-          ? `단지명 검색 후 공고에서 우리 특허 [${firstMatch.matched.value}] 확인됨`
-          : `단지명 검색 후 공고에서 우리 공법 [${firstMatch.matched.value}] 확인됨`,
+          ? `[${firstMatch.rank}순위 "${firstMatch.bid.bidKaptname}"] 공고에서 우리 특허 [${firstMatch.matched.value}] 확인됨`
+          : `[${firstMatch.rank}순위 "${firstMatch.bid.bidKaptname}"] 공고에서 우리 공법 [${firstMatch.matched.value}] 확인됨`,
       });
     }
 
     return res.json({
       status: 'needs_review',
-      reason: 'no_our_tech_in_siteName_candidates',
+      reason: 'no_our_tech_in_top3_candidates',
       siteName,
-      candidatesFound: candidates.length,
-      attempted: attempts,
+      totalCandidates: allCandidates.length,
+      rankedAttempts: attempts,
       durationMs: Date.now() - startedAt,
     });
   } catch (e) {
