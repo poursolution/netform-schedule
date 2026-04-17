@@ -556,7 +556,7 @@ import { sendJandiNotification } from './utils/jandi.js';
       
       // 실적 사유 입력 모달
       const [showResultReasonModal, setShowResultReasonModal] = useState(false);
-      const [resultReasonData, setResultReasonData] = useState({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false, isResultChange: false, previousResult: null, requestException: false, exceptionType: null });
+      const [resultReasonData, setResultReasonData] = useState({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false, isResultChange: false, previousResult: null, requestException: false, exceptionType: null, bidNo: '', announcementMethods: '' });
       const [editingAdminNotes, setEditingAdminNotes] = useState({}); // key: scheduleId_assigneeName
       const [editingUserMemos, setEditingUserMemos] = useState({}); // key: scheduleId
       const [expandedRiskRow, setExpandedRiskRow] = useState(null); // 리스크 파이프라인 드롭다운
@@ -2511,11 +2511,18 @@ import { sendJandiNotification } from './utils/jandi.js';
           by: currentUser?.name || '알 수 없음'
         }] : [])];
 
-        const updatedSchedule = { ...schedule, results: newResults, resultReasons: newReasons, inProgress: false, ptStatus: newPtStatus, resultConfirmDate: newConfirmDate, lastCheckDate: newLastCheck, statusLog: newStatusLog };
+        // 공고 정보 저장 (사용자가 입력한 경우에만 업데이트 — 비어있으면 기존 값 유지)
+        const announceBidNo = (resultReasonData.bidNo || '').trim();
+        const announceMethods = (resultReasonData.announcementMethods || '').trim();
+        const scheduleUpdate = { results: newResults, resultReasons: newReasons, inProgress: false, ptStatus: newPtStatus, resultConfirmDate: newConfirmDate, lastCheckDate: newLastCheck, statusLog: newStatusLog };
+        if (announceBidNo) scheduleUpdate.bidNo = announceBidNo;
+        if (announceMethods) scheduleUpdate.announcementMethods = announceMethods;
+
+        const updatedSchedule = { ...schedule, ...scheduleUpdate };
 
         // Firebase 저장
         if (firebaseEnabled && database) {
-          database.ref(`pt/${scheduleId}`).update({ results: newResults, resultReasons: newReasons, inProgress: false, ptStatus: newPtStatus, resultConfirmDate: newConfirmDate, lastCheckDate: newLastCheck, statusLog: newStatusLog });
+          database.ref(`pt/${scheduleId}`).update(scheduleUpdate);
         }
 
         // 로컬 상태 업데이트
@@ -2545,7 +2552,7 @@ import { sendJandiNotification } from './utils/jandi.js';
         }
 
         setShowResultReasonModal(false);
-        setResultReasonData({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false, requestException: false, exceptionType: null });
+        setResultReasonData({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false, requestException: false, exceptionType: null, bidNo: '', announcementMethods: '' });
 
         // === 결과 = 승 → 자동 정산요청 + K-APT 검증 ===
         if (result === '승' && targetAssignee) {
@@ -11772,46 +11779,6 @@ import { sendJandiNotification } from './utils/jandi.js';
 
                   {(modalType === 'pt' || modalType === 'asq') && (
                     <>
-                      {modalType === 'pt' && (
-                        <>
-                          <div>
-                            <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>
-                              공고번호 <span style={{ color: '#94a3b8', fontWeight: '500' }}>(K-APT 자동검증용 · 권장)</span>
-                            </label>
-                            <input
-                              type="text"
-                              value={newSchedule.bidNo || ''}
-                              onChange={e => setNewSchedule({...newSchedule, bidNo: e.target.value})}
-                              placeholder="예: 2026-04-1234 (K-APT 입찰공고 번호)"
-                              style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box', fontFamily: 'monospace' }}
-                            />
-                          </div>
-                          <div>
-                            <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>
-                              입찰 공법 <span style={{ color: '#94a3b8', fontWeight: '500' }}>(콤마로 구분 · POUR/CNC/DO/DETEX/시멘트분말 등)</span>
-                            </label>
-                            <input
-                              type="text"
-                              value={newSchedule.announcementMethods || ''}
-                              onChange={e => setNewSchedule({...newSchedule, announcementMethods: e.target.value})}
-                              placeholder="예: POUR, 4A시스템"
-                              style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }}
-                            />
-                            {newSchedule.announcementMethods && (() => {
-                              const techs = extractOurTechnologies(newSchedule.announcementMethods);
-                              return techs.length > 0 ? (
-                                <div style={{ fontSize: '10px', color: '#16a34a', fontWeight: '600', marginTop: '4px' }}>
-                                  ✅ 우리 공법 매칭: {techs.join(', ')}
-                                </div>
-                              ) : (
-                                <div style={{ fontSize: '10px', color: '#dc2626', fontWeight: '600', marginTop: '4px' }}>
-                                  ⚠️ 우리 공법 없음 — 결과 [패]로 자동 판정 가능성
-                                </div>
-                              );
-                            })()}
-                          </div>
-                        </>
-                      )}
                       <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>경쟁사</label><input type="text" value={newSchedule.competitor} onChange={e => setNewSchedule({...newSchedule, competitor: e.target.value})} placeholder="4A, PMC" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
                       <div>
                         <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>{modalType === 'asq' ? '담당자' : 'PT담당자'} (복수 선택)</label>
@@ -13887,6 +13854,50 @@ import { sendJandiNotification } from './utils/jandi.js';
                 </div>
 
                 <div style={{ padding: '20px' }}>
+                  {/* 공고 정보 입력 (PT 진행 후 공고가 나오면 확인하는 단계) */}
+                  {(resultReasonData.result === '승' || resultReasonData.result === '무' || resultReasonData.result === '패') && (
+                    <div style={{ marginBottom: '16px', padding: '12px 14px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px' }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#0c4a6e', marginBottom: 8 }}>
+                        📋 공고 정보 (K-APT 자동검증용)
+                      </div>
+                      <div style={{ marginBottom: 10 }}>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>공고번호</label>
+                        <input
+                          type="text"
+                          value={resultReasonData.bidNo || ''}
+                          onChange={e => setResultReasonData(prev => ({ ...prev, bidNo: e.target.value }))}
+                          placeholder="예: P202412345 (K-APT 입찰공고 번호)"
+                          style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box', fontFamily: 'monospace' }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>
+                          공고문 기재 공법 <span style={{ color: '#94a3b8', fontWeight: '500' }}>(콤마 구분 또는 특허번호)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={resultReasonData.announcementMethods || ''}
+                          onChange={e => setResultReasonData(prev => ({ ...prev, announcementMethods: e.target.value }))}
+                          placeholder="예: POUR공법, 4A시스템  또는  특허 10-2614027호"
+                          style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }}
+                        />
+                        {resultReasonData.announcementMethods && (() => {
+                          const techs = extractOurTechnologies(resultReasonData.announcementMethods);
+                          const hasPatent = /10-\d{7}/.test(resultReasonData.announcementMethods);
+                          return techs.length > 0 || hasPatent ? (
+                            <div style={{ fontSize: '10px', color: '#16a34a', fontWeight: '600', marginTop: '4px' }}>
+                              ✅ 우리 것 매칭: {techs.join(', ')}{hasPatent ? (techs.length > 0 ? ' + ' : '') + '특허번호' : ''}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '10px', color: '#dc2626', fontWeight: '600', marginTop: '4px' }}>
+                              ⚠️ 우리 공법/특허 미발견 — 승리 판정 재확인 권장
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
+
                   {/* 사유 입력 */}
                   <div style={{ marginBottom: '16px' }}>
                     <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>
