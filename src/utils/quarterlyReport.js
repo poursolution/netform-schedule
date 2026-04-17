@@ -301,6 +301,16 @@ export function generateExcelBlob(report) {
     ['담당자', '주말출근(일)', '환산(×1.5)', 'PT건수', '승', '무', '패', '지원', '정산금액(원)', '전체일정'],
     ...summaryRows,
     totalRow,
+    [],
+    ['【 PT 결과 판정 기준 】'],
+    ['결과', '기준', '정산 단가'],
+    ['승', 'POUR 공법 단독 입찰', '500,000원'],
+    ['무', 'POUR 공법 + 타공법 동시 입찰 (예: 4A시스템 등)', '250,000원'],
+    ['패', 'POUR 공법으로 안올라온 공고 (입찰 미참여)', '0원'],
+    ['지원', '한 현장 2명 이상 — 1명 승리(주영업), 나머지 지원', '250,000원'],
+    [],
+    ['※ 협약사 자체PT(selfPT) 및 본인영업 건은 정산 대상에서 제외 (0원 처리)'],
+    ['※ 주말 출근 1일 = 환산 1.5일 (보상연차 환산)'],
   ];
   const ws1 = XLSX.utils.aoa_to_sheet(sheet1Data);
   ws1['!cols'] = [
@@ -566,6 +576,37 @@ export function buildReportHTML(report) {
       </thead>
       <tbody>${ptRowsHtml}</tbody>
     </table>
+  </div>
+
+  <!-- ===== 승리 판정 기준 ===== -->
+  <div style="padding:0 56px 36px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
+      <div style="width:4px;height:24px;background:#475569;border-radius:2px;"></div>
+      <div style="font-size:18px;font-weight:700;color:#1e293b;">PT 결과 판정 기준</div>
+      <div style="font-size:12px;color:#64748b;background:#f1f5f9;padding:3px 10px;border-radius:10px;">참고 정의</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
+      <div style="padding:12px 16px;background:#dcfce7;border-radius:10px;border-left:4px solid #16a34a;">
+        <div style="font-weight:700;color:#16a34a;font-size:14px;margin-bottom:4px;">🏆 승리</div>
+        <div style="font-size:12px;color:#475569;">POUR 공법 단독 입찰 (경쟁 공법 없음)</div>
+      </div>
+      <div style="padding:12px 16px;background:#dbeafe;border-radius:10px;border-left:4px solid #2563eb;">
+        <div style="font-weight:700;color:#2563eb;font-size:14px;margin-bottom:4px;">🤝 무승부</div>
+        <div style="font-size:12px;color:#475569;">POUR 공법 + 타공법 동시 입찰 (예: 4A시스템 등)</div>
+      </div>
+      <div style="padding:12px 16px;background:#fee2e2;border-radius:10px;border-left:4px solid #dc2626;">
+        <div style="font-weight:700;color:#dc2626;font-size:14px;margin-bottom:4px;">❌ 패배</div>
+        <div style="font-size:12px;color:#475569;">POUR 공법으로 안올라온 공고 (입찰 미참여)</div>
+      </div>
+      <div style="padding:12px 16px;background:#ede9fe;border-radius:10px;border-left:4px solid #7c3aed;">
+        <div style="font-weight:700;color:#7c3aed;font-size:14px;margin-bottom:4px;">🤲 지원</div>
+        <div style="font-size:12px;color:#475569;">한 현장 2명 이상 — 1명 승리(주영업), 나머지 지원</div>
+      </div>
+    </div>
+    <div style="margin-top:12px;padding:12px 16px;background:#fefce8;border-radius:8px;border:1px solid #fde047;font-size:12px;color:#713f12;">
+      💰 <strong>정산 단가</strong>: 승 500,000원 · 무 250,000원 · 지원 250,000원 · 패 0원<br />
+      ※ 협약사 자체PT(selfPT) 및 본인영업 건은 정산 대상에서 제외 (0원 처리)
+    </div>
   </div>
 
   <!-- ===== 푸터 ===== -->
