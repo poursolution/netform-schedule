@@ -1,4 +1,13 @@
 import React, { useState, useEffect } from 'react';
+import {
+  aggregateQuarterlyReport,
+  generateExcelBlob,
+  downloadBlob,
+  generateAndDownloadPDF,
+  buildMailtoLink,
+  getQuarterDeadline,
+  buildReportHTML,
+} from './utils/quarterlyReport.js';
 
     // 시스템 명칭 상수
     const APP_NAME = 'POUR영업운영시스템';
@@ -548,6 +557,12 @@ import React, { useState, useEffect } from 'react';
 
       // 분기 정산 확인
       const [quarterConfirmations, setQuarterConfirmations] = useState({});
+
+      // 분기 종합 보고서 (김유림 발송용)
+      const [showQuarterReportModal, setShowQuarterReportModal] = useState(false);
+      const [quarterReportYear, setQuarterReportYear] = useState(new Date().getFullYear());
+      const [quarterReportQuarter, setQuarterReportQuarter] = useState(1);
+      const [quarterReportBusy, setQuarterReportBusy] = useState(false);
 
       // 공법 선택 모달
       const [showMethodSelectionModal, setShowMethodSelectionModal] = useState(false);
@@ -5289,6 +5304,13 @@ import React, { useState, useEffect } from 'react';
                 style={{ background: '#4b5563', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
               >+일정추가</button>
               <button onClick={() => setShowMeetingModal(true)} style={{ background: '#4b5563', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}>+ 회의</button>
+              {currentUser?.isAdmin && (
+                <button
+                  onClick={() => setShowQuarterReportModal(true)}
+                  style={{ background: '#7c3aed', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
+                  title="김유림에게 분기 종합 보고서 발송 (주말출근 + PT + 일정)"
+                >📊 분기보고서</button>
+              )}
             </div>
           </div>
 
@@ -13870,6 +13892,232 @@ import React, { useState, useEffect } from 'react';
               </div>
             </div>
           )}
+
+          {/* 분기 종합 보고서 모달 (admin 확인 → 김유림 발송) */}
+          {showQuarterReportModal && (() => {
+            const allData = {
+              ptSchedules,
+              briefingSchedules,
+              personalSchedules,
+              seminarSchedules,
+              salesSchedules,
+            };
+            const report = aggregateQuarterlyReport(allData, quarterReportYear, quarterReportQuarter);
+            const { totals } = report;
+            const deadline = getQuarterDeadline(quarterReportYear, quarterReportQuarter);
+            const today = new Date().toISOString().slice(0, 10);
+            const isOverdue = deadline && today > deadline;
+            const baseFilename = `POUR_분기보고서_${quarterReportYear}_${report.range.label}`;
+
+            const handleDownloadExcel = () => {
+              try {
+                const blob = generateExcelBlob(report);
+                downloadBlob(blob, `${baseFilename}.xlsx`);
+              } catch (e) {
+                alert('Excel 생성 실패: ' + e.message);
+              }
+            };
+            const handleDownloadPDF = async () => {
+              setQuarterReportBusy(true);
+              try {
+                await generateAndDownloadPDF(report, `${baseFilename}.pdf`);
+              } catch (e) {
+                alert('PDF 생성 실패: ' + e.message);
+              } finally {
+                setQuarterReportBusy(false);
+              }
+            };
+            const handleOpenMail = () => {
+              const link = buildMailtoLink(report, 'yurim@netformrnd.com');
+              window.location.href = link;
+            };
+            const handlePreview = () => {
+              // 새 창에 보고서 HTML 미리보기 (admin 확인용)
+              const w = window.open('', '_blank', 'width=1200,height=900');
+              if (!w) { alert('팝업이 차단되어 있습니다. 브라우저 팝업 설정을 확인해주세요.'); return; }
+              const inner = buildReportHTML(report);
+              w.document.open();
+              w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${baseFilename} - 미리보기</title><style>body{margin:0;background:#f1f5f9;padding:24px;display:flex;justify-content:center;}</style></head><body>${inner}</body></html>`);
+              w.document.close();
+            };
+            const handleApproveAndSend = async () => {
+              if (!window.confirm(`"${quarterReportYear}년 ${report.range.label} 종합 보고서"를\n김유림(yurim@netformrnd.com)에게 발송하시겠습니까?\n\n승인 시:\n1) Excel + PDF 자동 다운로드\n2) 메일 작성 창 열림\n3) 다운로드된 파일 2개를 첨부하여 발송`)) return;
+              setQuarterReportBusy(true);
+              try {
+                const blob = generateExcelBlob(report);
+                downloadBlob(blob, `${baseFilename}.xlsx`);
+                await generateAndDownloadPDF(report, `${baseFilename}.pdf`);
+                setTimeout(() => {
+                  window.location.href = buildMailtoLink(report, 'yurim@netformrnd.com');
+                }, 500);
+              } catch (e) {
+                alert('처리 실패: ' + e.message);
+              } finally {
+                setQuarterReportBusy(false);
+              }
+            };
+
+            return (
+              <div style={{
+                position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                background: 'rgba(0,0,0,0.5)', display: 'flex',
+                alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 16,
+              }}>
+                <div style={{ background: 'white', borderRadius: 12, maxWidth: 720, width: '100%', maxHeight: '90vh', overflow: 'auto' }}>
+                  <div style={{ padding: 24, borderBottom: '1px solid #e2e8f0' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0, color: '#1e293b' }}>📊 분기 종합 보고서 — 김유림 발송</h2>
+                      <button onClick={() => setShowQuarterReportModal(false)} style={{ background: 'transparent', border: 'none', fontSize: 24, cursor: 'pointer', color: '#64748b' }}>×</button>
+                    </div>
+                    <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>
+                      수신: <strong>yurim@netformrnd.com</strong> · 주말출근(1.5배) + PT(검증통과) + 일정 통합
+                    </div>
+                  </div>
+
+                  <div style={{ padding: 24 }}>
+                    {/* 연/분기 선택 */}
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: 12, fontWeight: 600, color: '#475569', display: 'block', marginBottom: 6 }}>년도</label>
+                        <select value={quarterReportYear} onChange={e => setQuarterReportYear(parseInt(e.target.value))}
+                          style={{ width: '100%', padding: 8, border: '1px solid #cbd5e1', borderRadius: 6, fontSize: 14 }}>
+                          {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}년</option>)}
+                        </select>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: 12, fontWeight: 600, color: '#475569', display: 'block', marginBottom: 6 }}>분기</label>
+                        <select value={quarterReportQuarter} onChange={e => setQuarterReportQuarter(parseInt(e.target.value))}
+                          style={{ width: '100%', padding: 8, border: '1px solid #cbd5e1', borderRadius: 6, fontSize: 14 }}>
+                          <option value={1}>1분기 (1~3월) — 마감 {quarterReportYear}-04-25</option>
+                          <option value={2}>2분기 (4~6월) — 마감 {quarterReportYear}-07-25</option>
+                          <option value={3}>3분기 (7~9월) — 마감 {quarterReportYear}-10-25</option>
+                          <option value={4}>4분기 (10~12월) — 마감 {quarterReportYear + 1}-01-25</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {deadline && (
+                      <div style={{
+                        background: isOverdue ? '#fef2f2' : '#fef3c7',
+                        border: `1px solid ${isOverdue ? '#fecaca' : '#fde68a'}`,
+                        borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 13,
+                        color: isOverdue ? '#dc2626' : '#92400e',
+                      }}>
+                        {isOverdue ? '⚠️ 발송 마감일 초과' : '📅 발송 마감일'}: <strong>{deadline}</strong>
+                      </div>
+                    )}
+
+                    {/* 미리보기 카드 */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+                      <div style={{ background: '#f5f3ff', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#7c3aed', fontWeight: 600 }}>주말 환산일수</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: '#7c3aed', marginTop: 4 }}>{totals.weekendWeighted.toFixed(1)}일</div>
+                      </div>
+                      <div style={{ background: '#eff6ff', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#2563eb', fontWeight: 600 }}>정산 PT 건수</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: '#2563eb', marginTop: 4 }}>{totals.ptCount}건</div>
+                      </div>
+                      <div style={{ background: '#f0fdf4', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>정산금액</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#16a34a', marginTop: 4 }}>{totals.settlementAmount.toLocaleString()}원</div>
+                      </div>
+                    </div>
+
+                    {/* 미검증 PT 안내 */}
+                    {report.ptUnverified.length > 0 && (
+                      <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 12, color: '#9a3412' }}>
+                        ⚠️ 미검증 PT <strong>{report.ptUnverified.length}건</strong>은 보고서에서 제외됩니다.
+                        <div style={{ marginTop: 4, fontSize: 11, color: '#c2410c' }}>
+                          (사유: 공고번호 미입력 또는 결과 미입력 — 관리자 확인 큐에서 처리 예정)
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 담당자 요약 미니 테이블 */}
+                    <div style={{ marginBottom: 20 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#1e293b' }}>담당자별 요약</div>
+                      <div style={{ maxHeight: 200, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                          <thead style={{ position: 'sticky', top: 0, background: '#f1f5f9' }}>
+                            <tr>
+                              <th style={{ padding: 8, textAlign: 'left' }}>담당자</th>
+                              <th style={{ padding: 8 }}>주말</th>
+                              <th style={{ padding: 8 }}>환산</th>
+                              <th style={{ padding: 8 }}>PT</th>
+                              <th style={{ padding: 8, textAlign: 'right' }}>정산금액</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {report.summary.length === 0 && (
+                              <tr><td colSpan={5} style={{ padding: 16, textAlign: 'center', color: '#94a3b8' }}>해당 분기 데이터 없음</td></tr>
+                            )}
+                            {report.summary.map(r => (
+                              <tr key={r.assignee} style={{ borderTop: '1px solid #f1f5f9' }}>
+                                <td style={{ padding: 8 }}>{r.assignee}</td>
+                                <td style={{ padding: 8, textAlign: 'center' }}>{r.weekendDays}일</td>
+                                <td style={{ padding: 8, textAlign: 'center', color: '#7c3aed', fontWeight: 600 }}>{r.weekendWeighted.toFixed(1)}</td>
+                                <td style={{ padding: 8, textAlign: 'center' }}>{r.ptCount}</td>
+                                <td style={{ padding: 8, textAlign: 'right' }}>{r.settlementAmount.toLocaleString()}원</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* === Step 1: Admin 확인 === */}
+                    <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 10, padding: 16, marginBottom: 12 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#92400e', marginBottom: 8 }}>📋 STEP 1 — 보고서 사전 확인 (Admin 필수)</div>
+                      <div style={{ fontSize: 12, color: '#a16207', marginBottom: 10, lineHeight: 1.5 }}>
+                        김유림에게 발송 전 반드시 보고서를 확인해주세요. 새 창에 PDF와 동일한 양식으로 표시됩니다.
+                      </div>
+                      <button onClick={handlePreview} disabled={quarterReportBusy}
+                        style={{ width: '100%', padding: 12, background: '#f59e0b', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+                        👁️ 보고서 미리보기 (새 창)
+                      </button>
+                    </div>
+
+                    {/* === Step 2: 부분 다운로드 (선택) === */}
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8 }}>STEP 2 — 개별 파일 다운로드 (선택)</div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <button onClick={handleDownloadExcel} disabled={quarterReportBusy}
+                          style={{ flex: 1, padding: 10, background: '#16a34a', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', minWidth: 100 }}>
+                          📑 Excel만
+                        </button>
+                        <button onClick={handleDownloadPDF} disabled={quarterReportBusy}
+                          style={{ flex: 1, padding: 10, background: '#dc2626', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', minWidth: 100 }}>
+                          📄 PDF만
+                        </button>
+                        <button onClick={handleOpenMail} disabled={quarterReportBusy}
+                          style={{ flex: 1, padding: 10, background: '#2563eb', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', minWidth: 100 }}>
+                          ✉️ 메일만
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* === Step 3: 승인 후 일괄 발송 === */}
+                    <div style={{ background: '#ecfdf5', border: '1px solid #6ee7b7', borderRadius: 10, padding: 16 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#065f46', marginBottom: 8 }}>✅ STEP 3 — 발송 승인</div>
+                      <div style={{ fontSize: 12, color: '#047857', marginBottom: 10, lineHeight: 1.5 }}>
+                        사전 확인 완료 후, 아래 버튼 클릭 시 Excel + PDF 자동 다운로드 → 김유림 메일 작성 창 열림 (확인 다이얼로그 표시)
+                      </div>
+                      <button onClick={handleApproveAndSend} disabled={quarterReportBusy}
+                        style={{ width: '100%', padding: 14, background: quarterReportBusy ? '#94a3b8' : '#059669', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: quarterReportBusy ? 'wait' : 'pointer' }}>
+                        {quarterReportBusy ? '처리 중...' : '🚀 승인 후 발송 (Excel + PDF + 메일)'}
+                      </button>
+                    </div>
+
+                    <div style={{ marginTop: 16, padding: 12, background: '#f8fafc', borderRadius: 8, fontSize: 11, color: '#64748b', lineHeight: 1.7 }}>
+                      💡 <strong>워크플로우</strong>:<br />
+                      ① Admin이 모달에서 데이터 검토 → ② 미리보기로 양식 확인 → ③ 승인 클릭 → ④ 파일 다운로드 → ⑤ 메일 작성 창에서 첨부 → ⑥ 발송<br />
+                      📅 권장 발송 시점: <strong>{deadline ? `${deadline} (월요일) 14:00 KST` : '-'}</strong> · 향후 자동화 예정 (Cloudflare Worker)
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       );
     };
