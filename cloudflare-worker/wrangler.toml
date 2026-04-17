@@ -1,0 +1,17 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "kapt-verify-worker"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+# 환경 변수 (실제 값은 wrangler secret put 으로 등록)
+# DATA_GO_KR_KEY    : data.go.kr 서비스 키
+# JANDI_WEBHOOK_URL : 잔디 Incoming Webhook URL (검증 실패 시 알림)
+# OUR_COMPANY_NAMES : 우리 회사 낙찰자 매칭용 명칭 (콤마 구분, 예: 넷폼,(주)넷폼,POUR솔루션,아파트스퀘어)
+
+[vars]
+OUR_COMPANY_NAMES = "넷폼,(주)넷폼,넷폼R&D,(주)넷폼R&D,POUR솔루션,(주)POUR솔루션,아파트스퀘어,(주)아파트스퀘어,POUR,넷폼알엔디"
+
+# CORS 허용 도메인
+[env.production]
+vars = { ALLOWED_ORIGIN = "https://schedules-cip.pages.dev" }

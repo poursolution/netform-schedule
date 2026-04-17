@@ -1039,7 +1039,8 @@ import { sendJandiNotification } from './utils/jandi.js';
         siteName: '', address: '', date: '', time: '', workType: '', participants: '',
         requester: '', competitor: '', mainCategory: '재도장', status: '확정', ptAssignee: '',
         ptProduct: '', bidDeadline: '', title: '', location: '', assignee: '', assignees: [], note: '',
-        dateType: 'confirmed', expectedMonth: '', dateNote: ''
+        dateType: 'confirmed', expectedMonth: '', dateNote: '',
+        bidNo: '', announcementMethods: ''
       });
 
       // 수정 모달용 state
@@ -5109,7 +5110,7 @@ import { sendJandiNotification } from './utils/jandi.js';
         }
         setLastSaved(new Date().toLocaleTimeString());
         setShowModal(false);
-        setNewSchedule({ siteName: '', address: '', date: '', time: '', workType: '', participants: '', requester: '', competitor: '', mainCategory: '재도장', status: '확정', ptAssignee: '', ptProduct: '', bidDeadline: '', title: '', location: '', assignee: '', assignees: [], note: '', dateType: 'confirmed', expectedMonth: '', dateNote: '' });
+        setNewSchedule({ siteName: '', address: '', date: '', time: '', workType: '', participants: '', requester: '', competitor: '', mainCategory: '재도장', status: '확정', ptAssignee: '', ptProduct: '', bidDeadline: '', title: '', location: '', assignee: '', assignees: [], note: '', dateType: 'confirmed', expectedMonth: '', dateNote: '', bidNo: '', announcementMethods: '' });
       };
 
       // CRM 엑셀 파일 업로드 처리
@@ -11765,6 +11766,46 @@ import { sendJandiNotification } from './utils/jandi.js';
 
                   {(modalType === 'pt' || modalType === 'asq') && (
                     <>
+                      {modalType === 'pt' && (
+                        <>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>
+                              공고번호 <span style={{ color: '#94a3b8', fontWeight: '500' }}>(K-APT 자동검증용 · 권장)</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={newSchedule.bidNo || ''}
+                              onChange={e => setNewSchedule({...newSchedule, bidNo: e.target.value})}
+                              placeholder="예: 2026-04-1234 (K-APT 입찰공고 번호)"
+                              style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box', fontFamily: 'monospace' }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>
+                              입찰 공법 <span style={{ color: '#94a3b8', fontWeight: '500' }}>(콤마로 구분 · POUR/CNC/DO/DETEX/시멘트분말 등)</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={newSchedule.announcementMethods || ''}
+                              onChange={e => setNewSchedule({...newSchedule, announcementMethods: e.target.value})}
+                              placeholder="예: POUR, 4A시스템"
+                              style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }}
+                            />
+                            {newSchedule.announcementMethods && (() => {
+                              const techs = extractOurTechnologies(newSchedule.announcementMethods);
+                              return techs.length > 0 ? (
+                                <div style={{ fontSize: '10px', color: '#16a34a', fontWeight: '600', marginTop: '4px' }}>
+                                  ✅ 우리 공법 매칭: {techs.join(', ')}
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: '10px', color: '#dc2626', fontWeight: '600', marginTop: '4px' }}>
+                                  ⚠️ 우리 공법 없음 — 결과 [패]로 자동 판정 가능성
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        </>
+                      )}
                       <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>경쟁사</label><input type="text" value={newSchedule.competitor} onChange={e => setNewSchedule({...newSchedule, competitor: e.target.value})} placeholder="4A, PMC" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
                       <div>
                         <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>{modalType === 'asq' ? '담당자' : 'PT담당자'} (복수 선택)</label>
