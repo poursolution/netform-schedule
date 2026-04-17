@@ -13,6 +13,16 @@ import {
   notifyCrossCheck,
   notifySettlementRequest,
 } from './utils/jandi.js';
+import {
+  setKaptVerifyConfig,
+  verifyKaptForPt,
+} from './utils/kaptVerify.js';
+import {
+  OUR_TECHNOLOGIES,
+  judgeResultByMethods,
+  extractOurTechnologies,
+  matchOurTechnology,
+} from './utils/technologies.js';
 
     // 시스템 명칭 상수
     const APP_NAME = 'POUR영업운영시스템';
@@ -573,6 +583,10 @@ import {
       const [jandiUrl, setJandiUrl] = useState('');
       const [jandiEnabled, setJandiEnabled] = useState(true);
       const [showJandiModal, setShowJandiModal] = useState(false);
+
+      // K-APT 자동 검증 (Cloudflare Worker)
+      const [kaptWorkerUrl, setKaptWorkerUrl] = useState('');
+      const [kaptEnabled, setKaptEnabled] = useState(true);
 
       // 공법 선택 모달
       const [showMethodSelectionModal, setShowMethodSelectionModal] = useState(false);
@@ -1365,6 +1379,15 @@ import {
           setJandiUrl(data.url || '');
           setJandiEnabled(data.enabled !== false);
           setJandiConfig({ url: data.url || '', enabled: data.enabled !== false });
+        });
+
+        // K-APT Worker 설정 로드
+        const kaptRef = database.ref('config/kaptWorker');
+        kaptRef.on('value', (snapshot) => {
+          const data = snapshot.val() || {};
+          setKaptWorkerUrl(data.url || '');
+          setKaptEnabled(data.enabled !== false);
+          setKaptVerifyConfig({ workerUrl: data.url || '', enabled: data.enabled !== false });
         });
 
         // CRM 영업 데이터 로드
@@ -2484,19 +2507,31 @@ import {
         setShowResultReasonModal(false);
         setResultReasonData({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false });
 
-        // 결과 = 승 → 잔디 크로스체크 알림 (admin이 K-APT 공고 확인)
+        // === 결과 = 승 → 자동 정산요청 + K-APT 검증 ===
         if (result === '승' && targetAssignee) {
-          notifyCrossCheck({
+          // 1) 자동 정산요청 (confirm 없음)
+          const settlementUpdate = { [`settlement/${targetAssignee}/requested`]: true };
+          if (firebaseEnabled && database) {
+            database.ref(`pt/${scheduleId}`).update(settlementUpdate);
+          }
+          setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), requested: true } } } : s));
+
+          // 2) K-APT 검증 (Worker 호출 → 우리 회사 낙찰 확인)
+          //    Worker가 검증 결과에 따라 잔디 알림 발송
+          //    Worker 미배포 상태면 fallback으로 클라이언트에서 잔디 직접 호출
+          verifyKaptForPt({
+            scheduleId,
             assignee: targetAssignee,
             siteName: updatedSchedule.siteName,
+            workType: updatedSchedule.workType,
             bidNo: updatedSchedule.bidNo,
             ptDate: updatedSchedule.date,
             by: currentUser?.name,
           });
         }
 
-        // 승/무 결과 시 정산요청 확인 (패 제외)
-        if ((result === '승' || result === '무') && targetAssignee) {
+        // === 무 결과 → 정산요청 confirm (기존 흐름 유지) ===
+        if (result === '무' && targetAssignee) {
           setTimeout(() => {
             if (window.confirm(`"${targetAssignee}" 정산요청하시겠습니까?`)) {
               const settlementUpdate = { [`settlement/${targetAssignee}/requested`]: true };
@@ -2504,13 +2539,12 @@ import {
                 database.ref(`pt/${scheduleId}`).update(settlementUpdate);
               }
               setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), requested: true } } } : s));
-              // 잔디 정산요청 알림 (admin에게 확인 요청)
               notifySettlementRequest({
                 assignee: targetAssignee,
                 siteName: updatedSchedule.siteName,
                 bidNo: updatedSchedule.bidNo,
-                result,
-                amount: result === '승' ? 500000 : 250000,
+                result: '무',
+                amount: 250000,
                 by: currentUser?.name,
               });
             }
@@ -2633,18 +2667,11 @@ import {
         return editingResults.hasOwnProperty(s.id) ? editingResults[s.id] : s.result;
       };
       
-      // 공고문 공법 기반 자동 판정
-      const judgeResult = (methods) => {
-        if (!methods || methods.length === 0) return null;
-        const normalized = methods.map(m => m.toUpperCase().trim());
-        const hasPour = normalized.includes('POUR');
-        if (hasPour) {
-          const pourFamily = ['POUR', 'DO', 'CNC'];
-          const others = normalized.filter(m => !pourFamily.includes(m));
-          return others.length === 0 ? '승' : '무';
-        }
-        return '패';
-      };
+      // 공고문 공법 기반 자동 판정 (우리 공법 5종: POUR/CNC/DO/DETEX/시멘트분말)
+      // - 우리 공법 중 하나라도 있고 다른 공법 없음 → 승
+      // - 우리 공법 + 타공법 동시 입찰 → 무
+      // - 우리 공법 전혀 없음 → 패
+      const judgeResult = (methods) => judgeResultByMethods(methods);
 
       // 결과 버튼 클릭 핸들러 (승/패/무는 사유 모달, 지원은 바로 저장)
       const handleResultClick = (schedule, result, assignee = null) => {
@@ -4376,7 +4403,8 @@ import {
         const skipY = !yearFilter || yearFilter === 'all';
         const range = skipY ? null : getRange(yearFilter, quarterFilter);
         const combos = {}, indiv = {};
-        const pourFamily = ['POUR', 'DO', 'CNC'];
+        // 우리 회사 공법 5종 (POUR/CNC/DO/DETEX/시멘트분말)
+        const pourFamily = OUR_TECHNOLOGIES.map(t => t.toUpperCase());
 
         ptList.filter(s => {
           if (!s.date || !s.ptAssignee || !s.announcementMethods) return false;
@@ -4385,14 +4413,18 @@ import {
         }).forEach(s => {
           const methods = s.announcementMethods.split(',').map(m => m.trim().toUpperCase()).filter(Boolean);
           if (methods.length === 0) return;
-          const hasPour = methods.includes('POUR');
+          // 우리 공법 5종 중 하나라도 매칭되면 "우리 공법 입찰"로 인정
+          const ourMethods = methods.filter(m => !!matchOurTechnology(m));
+          const hasOurs = ourMethods.length > 0;
           let comboKey;
-          if (hasPour) {
-            const pf = methods.filter(m => pourFamily.includes(m)).sort().join('+');
-            const others = methods.filter(m => !pourFamily.includes(m)).sort();
-            comboKey = others.length === 0 ? (methods.length === 1 ? 'POUR 단독' : pf) : pf + ' vs ' + others.join('+');
+          if (hasOurs) {
+            const pf = ourMethods.sort().join('+');
+            const others = methods.filter(m => !matchOurTechnology(m)).sort();
+            comboKey = others.length === 0
+              ? (methods.length === 1 ? `${ourMethods[0]} 단독` : pf)
+              : pf + ' vs ' + others.join('+');
           } else {
-            comboKey = methods.sort().join('+') + ' (POUR 미포함)';
+            comboKey = methods.sort().join('+') + ' (우리공법 미포함)';
           }
           const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(Boolean);
           const targets = assigneeFilter && assigneeFilter !== 'all' ? assignees.filter(a => a === assigneeFilter) : assignees;

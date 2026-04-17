@@ -3,6 +3,7 @@
 // 발송 시점: 해당 분기 끝난 다음달 마지막 주 월요일 14:00 KST
 
 import * as XLSX from 'xlsx';
+import { OUR_TECHNOLOGIES, extractOurTechnologies, TECHNOLOGY_COLORS } from './technologies.js';
 
 // 정산 대상 담당자 (7명)
 // 이 명단에 포함된 담당자의 데이터만 보고서 집계에 사용
@@ -168,6 +169,7 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
       const confirmDate = (s.resultConfirmDate && s.resultConfirmDate[a]) || s.date;
       if (!inRange(confirmDate, range)) return;
       const verified = isPtVerified(s, a);
+      const ourTechs = extractOurTechnologies(s.announcementMethods);
       const row = {
         date: s.date,
         confirmDate,
@@ -181,6 +183,8 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
         selfPT: !!s.selfPT,
         note: s.note || '',
         verifyReason: getVerifyReason(s, a),
+        announcementMethods: s.announcementMethods || '',
+        ourTechs, // 매칭된 우리 공법 배열 (예: ['POUR', 'CNC'])
       };
       if (verified) ptVerified.push(row);
       else ptUnverified.push(row);
@@ -235,6 +239,22 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
   ptVerified.forEach(r => { const m = r.date.slice(5,7); monthly[r.assignee][m].pt += 1; });
   weekendItems.forEach(w => { const m = w.date.slice(5,7); monthly[w.assignee][m].weekend += 1; });
 
+  // --- 공법별 통계 (POUR/CNC/DO/DETEX/시멘트분말) ---
+  const byTechnology = {};
+  OUR_TECHNOLOGIES.forEach(t => {
+    byTechnology[t] = { count: 0, win: 0, draw: 0, support: 0, amount: 0 };
+  });
+  ptVerified.forEach(r => {
+    r.ourTechs.forEach(t => {
+      if (!byTechnology[t]) return;
+      byTechnology[t].count += 1;
+      if (r.result === '승') byTechnology[t].win += 1;
+      else if (r.result === '무') byTechnology[t].draw += 1;
+      else if (r.result === '지원') byTechnology[t].support += 1;
+      byTechnology[t].amount += r.amount;
+    });
+  });
+
   const totals = {
     weekendDays: summary.reduce((s, r) => s + r.weekendDays, 0),
     weekendWeighted: summary.reduce((s, r) => s + r.weekendWeighted, 0),
@@ -246,7 +266,7 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
   };
 
   return {
-    range, summary, weekendItems, weekendByAssignee, byAssignee,
+    range, summary, weekendItems, weekendByAssignee, byAssignee, byTechnology,
     ptVerified, ptUnverified, monthly, months, totals, year, quarter,
   };
 }
@@ -408,8 +428,23 @@ export function generateExcelBlob(report) {
 
 // === HTML 보고서 (PDF 변환용) ===
 export function buildReportHTML(report) {
-  const { range, summary, byAssignee, weekendByAssignee, totals, year } = report;
+  const { range, summary, byAssignee, weekendByAssignee, byTechnology, totals, year } = report;
   const today = new Date().toISOString().slice(0, 10);
+
+  // 공법별 통계 카드 HTML
+  const techStatsCardsHtml = OUR_TECHNOLOGIES.map(t => {
+    const st = byTechnology[t] || { count: 0, win: 0, draw: 0, support: 0, amount: 0 };
+    const color = TECHNOLOGY_COLORS[t] || { bg: '#f1f5f9', text: '#475569' };
+    return `
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;">
+        <div style="display:inline-block;padding:2px 10px;background:${color.bg};color:${color.text};border-radius:8px;font-size:11px;font-weight:700;">${t}</div>
+        <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:baseline;">
+          <div style="font-size:11px;color:#94a3b8;">${st.count}건 · 승 ${st.win} 무 ${st.draw} 지원 ${st.support}</div>
+          <div style="font-size:16px;font-weight:700;color:${st.amount > 0 ? '#2563eb' : '#cbd5e1'};">${st.amount.toLocaleString()}<span style="font-size:11px;color:#94a3b8;font-weight:500;margin-left:2px;">원</span></div>
+        </div>
+      </div>
+    `;
+  }).join('');
 
   // 담당자별 주말출근 합계 카드 (7개)
   const weekendAssigneeCardsHtml = SETTLEMENT_ASSIGNEES.map(a => {
@@ -580,6 +615,17 @@ export function buildReportHTML(report) {
     </table>
   </div>
 
+  <!-- ===== 공법별 통계 (POUR/CNC/DO/DETEX/시멘트분말) ===== -->
+  <div style="padding:20px 48px 8px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <div style="font-size:15px;font-weight:700;color:#1e293b;">공법별 분기 통계</div>
+      <div style="font-size:11px;color:#64748b;background:#f1f5f9;padding:2px 8px;border-radius:8px;">POUR · CNC · DO · DETEX · 시멘트분말</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;">
+      ${techStatsCardsHtml}
+    </div>
+  </div>
+
   <!-- ===== 주말 출근 (담당자별 합계 카드) ===== -->
   <div style="padding:20px 48px 8px;">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
@@ -624,17 +670,17 @@ export function buildReportHTML(report) {
       <tbody>
         <tr style="border-bottom:1px solid #f1f5f9;">
           <td style="padding:10px 14px;text-align:center;"><span style="display:inline-block;padding:2px 10px;background:#dcfce7;color:#16a34a;border-radius:8px;font-size:11px;font-weight:700;">승</span></td>
-          <td style="padding:10px 14px;color:#475569;">POUR 공법 단독 입찰 (경쟁 공법 없음)</td>
+          <td style="padding:10px 14px;color:#475569;">우리 공법(POUR/CNC/DO/DETEX/시멘트분말) 단독 입찰 — 경쟁 공법 없음</td>
           <td style="padding:10px 14px;text-align:right;color:#1e293b;font-weight:600;">500,000원</td>
         </tr>
         <tr style="border-bottom:1px solid #f1f5f9;">
           <td style="padding:10px 14px;text-align:center;"><span style="display:inline-block;padding:2px 10px;background:#dbeafe;color:#2563eb;border-radius:8px;font-size:11px;font-weight:700;">무</span></td>
-          <td style="padding:10px 14px;color:#475569;">POUR 공법 + 타공법 동시 입찰 (예: 4A시스템 등)</td>
+          <td style="padding:10px 14px;color:#475569;">우리 공법 + 타공법 동시 입찰 (예: 4A시스템 등)</td>
           <td style="padding:10px 14px;text-align:right;color:#1e293b;font-weight:600;">250,000원</td>
         </tr>
         <tr style="border-bottom:1px solid #f1f5f9;">
           <td style="padding:10px 14px;text-align:center;"><span style="display:inline-block;padding:2px 10px;background:#fee2e2;color:#dc2626;border-radius:8px;font-size:11px;font-weight:700;">패</span></td>
-          <td style="padding:10px 14px;color:#475569;">POUR 공법으로 안올라온 공고 (입찰 미참여)</td>
+          <td style="padding:10px 14px;color:#475569;">우리 공법으로 안올라온 공고 (입찰 미참여)</td>
           <td style="padding:10px 14px;text-align:right;color:#94a3b8;font-weight:600;">0원</td>
         </tr>
         <tr>
@@ -645,8 +691,10 @@ export function buildReportHTML(report) {
       </tbody>
     </table>
     <div style="margin-top:8px;font-size:11px;color:#94a3b8;line-height:1.6;">
+      ※ 우리 회사 보유 공법 5종: <strong>POUR · CNC · DO · DETEX · 시멘트분말</strong> (특허 88건)<br />
       ※ 협약사 자체PT(selfPT) 및 본인영업 건은 정산 대상에서 제외 (0원 처리)<br />
-      ※ 주말 출근 1일 = 환산 1.5일 (보상연차 환산)
+      ※ 주말 출근 1일 = 환산 1.5일 (보상연차 환산)<br />
+      ※ 무승부 → 승리 예외 신청은 admin 승인 후 인정 (공고문 없는 현장 등)
     </div>
   </div>
 
