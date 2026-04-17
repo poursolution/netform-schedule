@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>POUR영업운영시스템</title>
+  
+  <!-- PWA -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="POUR영업">
+  <meta name="theme-color" content="#1e293b">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/icon-180.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="/icon-180.png">
+  <link rel="apple-touch-icon" sizes="120x120" href="/icon-180.png">
+  
+  <!-- Firebase (compat 버전 - CDN) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-messaging-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
+  
+  <!-- html2canvas -->
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  
+  <style>
+    .spinner { width: 40px; height: 40px; border: 4px solid #e2e8f0; border-top-color: #2563eb; border-radius: 50%; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <!-- 뒤로가기 방지용 히스토리 -->
+  <script>
+    (function() {
+      window.history.replaceState({ page: 'app-init' }, '', window.location.href);
+      for (var i = 0; i < 15; i++) {
+        window.history.pushState({ page: 'app', idx: i }, '', window.location.href);
+      }
+    })();
+  </script>
+  
+  <!-- 로딩 화면 -->
+  <div id="loader" style="position:fixed;top:0;left:0;right:0;bottom:0;background:#f8fafc;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999">
+    <div style="font-size:48px;margin-bottom:16px">📅</div>
+    <div class="spinner"></div>
+  </div>
+  
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>

@@ -1,0 +1,13877 @@
+import React, { useState, useEffect } from 'react';
+
+    // 시스템 명칭 상수
+    const APP_NAME = 'POUR영업운영시스템';
+
+    // ⚠️ Firebase 설정 - 아래 값들을 본인의 Firebase 프로젝트 정보로 변경하세요!
+    const firebaseConfig = {
+      apiKey: "AIzaSyCzngaCcenhH1tmZ7syugpI3H1wYBVhiJQ",
+      authDomain: "test-168a4.firebaseapp.com",
+      databaseURL: "https://test-168a4-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "test-168a4",
+      storageBucket: "test-168a4.firebasestorage.app",
+      messagingSenderId: "955362696992",
+      appId: "1:955362696992:web:234b098db17412be27c145"
+    };
+
+    // 외부 Firebase (넷폼 하이웍스 휴가 데이터)
+    const HIWORKS_VACATION_URL = 'https://test-168a4-default-rtdb.asia-southeast1.firebasedatabase.app/hiworks_vacation_sync.json';
+
+    // Firebase 초기화
+    let app, database, storage;
+    let firebaseEnabled = false;
+    let storageEnabled = false;
+    try {
+      // Firebase 설정이 실제로 되어있는지 확인
+      if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_API_KEY") {
+        app = firebase.initializeApp(firebaseConfig);
+        database = firebase.database();
+        firebaseEnabled = true;
+        // Storage 초기화 (별도 try-catch)
+        try {
+          if (typeof firebase.storage === 'function') {
+            storage = firebase.storage();
+            storageEnabled = true;
+          }
+        } catch (storageError) {
+          console.log('Storage 초기화 스킵:', storageError);
+        }
+      }
+    } catch (e) {
+      console.log('Firebase 초기화 오류:', e);
+    }
+    
+    // 로컬 스토리지 저장/로드 함수
+    const saveToLocal = (key, data) => {
+      try {
+        localStorage.setItem(key, JSON.stringify(data));
+      } catch (e) {
+        console.log('로컬 저장 오류:', e);
+      }
+    };
+    
+    const loadFromLocal = (key) => {
+      try {
+        const data = localStorage.getItem(key);
+        return data ? JSON.parse(data) : null;
+      } catch (e) {
+        console.log('로컬 로드 오류:', e);
+        return null;
+      }
+    };
+
+    const ScheduleManager = () => {
+      const [isLoading, setIsLoading] = useState(false);
+      const [dbConnected, setDbConnected] = useState(false);
+      const [lastSaved, setLastSaved] = useState(null);
+      const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+      
+      // PWA 설치 관련
+      const [showInstallBanner, setShowInstallBanner] = useState(false);
+      const [deferredPrompt, setDeferredPrompt] = useState(null);
+      
+      // PWA 설치 프롬프트 감지
+      useEffect(() => {
+        // 이미 standalone 모드(앱으로 설치됨)면 배너 안보임
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+        if (isStandalone) {
+          return;
+        }
+        
+        // 모바일이면 1초 후 무조건 배너 표시
+        if (window.innerWidth <= 768) {
+          const timer = setTimeout(() => {
+            setShowInstallBanner(true);
+          }, 1000);
+          return () => clearTimeout(timer);
+        }
+        
+        // Android/Chrome에서 beforeinstallprompt 이벤트 감지
+        const handleBeforeInstall = (e) => {
+          e.preventDefault();
+          setDeferredPrompt(e);
+        };
+        
+        window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+        
+        return () => {
+          window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+        };
+      }, []);
+      
+      // PWA 설치 핸들러
+      const handleInstall = async () => {
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        const isKakao = /KAKAOTALK/i.test(navigator.userAgent);
+        const isSamsung = /SamsungBrowser/i.test(navigator.userAgent);
+        const isChrome = /CriOS/i.test(navigator.userAgent); // iOS Chrome
+        const isIOSSafari = isIOS && /Safari/i.test(navigator.userAgent) && !isChrome && !isKakao;
+        
+        if (isKakao) {
+          alert('카카오톡에서는 설치할 수 없어요!\n\n- 오른쪽 상단 메뉴\n- "다른 브라우저로 열기" 선택\n- Safari에서 다시 시도해주세요');
+        } else if (isIOS && !isIOSSafari) {
+          // iOS인데 Safari가 아닌 경우 (Chrome 등)
+          alert('Safari에서만 설치 가능해요!\n\n- Safari 앱을 열고\n- 이 페이지 주소를 붙여넣기\n- 그 다음 하단 공유버튼 터치');
+        } else if (isIOS) {
+          alert('아이폰 홈화면 추가 방법\n\n1. 화면 하단의 공유 버튼 터치\n    (네모에서 화살표 나오는 아이콘)\n\n2. 아래로 스크롤해서\n    "홈 화면에 추가" 터치\n\n3. 오른쪽 상단 "추가" 터치\n\n홈화면에 앱 아이콘이 생깁니다.');
+        } else if (deferredPrompt) {
+          // Chrome 등에서 직접 설치 프롬프트
+          deferredPrompt.prompt();
+          const { outcome } = await deferredPrompt.userChoice;
+          setDeferredPrompt(null);
+          if (outcome === 'accepted') {
+            setShowInstallBanner(false);
+            localStorage.setItem('pwa-dismissed', 'true');
+            return;
+          }
+        } else if (isSamsung) {
+          alert('바탕화면 추가 방법\n\n1. 하단 ≡ 메뉴 터치\n2. "홈 화면에 추가" 또는 "+ 페이지 추가" 선택');
+        } else {
+          alert('바탕화면 추가 방법\n\n1. 브라우저 메뉴 ⋮ 터치\n2. "홈 화면에 추가" 또는 "앱 설치" 선택');
+        }
+        setShowInstallBanner(false);
+        localStorage.setItem('pwa-dismissed', 'true');
+      };
+      
+      // 배너 닫기
+      const handleCloseBanner = () => {
+        setShowInstallBanner(false);
+        localStorage.setItem('pwa-dismissed', 'true');
+      };
+      
+      // 화면 크기 변경 감지
+      useEffect(() => {
+        const handleResize = () => setIsMobile(window.innerWidth <= 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+      }, []);
+
+      // 브라우저 타이틀 동적 설정
+      const updatePageTitle = (subPage) => {
+        document.title = subPage ? `${APP_NAME} | ${subPage}` : APP_NAME;
+      };
+      
+      
+      const [currentDate, setCurrentDate] = useState(new Date());
+      const [selectedDate, setSelectedDate] = useState({ year: new Date().getFullYear(), month: new Date().getMonth(), day: new Date().getDate() });
+      const [viewMode, setViewMode] = useState('calendar');
+      const [scheduleType, setScheduleType] = useState('all');
+      const [listFilter, setListFilter] = useState('upcoming');
+      const [simpleViewMode, setSimpleViewMode] = useState(true); // 간단 모드 (외근자용)
+      const [listMonth, setListMonth] = useState('all'); // 월별 필터 (예: '2025-12', 'all')
+      const [listYear, setListYear] = useState('all'); // 년도 필터
+      const [listMonthOnly, setListMonthOnly] = useState('all'); // 월만 필터
+      const [searchQuery, setSearchQuery] = useState(''); // 검색어
+      const [showModal, setShowModal] = useState(false);
+      const [modalType, setModalType] = useState('pt');
+      const [showSettings, setShowSettings] = useState(false);
+      const [sheetUrl, setSheetUrl] = useState('https://docs.google.com/spreadsheets/d/e/2PACX-1vRe4tTk4VUg0P5dPPEUy0W6XgJHNBHB7iEwxTdMfMwPvSu-P4qzXquDQBUVCz1zzq_p6ljfAlrZYPMV/pub?gid=1478240654&single=true&output=csv');
+      const [showPerformance, setShowPerformance] = useState(false);
+      const [selectedAssignee, setSelectedAssignee] = useState('all');
+      const [performancePeriod, setPerformancePeriod] = useState('all'); // q1, q2, q3, q4, all
+      const [performanceYear, setPerformanceYear] = useState(new Date().getFullYear().toString()); // 연도 필터
+      const [showWinAnalysis, setShowWinAnalysis] = useState(false);
+      const [showLossAnalysis, setShowLossAnalysis] = useState(false);
+      const [showInProgressAnalysis, setShowInProgressAnalysis] = useState(false);
+      const [showWorkTypeAnalysis, setShowWorkTypeAnalysis] = useState(false);
+      const [showLossReasonAnalysis, setShowLossReasonAnalysis] = useState(false);
+      const [dashboardView, setDashboardView] = useState('overview'); // 'overview' | 'analysis' | 'summary'
+      const [summarySubTab, setSummarySubTab] = useState('byWorkType'); // 'byWorkType' | 'byCompany'
+      const [selectedMainCategory, setSelectedMainCategory] = useState(null); // 공종별 대분류 선택
+      const [kanbanTab, setKanbanTab] = useState('inProgress'); // 모바일 칸반 탭
+      const [selectedCategoryTab, setSelectedCategoryTab] = useState('전체'); // 공종 분석 탭
+      const [lossTypeMode, setLossTypeMode] = useState('refined'); // 'basic' | 'refined' 패배 유형 모드
+      const [expandedAssigneeAnalysis, setExpandedAssigneeAnalysis] = useState(null); // 담당자 분석 펼침
+      const [expandedCompany, setExpandedCompany] = useState(null); // 업체별 현황 펼침
+      const [previewAssignee, setPreviewAssignee] = useState(null); // 담당자 현장목록 프리뷰
+      const [siteListTab, setSiteListTab] = useState('all'); // 현장목록 상태 탭
+      const [settlementFilter, setSettlementFilter] = useState('all'); // all, pending, requested, completed
+      const [selectedWorkTypes, setSelectedWorkTypes] = useState([]); // 공종 필터 (멀티셀렉트)
+      const [showWorkTypeFilter, setShowWorkTypeFilter] = useState(false);
+      const [showSalesView, setShowSalesView] = useState(false);
+      const [selectedPerson, setSelectedPerson] = useState(null);
+      
+      // 2025년 영업 데이터 상태
+      const [salesData2025, setSalesData2025] = useState({
+        '영업1팀': { total: 138, revenue: 7302850000, progressRate: 71, winRate: 46, lossRate: 54 },
+        '영업2팀': { total: 94, revenue: 11385000000, progressRate: 45, winRate: 67, lossRate: 33 },
+        '영업3팀': { total: 102, revenue: 3161600000, progressRate: 73, winRate: 23, lossRate: 77 }
+      });
+      const [personalSalesData2025, setPersonalSalesData2025] = useState({
+        '한준엽': { total: 88, revenue: 6359700000, progressRate: 76, winRate: 51, lossRate: 49 },
+        '조재연': { total: 0, revenue: 0, progressRate: 0, winRate: 0, lossRate: 0 },
+        '정정훈': { total: 26, revenue: 160950000, progressRate: 54, winRate: 50, lossRate: 50 },
+        '김성민': { total: 24, revenue: 782200000, progressRate: 71, winRate: 24, lossRate: 76 },
+        '이필선': { total: 94, revenue: 11385000000, progressRate: 45, winRate: 67, lossRate: 33 },
+        '조현식': { total: 3, revenue: 6300000, progressRate: 100, winRate: 67, lossRate: 33 },
+        '한인규': { total: 99, revenue: 3155300000, progressRate: 72, winRate: 21, lossRate: 79 }
+      });
+      const [uploadResult, setUploadResult] = useState(null);
+      const [rawSalesData, setRawSalesData] = useState([]);
+      const [salesFilter, setSalesFilter] = useState('전체');
+      const [mainYearFilter, setMainYearFilter] = useState('2026');
+      
+      // Kanban 영업관리 상태
+      const [kanbanAssigneeFilter, setKanbanAssigneeFilter] = useState('all');
+      const [kanbanSearchTerm, setKanbanSearchTerm] = useState('');
+      const [selectedCrmItem, setSelectedCrmItem] = useState(null);
+      const [kanbanBrandFilter, setKanbanBrandFilter] = useState('all');
+      const [kanbanYearFilter, setKanbanYearFilter] = useState('2026');
+      const [salesStatusFilter, setSalesStatusFilter] = useState('all');
+      
+      // 엑셀 파일 업로드 처리
+      const handleExcelUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        try {
+          const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs');
+          const data = await file.arrayBuffer();
+          const workbook = XLSX.read(data);
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const jsonData = XLSX.utils.sheet_to_json(sheet);
+          
+          // 필터링: 아파트스퀘어, 석민이앤씨, POUR솔루션만 (잠재고객 제외)
+          const targetLists = ['아파트스퀘어', '석민이앤씨', 'POUR솔루션'];
+          const filtered = jsonData.filter(row => {
+            const pl = (row['Process List name'] || '').trim();
+            return targetLists.includes(pl);
+          });
+          
+          // 중복 체크 (Process entry id 기준)
+          const existingIdsList = rawSalesData.map(d => d.entryId);
+          let newCount = 0, updateCount = 0, skipCount = 0;
+          
+          const processedData = [];
+          filtered.forEach(row => {
+            const entryId = row['Process entry id'];
+            const status = row['Process status name'] || '';
+            const processList = row['Process List name'] || '';
+            
+            // 수주성공/실패 분류
+            let result = '진행중';
+            if (status.includes('수주 성공') || status.includes('Closed won') || status.includes('Closed Won')) {
+              result = '수주성공';
+            } else if (status.includes('수주 실패') || status.includes('Closed lost') || status.includes('Closed Lost')) {
+              result = '수주실패';
+            }
+            
+            // 담당자 파싱 (여러 컬럼에서 찾기 + 중복 담당자 지원)
+            // 우선순위: 담당자 > 영업담당자 > Assignee email에서 추출
+            let assigneeRaw = row['담당자'] || '';
+            if (!assigneeRaw) {
+              assigneeRaw = row['영업담당자'] || '';
+            }
+            // 담당자가 여러명일 수 있음 (쉼표, 슬래시 등으로 구분)
+            const assignees = assigneeRaw ? assigneeRaw.split(/[,\/\s]+/).map(a => a.trim()).filter(a => a) : [];
+            const assignee = assignees.length > 0 ? assignees[0] : ''; // 첫 번째 담당자
+            const assigneeAll = assignees.join(', '); // 모든 담당자
+            
+            // 공사계획년도 (브랜드별 우선, 공통은 마지막)
+            let constructionYear = '';
+            if (processList === '석민이앤씨') {
+              constructionYear = row['석민이앤씨 > 공사계획년도'] || row['공사계획년도 *'] || '';
+            } else if (processList === '아파트스퀘어') {
+              constructionYear = row['아파트스퀘어 > 공사계획년도'] || row['공사계획년도 *'] || '';
+            } else if (processList === 'POUR솔루션') {
+              constructionYear = row['POUR솔루션 > 공사계획년도'] || row['공사계획년도 *'] || '';
+            } else {
+              constructionYear = row['공사계획년도 *'] || row['공사계획년도'] || '';
+            }
+            
+            // 공종 (대분류, 소분류)
+            let majorCategory = '';
+            let minorCategory = '';
+            if (processList === '석민이앤씨') {
+              majorCategory = row['석민이앤씨 > 공종(대분류)'] || row['공종(대분류) *'] || '';
+              minorCategory = row['석민이앤씨 > 공종(소분류)'] || row['공종(소분류) *'] || '';
+            } else if (processList === '아파트스퀘어') {
+              majorCategory = row['아파트스퀘어 > 공종(대분류)'] || row['공종(대분류) *'] || '';
+              minorCategory = row['아파트스퀘어 > 공종(소분류)'] || row['공종(소분류) *'] || '';
+            } else if (processList === 'POUR솔루션') {
+              majorCategory = row['POUR솔루션 > 공종(대분류)'] || row['공종(대분류) *'] || '';
+              minorCategory = row['POUR솔루션 > 공종(소분류)'] || row['공종(소분류) *'] || '';
+            } else {
+              majorCategory = row['공종(대분류) *'] || '';
+              minorCategory = row['공종(소분류) *'] || '';
+            }
+            
+            // 예정공사일정 (브랜드별)
+            let scheduledDate = '';
+            if (processList === '석민이앤씨') {
+              scheduledDate = row['석민이앤씨 > 예정공사일정'] || row['예정공사일정 *'] || '';
+            } else if (processList === '아파트스퀘어') {
+              scheduledDate = row['아파트스퀘어 > 예정공사일정'] || row['예정공사일정 *'] || '';
+            } else if (processList === 'POUR솔루션') {
+              scheduledDate = row['POUR솔루션 > 예정공사일정'] || row['예정공사일정 *'] || '';
+            } else {
+              scheduledDate = row['예정공사일정 *'] || '';
+            }
+            
+            // 1차미팅일정 (브랜드별)
+            let firstMeetingDate = '';
+            if (processList === '석민이앤씨') {
+              firstMeetingDate = row['석민이앤씨 > 1차미팅일정'] || row['1차미팅일정 *'] || '';
+            } else if (processList === '아파트스퀘어') {
+              firstMeetingDate = row['아파트스퀘어 > 1차미팅일정'] || row['1차미팅일정 *'] || '';
+            } else if (processList === 'POUR솔루션') {
+              firstMeetingDate = row['POUR솔루션 > 1차미팅일정'] || row['1차미팅일정 *'] || '';
+            } else {
+              firstMeetingDate = row['1차미팅일정 *'] || '';
+            }
+            
+            // 경쟁사 (브랜드별)
+            let competitor = '';
+            if (processList === '석민이앤씨') {
+              competitor = row['석민이앤씨 > 경쟁사'] || row['경쟁사 *'] || '';
+            } else if (processList === '아파트스퀘어') {
+              competitor = row['아파트스퀘어 > 경쟁사'] || row['경쟁사 *'] || '';
+            } else if (processList === 'POUR솔루션') {
+              competitor = row['POUR솔루션 > 경쟁사'] || row['경쟁사 *'] || '';
+            } else {
+              competitor = row['경쟁사 *'] || '';
+            }
+            
+            // note (브랜드별)
+            let note = '';
+            if (processList === '석민이앤씨') {
+              note = row['석민이앤씨 > note'] || row['note *'] || '';
+            } else if (processList === '아파트스퀘어') {
+              note = row['아파트스퀘어 > note'] || row['note *'] || '';
+            } else if (processList === 'POUR솔루션') {
+              note = row['POUR솔루션 > note'] || row['note *'] || '';
+            } else {
+              note = row['note *'] || '';
+            }
+            
+            // 컨설팅자료전달기일 (브랜드별)
+            let consultingDate = '';
+            if (processList === '석민이앤씨') {
+              consultingDate = row['석민이앤씨 > 컨설팅자료전달기일'] || row['컨설팅자료전달기일 *'] || '';
+            } else if (processList === '아파트스퀘어') {
+              consultingDate = row['아파트스퀘어 > 컨설팅자료전달기일'] || row['컨설팅자료전달기일 *'] || '';
+            } else if (processList === 'POUR솔루션') {
+              consultingDate = row['POUR솔루션 > 컨설팅자료전달기일'] || row['컨설팅자료전달기일 *'] || '';
+            } else {
+              consultingDate = row['컨설팅자료전달기일 *'] || '';
+            }
+            
+            const record = {
+              entryId,
+              entryKey: row['Process entry key'] || '',
+              processList,
+              status,
+              result,
+              revenue: row['Process entry one time value'] || 0,
+              monthlyValue: row['Process entry monthly value'] || 0,
+              annualValue: row['Process entry annualized value'] || 0,
+              
+              // 담당자 정보 (중복 지원)
+              assignee,           // 첫 번째 담당자
+              assigneeAll,        // 모든 담당자 (쉼표 구분)
+              assignees,          // 담당자 배열
+              assigneeEmail: row['Assignee email'] || '',
+              
+              // 조직 정보
+              orgName: row['Organization name'] || '',
+              orgDomain: row['Organization domain'] || '',
+              buildingType: row['건물유형'] || '',
+              
+              // 단지 정보
+              households: row['단지규모[세대수]'] || '',
+              buildings: row['단지규모[동수]'] || '',
+              
+              // 날짜 정보
+              createdDate: row['Process entry creation date'] || '',
+              updatedDate: row['Process entry updated date'] || '',
+              statusUpdatedDate: row['Process entry status updated date'] || '',
+              closedDate: row['Process entry closed date'] || '',
+              
+              // 공사 관련
+              constructionYear,
+              scheduledDate,
+              firstMeetingDate,
+              consultingDate,
+              
+              // 분류 정보
+              majorCategory,
+              minorCategory,
+              
+              // 기타 정보
+              competitor,
+              note,
+              
+              // 연락처 정보
+              contactName: row['Contact name'] || '',
+              contactPhone: row['Contact phone number'] || '',
+              contactEmail: row['Contact emails'] || '',
+              phone: row['연락처'] || '',
+              email: row['메일주소'] || '',
+              
+              // 유입 정보
+              inflowRoute: row['유입경로'] || row['유입경로(세부사항)'] || '',
+              inflowDate: row['잠재고객 > 유입일자'] || '',
+              inflowChannel: row['잠재고객 > 유입 브랜드 채널'] || ''
+            };
+            
+            // 첫 번째 행에서 디버깅 정보 출력
+            if (processedData.length === 0) {
+              console.log('=== CRM 데이터 파싱 정보 ===');
+              console.log('전체 컬럼 수:', Object.keys(row).length);
+              console.log('샘플 레코드:', record);
+            }
+            
+            if (existingIdsList.includes(entryId)) {
+              updateCount++;
+            } else {
+              newCount++;
+            }
+            processedData.push(record);
+          });
+          
+          // 통계 계산
+          const team1Members = ['한준엽', '조재연', '정정훈', '김성민'];
+          const team2Members = ['이필선'];
+          const team3Members = ['조현식', '한인규'];
+          
+          const calcStats = (members, data, filter = '전체') => {
+            let teamData = data.filter(d => members.includes(d.assignee));
+            if (filter !== '전체') {
+              teamData = teamData.filter(d => d.processList === filter);
+            }
+            const total = teamData.length;
+            const wins = teamData.filter(d => d.result === '수주성공').length;
+            const losses = teamData.filter(d => d.result === '수주실패').length;
+            const withResult = wins + losses;
+            const revenue = teamData.reduce((sum, d) => sum + (parseFloat(d.revenue) || 0), 0);
+            
+            return {
+              total,
+              revenue,
+              progressRate: total > 0 ? Math.round(withResult / total * 100) : 0,
+              winRate: withResult > 0 ? Math.round(wins / withResult * 100) : 0,
+              lossRate: withResult > 0 ? Math.round(losses / withResult * 100) : 0
+            };
+          };
+          
+          const newTeamStats = {
+            '영업1팀': calcStats(team1Members, processedData),
+            '영업2팀': calcStats(team2Members, processedData),
+            '영업3팀': calcStats(team3Members, processedData)
+          };
+          
+          const newPersonalStats = {};
+          [...team1Members, ...team2Members, ...team3Members].forEach(name => {
+            newPersonalStats[name] = calcStats([name], processedData);
+          });
+          
+          // Firebase에 저장
+          const rawDataObj = {};
+          processedData.forEach(d => {
+            rawDataObj[d.entryId] = d;
+          });
+          
+          await database.ref('salesData2025').set({
+            teamStats: newTeamStats,
+            personalStats: newPersonalStats,
+            rawData: rawDataObj,
+            lastUpdated: new Date().toISOString()
+          });
+          
+          // 상태 업데이트
+          setSalesData2025(newTeamStats);
+          setPersonalSalesData2025(newPersonalStats);
+          setRawSalesData(processedData);
+          
+          setUploadResult({
+            success: true,
+            total: filtered.length,
+            new: newCount,
+            updated: updateCount,
+            message: '총 ' + filtered.length + '건 처리 (신규 ' + newCount + '건, 업데이트 ' + updateCount + '건)' 
+          });
+          
+          // 3초 후 결과 메시지 숨김
+          setTimeout(() => setUploadResult(null), 5000);
+          
+        } catch (error) {
+          console.error('Excel upload error:', error);
+          setUploadResult({
+            success: false,
+            message: '파일 처리 중 오류가 발생했습니다: ' + error.message
+          });
+        }
+        
+        // input 초기화
+        e.target.value = '';
+      };
+      const [showDashboard, setShowDashboard] = useState(true);
+      // 메인 접근 권한 체크 (admin, 이승우, 황윤선만)
+      const canAccessMain = (acc) => acc.isAdmin || acc.name === '이승우' || acc.name === '황윤선';
+      const [salesSchedules, setSalesSchedules] = useState([]);
+      const [showSalesModal, setShowSalesModal] = useState(false);
+      const [editingSales, setEditingSales] = useState(null);
+      
+      // 계정 관리 (admin 전용)
+      const [showAccountManager, setShowAccountManager] = useState(false);
+      const [newAccountId, setNewAccountId] = useState('');
+      const [newAccountPw, setNewAccountPw] = useState('');
+      const [newAccountName, setNewAccountName] = useState('');
+      const [editingAccountId, setEditingAccountId] = useState(null);
+      
+      // 실적 사유 입력 모달
+      const [showResultReasonModal, setShowResultReasonModal] = useState(false);
+      const [resultReasonData, setResultReasonData] = useState({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false, isResultChange: false, previousResult: null });
+      const [editingAdminNotes, setEditingAdminNotes] = useState({}); // key: scheduleId_assigneeName
+      const [editingUserMemos, setEditingUserMemos] = useState({}); // key: scheduleId
+      const [expandedRiskRow, setExpandedRiskRow] = useState(null); // 리스크 파이프라인 드롭다운
+
+      // 날짜 상세 패널 일정 추가 드롭다운
+      const [showAddScheduleDropdown, setShowAddScheduleDropdown] = useState(false);
+      const [showAddTypeModal, setShowAddTypeModal] = useState(false);
+      const [addTypeModalDate, setAddTypeModalDate] = useState(null);
+      
+      // 회의 관리
+      const [meetingSchedules, setMeetingSchedules] = useState([]);
+      const [showMeetingView, setShowMeetingView] = useState(false);
+      const [showMyPage, setShowMyPage] = useState(false);
+      const [myPageUser, setMyPageUser] = useState(null);
+      const [myPageTab, setMyPageTab] = useState('overview');
+      const [myPageOpenStage, setMyPageOpenStage] = useState(null);
+
+      // 미확정 PT 관리
+      const [showUnconfirmedPtModal, setShowUnconfirmedPtModal] = useState(false);
+      const [unconfirmedPtFilter, setUnconfirmedPtFilter] = useState('all');
+      const [unconfirmedPtQuarter, setUnconfirmedPtQuarter] = useState('current');
+      const [unconfirmedPtAssignee, setUnconfirmedPtAssignee] = useState(null);
+      const [unconfirmedPtResultDropdown, setUnconfirmedPtResultDropdown] = useState(null);
+
+      // 분기 정산 확인
+      const [quarterConfirmations, setQuarterConfirmations] = useState({});
+
+      // 공법 선택 모달
+      const [showMethodSelectionModal, setShowMethodSelectionModal] = useState(false);
+      const [methodSelectionData, setMethodSelectionData] = useState({
+        scheduleId: null, assignee: null,
+        selectedMethods: [], customMethod: '',
+        recommendedResult: null, step: 1
+      });
+
+      // 실적요약 drill-down
+      const [showDrilldownModal, setShowDrilldownModal] = useState(false);
+      const [drilldownFilter, setDrilldownFilter] = useState('all'); // 'all' | '승' | '패' | '무' | 'month' | 'settlement'
+      const [drilldownTitle, setDrilldownTitle] = useState('');
+      const [drilldownUser, setDrilldownUser] = useState('');
+
+      // 파이프라인
+      const [pipelineData, setPipelineData] = useState([]);
+      const [pipelineViewMode, setPipelineViewMode] = useState('kanban');
+      const [pipelineSortField, setPipelineSortField] = useState('orgName');
+      const [pipelineSortDir, setPipelineSortDir] = useState('asc');
+      const [pipelineSearchTerm, setPipelineSearchTerm] = useState('');
+      const [pipelineBrandFilter, setPipelineBrandFilter] = useState('all');
+      const [pipelineAssigneeFilter, setPipelineAssigneeFilter] = useState('all');
+      const [pipelineStageTypeFilter, setPipelineStageTypeFilter] = useState('all');
+      const [selectedPipelineItem, setSelectedPipelineItem] = useState(null);
+      const [pipelineLastSync, setPipelineLastSync] = useState(null);
+      const [pipelineYearFilter, setPipelineYearFilter] = useState('all');
+      const [pipelineSource, setPipelineSource] = useState('global'); // 'global' | 'mypage'
+      const [myPagePipelineTab, setMyPagePipelineTab] = useState('summary');
+      const [showMeetingModal, setShowMeetingModal] = useState(false);
+      const [showMeetingDetailModal, setShowMeetingDetailModal] = useState(false);
+      const [selectedMeeting, setSelectedMeeting] = useState(null);
+      const [showMeetingForceCheckModal, setShowMeetingForceCheckModal] = useState(false);
+      const [pendingMeetingsForUser, setPendingMeetingsForUser] = useState([]);
+      const [newMeeting, setNewMeeting] = useState({ title: '', date: '', time: '', location: '', attendees: [] });
+      const [showMinutesViewer, setShowMinutesViewer] = useState(false);
+      
+      // 로그인 시스템
+      const [isLoggedIn, setIsLoggedIn] = useState(false);
+      const [currentUser, setCurrentUser] = useState(null);
+      const [showLoginModal, setShowLoginModal] = useState(false);
+      const [loginId, setLoginId] = useState('');
+      const [loginPw, setLoginPw] = useState('');
+      const [loginError, setLoginError] = useState('');
+      
+      // 승무패 수정 상태
+      const [editingResults, setEditingResults] = useState({});
+      const [hasResultChanges, setHasResultChanges] = useState(false);
+      const [dirtyScheduleIds, setDirtyScheduleIds] = useState(new Set());
+      const [showExportDropdown, setShowExportDropdown] = useState(false);
+      const [showRequestedDropdown, setShowRequestedDropdown] = useState(false);
+      
+      // 드롭다운 외부 클릭 시 닫기
+      useEffect(() => {
+        const handleClickOutside = (e) => {
+          if (showRequestedDropdown && !e.target.closest('[data-requested-dropdown]')) {
+            setShowRequestedDropdown(false);
+          }
+        };
+        document.addEventListener('click', handleClickOutside);
+        return () => document.removeEventListener('click', handleClickOutside);
+      }, [showRequestedDropdown]);
+      
+      // 실적 내보내기 필터
+      const [exportYear, setExportYear] = useState('all');
+      const [exportQuarter, setExportQuarter] = useState('all');
+      
+      // 비밀번호 관리 모달
+      const [showPasswordModal, setShowPasswordModal] = useState(false);
+      
+      // 내 비밀번호 변경 모달
+      const [showMyPasswordModal, setShowMyPasswordModal] = useState(false);
+      const [currentPassword, setCurrentPassword] = useState('');
+      const [newPassword, setNewPassword] = useState('');
+      const [confirmPassword, setConfirmPassword] = useState('');
+      const [passwordError, setPasswordError] = useState('');
+      const [passwordChanges, setPasswordChanges] = useState({});
+      
+      // 중복 관리 모달
+      const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+      
+      // 푸시 알림 관련
+      const [pushEnabled, setPushEnabled] = useState(false);
+      const [pushToken, setPushToken] = useState(null);
+      const [showPushModal, setShowPushModal] = useState(false);
+      
+      // 접속 시 일정 알림 팝업
+      const [showScheduleAlert, setShowScheduleAlert] = useState(false);
+      const [hiworksVacations, setHiworksVacations] = useState([]);
+      const [hiworksSyncLoading, setHiworksSyncLoading] = useState(false);
+      const [hiworksLastSync, setHiworksLastSync] = useState(null);
+      const [myUpcomingSchedules, setMyUpcomingSchedules] = useState([]);
+      
+      // 구글시트 가져오기
+      const [isImporting, setIsImporting] = useState(false);
+      const [importStatus, setImportStatus] = useState(null);
+      const [importMode, setImportMode] = useState('merge'); // 'replace', 'merge', 'addNew'
+      const [sheetTab, setSheetTab] = useState('import'); // 'import', 'export'
+      
+      // CSV 내보내기 함수
+      const handleExportCSV = (type) => {
+        let data = [];
+        let filename = '';
+        
+        if (type === 'pt' || type === 'all') {
+          const ptData = ptSchedules.map(s => ({
+            '현장명': s.siteName || '',
+            '주소': s.address || '',
+            '일정': s.dateType === 'confirmed' ? s.date : (s.dateType === 'monthOnly' ? s.expectedMonth : '미정'),
+            '시간': s.time || '',
+            '참여인원': s.participants || '',
+            '공종': s.workType || '',
+            '메인': s.mainCategory || '',
+            '업체': s.requester || '',
+            '담당자': s.contactPerson || '',
+            '경쟁사': s.competitor || '',
+            '써밋': s.useSummit ? 'O' : 'X',
+            '상태': s.status || '확정',
+            'PT담당자': s.ptAssignee || '',
+            '결과': s.result === 'win' ? '수주' : s.result === 'lose' ? '실주' : s.result === 'pending' ? '보류' : '',
+            '비고': s.note || ''
+          }));
+          data = [...data, ...ptData];
+          filename = type === 'pt' ? 'PT일정_' : '전체일정_';
+        }
+        
+        if (type === 'all') {
+          const brData = briefingSchedules.map(s => ({
+            '현장명': s.siteName || '',
+            '주소': s.address || '',
+            '일정': s.date || '',
+            '시간': s.time || '',
+            '참여인원': '',
+            '공종': '현설',
+            '메인': '',
+            '업체': '',
+            '담당자': s.assignee || '',
+            '경쟁사': '',
+            '써밋': '',
+            '상태': s.status || '',
+            'PT담당자': '',
+            '결과': '',
+            '비고': s.note || ''
+          }));
+          const perData = personalSchedules.map(s => ({
+            '현장명': s.title || '',
+            '주소': s.location || '',
+            '일정': s.date || '',
+            '시간': s.time || '',
+            '참여인원': '',
+            '공종': '개인일정',
+            '메인': '',
+            '업체': '',
+            '담당자': (s.assignees || []).join('/'),
+            '경쟁사': '',
+            '써밋': '',
+            '상태': '',
+            'PT담당자': '',
+            '결과': '',
+            '비고': s.note || ''
+          }));
+          data = [...data, ...brData, ...perData];
+        }
+        
+        if (data.length === 0) {
+          alert('내보낼 데이터가 없습니다.');
+          return;
+        }
+        
+        // CSV 생성
+        const headers = Object.keys(data[0]);
+        const csvContent = [
+          headers.join(','),
+          ...data.map(row => headers.map(h => `"${(row[h] || '').replace(/"/g, '""')}"`).join(','))
+        ].join('\n');
+        
+        // 다운로드
+        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${filename}${new Date().toISOString().slice(0,10)}.csv`;
+        link.click();
+      };
+      
+      // CSV 파싱 함수
+      const parseCSV = (text) => {
+        const lines = text.split('\n');
+        const headers = lines[0].split(',').map(h => h.trim());
+        const data = [];
+        
+        for (let i = 1; i < lines.length; i++) {
+          if (!lines[i].trim()) continue;
+          
+          // CSV 파싱 (쉼표가 포함된 값 처리)
+          const values = [];
+          let current = '';
+          let inQuotes = false;
+          
+          for (let char of lines[i]) {
+            if (char === '"') {
+              inQuotes = !inQuotes;
+            } else if (char === ',' && !inQuotes) {
+              values.push(current.trim());
+              current = '';
+            } else {
+              current += char;
+            }
+          }
+          values.push(current.trim());
+          
+          const row = {};
+          headers.forEach((h, idx) => {
+            row[h] = values[idx] || '';
+          });
+          data.push(row);
+        }
+        return data;
+      };
+      
+      // 구글시트에서 데이터 가져오기
+      const handleImportFromSheet = async () => {
+        if (!sheetUrl) return;
+        
+        setIsImporting(true);
+        setImportStatus({ type: 'loading', message: '데이터를 가져오는 중...' });
+        
+        try {
+          // 여러 CORS 프록시 시도
+          const proxies = [
+            'https://corsproxy.io/?',
+            'https://api.allorigins.win/raw?url=',
+            ''  // 직접 시도 (같은 도메인일 경우)
+          ];
+          
+          let response = null;
+          let lastError = null;
+          
+          for (const proxy of proxies) {
+            try {
+              const url = proxy ? proxy + encodeURIComponent(sheetUrl) : sheetUrl;
+              const res = await fetch(url, { 
+                method: 'GET',
+                headers: { 'Accept': 'text/csv,*/*' }
+              });
+              if (res.ok) {
+                response = res;
+                break;
+              }
+            } catch (e) {
+              lastError = e;
+              continue;
+            }
+          }
+          
+          if (!response) {
+            throw new Error(lastError?.message || '시트를 불러올 수 없습니다.');
+          }
+          
+          const text = await response.text();
+          
+          // HTML 응답 체크 (프록시 에러 페이지)
+          if (text.trim().startsWith('<!') || text.trim().startsWith('<html')) {
+            throw new Error('프록시 서버 오류. 잠시 후 다시 시도해주세요.');
+          }
+          
+          const data = parseCSV(text);
+          
+          if (data.length === 0) {
+            setImportStatus({ type: 'error', message: '데이터가 없습니다.' });
+            setIsImporting(false);
+            return;
+          }
+          
+          // 데이터 매핑
+          const imported = data.map((row, idx) => {
+            const dateStr = row['일정'] || '';
+            let dateType = 'confirmed';
+            let date = dateStr;
+            let expectedMonth = '';
+            let dateNote = '';
+            
+            // 날짜 형식 확인
+            if (!dateStr || dateStr === '미정' || dateStr.includes('예정') || dateStr.includes('연기')) {
+              dateType = 'pending';
+              dateNote = dateStr || '미정';
+              date = '';
+            } else if (dateStr.match(/^\d{4}-\d{2}$/)) {
+              dateType = 'monthOnly';
+              expectedMonth = dateStr;
+              date = '';
+            } else if (dateStr.match(/\d{4}-\d{2}-\d{2}/)) {
+              // 날짜 추출 (2025-12-15(월) 형식 처리)
+              const match = dateStr.match(/(\d{4}-\d{2}-\d{2})/);
+              date = match ? match[1] : dateStr;
+            }
+            
+            // 상태 매핑
+            let status = row['상태'] || '확정';
+            let result = null;
+            if (status === '완료') {
+              status = '확정';
+            }
+            
+            return {
+              id: `pt_${Date.now()}_${idx}`,
+              type: 'pt',
+              dateType,
+              date,
+              expectedMonth,
+              dateNote,
+              siteName: row['현장명'] || '',
+              address: row['주소'] || '',
+              time: row['시간'] || '',
+              participants: row['참여인원'] || '',
+              workType: row['공종'] || '',
+              mainCategory: row['메인'] || '',
+              requester: row['업체'] || '',
+              contactPerson: row['담당자'] || '',
+              competitor: row['경쟁사'] || '',
+              useSummit: row['써밋'] === 'O' || row['써밋'] === 'o',
+              status,
+              ptAssignee: row['PT담당자'] || '',
+              result,
+              note: row['담당자'] ? `담당: ${row['담당자']}` : ''
+            };
+          }).filter(item => item.siteName); // 현장명이 있는 것만
+          
+          if (imported.length === 0) {
+            setImportStatus({ type: 'error', message: '유효한 데이터가 없습니다.' });
+            setIsImporting(false);
+            return;
+          }
+          
+          let finalData = [];
+          let addedCount = 0;
+          let updatedCount = 0;
+          let skippedCount = 0;
+          
+          // 중복 판단 키 생성 함수
+          const getKey = (s) => `${s.siteName}_${s.date || s.expectedMonth || s.dateNote}`.toLowerCase().replace(/\s/g, '');
+          
+          if (importMode === 'replace') {
+            // 전체 교체
+            finalData = imported;
+            addedCount = imported.length;
+          } else if (importMode === 'merge') {
+            // 병합: 기존 데이터 유지 + 새 데이터 추가/업데이트
+            const existingMap = new Map();
+            ptSchedules.forEach(s => existingMap.set(getKey(s), s));
+            
+            imported.forEach(newItem => {
+              const key = getKey(newItem);
+              if (existingMap.has(key)) {
+                // 기존 항목 업데이트 (결과 유지)
+                const existing = existingMap.get(key);
+                existingMap.set(key, { ...newItem, id: existing.id, result: existing.result });
+                updatedCount++;
+              } else {
+                // 새 항목 추가
+                existingMap.set(key, newItem);
+                addedCount++;
+              }
+            });
+            
+            finalData = Array.from(existingMap.values());
+          } else if (importMode === 'addNew') {
+            // 새 항목만 추가
+            const existingKeysList = ptSchedules.map(s => getKey(s));
+            const newItems = imported.filter(item => !existingKeysList.includes(getKey(item)));
+            
+            finalData = [...ptSchedules, ...newItems];
+            addedCount = newItems.length;
+            skippedCount = imported.length - newItems.length;
+          }
+          
+          // ID 기반 중복 제거
+          const seenIds660 = [];
+          finalData = finalData.filter(item => {
+            if (seenIds660.includes(item.id)) return false;
+            seenIds660.push(item.id);
+            return true;
+          });
+          
+          // 데이터 저장
+          setPtSchedules(finalData);
+          
+          // Firebase 또는 로컬에 저장 (안전한 방식: 개별 업데이트)
+          if (firebaseEnabled && database) {
+            // 삭제 전 백업 로그
+            console.log('=== PT 데이터 백업 (업로드 전) ===', JSON.stringify(ptSchedules));
+            
+            const updates = {};
+            finalData.forEach(item => {
+              const safeId = item.id.replace(/[.#$\/\[\]]/g, '_');
+              updates['pt/' + safeId] = {...item, id: safeId};
+            });
+            
+            // 전체 교체 모드일 때만 기존 항목 삭제
+            if (importMode === 'replace') {
+              ptSchedules.forEach(oldItem => {
+                const safeId = oldItem.id.replace(/[.#$\/\[\]]/g, '_');
+                const existsInFinal = finalData.some(item => item.id.replace(/[.#$\/\[\]]/g, '_') === safeId);
+                if (!existsInFinal) {
+                  updates['pt/' + safeId] = null;
+                }
+              });
+            }
+            
+            await database.ref().update(updates);
+          } else {
+            saveToLocal('pt_schedules', finalData);
+          }
+          setLastSaved(new Date().toLocaleTimeString());
+          
+          // 결과 메시지
+          let message = `완료! `;
+          if (importMode === 'replace') {
+            message += `${addedCount}건 가져옴`;
+          } else if (importMode === 'merge') {
+            message += `추가 ${addedCount}건, 업데이트 ${updatedCount}건 (총 ${finalData.length}건)`;
+          } else {
+            message += `새로 추가 ${addedCount}건, 건너뜀 ${skippedCount}건`;
+          }
+          setImportStatus({ type: 'success', message });
+          
+        } catch (error) {
+          console.error('Import error:', error);
+          setImportStatus({ type: 'error', message: `오류: ${error.message}. 잠시 후 다시 시도해주세요.` });
+        }
+        
+        setIsImporting(false);
+      };
+
+      const [newSchedule, setNewSchedule] = useState({
+        siteName: '', address: '', date: '', time: '', workType: '', participants: '',
+        requester: '', competitor: '', mainCategory: '재도장', status: '확정', ptAssignee: '',
+        ptProduct: '', bidDeadline: '', title: '', location: '', assignee: '', assignees: [], note: '',
+        dateType: 'confirmed', expectedMonth: '', dateNote: ''
+      });
+
+      // 수정 모달용 state
+      const [showEditModal, setShowEditModal] = useState(false);
+      const [editingSchedule, setEditingSchedule] = useState(null);
+      const [customBriefingAssignee, setCustomBriefingAssignee] = useState('');
+      const [customPtAssignee, setCustomPtAssignee] = useState('');
+      
+      // 현설 이미지 출력 모달
+      const [showBriefingExport, setShowBriefingExport] = useState(false);
+      const [briefingExportData, setBriefingExportData] = useState(null);
+      
+      // 현설 정산용 state
+      const [settleYear, setSettleYear] = useState(new Date().getFullYear());
+      const [settleMonth, setSettleMonth] = useState(new Date().getMonth() + 1);
+      const [settleAssignee, setSettleAssignee] = useState('all');
+      const [showPriceTable, setShowPriceTable] = useState(false);
+      const [statsMonth, setStatsMonth] = useState('all'); // 통계용 월 선택
+      const [statsAssignee, setStatsAssignee] = useState('all'); // 통계용 담당자 선택
+      
+      // 지역별 단가표 (2026년 4월 1일 이전: 구 단가)
+      const regionPricesOld = {
+        // 1구역: 서울, 경기남부, 충청일부 - 70,000원
+        '서울': 70000, '강남구': 70000, '서초구': 70000, '송파구': 70000, '강동구': 70000, '강북구': 70000,
+        '도봉구': 70000, '노원구': 70000, '강서구': 70000, '양천구': 70000, '동대문구': 70000, '중랑구': 70000,
+        '광진구': 70000, '성동구': 70000, '마포구': 70000, '용산구': 70000, '종로구': 70000, '영등포구': 70000,
+        '동작구': 70000, '관악구': 70000, '구로구': 70000, '금천구': 70000, '은평구': 70000, '서대문구': 70000,
+        '군포': 70000, '안산': 70000, '하남': 70000, '광주시': 70000, '성남': 70000, '광명': 70000,
+        '시흥': 70000, '용인': 70000, '수원': 70000, '화성': 70000, '안양': 70000, '의왕': 70000,
+        '이천': 70000, '여주': 70000, '평택': 70000, '안성': 70000, '오산': 70000, '남양주': 70000,
+        '구리': 70000, '부천': 70000, '천안': 70000, '음성': 70000, '아산': 70000,
+        // 2구역: 경기북부, 충청권, 인천권 - 100,000원
+        '가평': 100000, '양평': 100000, '고양': 100000, '파주': 100000, '김포': 100000, '의정부': 100000,
+        '포천': 100000, '동두천': 100000, '양주': 100000, '공주': 100000, '계룡': 100000, '당진': 100000,
+        '서산': 100000, '예산': 100000, '홍성': 100000, '증평': 100000, '청주': 100000, '충주': 100000,
+        '제천': 100000, '계양': 100000, '남동구': 100000, '미추홀': 100000, '부평': 100000, '서구': 100000,
+        '연수': 100000, '인천': 100000,
+        // 강원도 - 130,000원
+        '강릉': 130000, '동해': 130000, '삼척': 130000, '속초': 130000, '원주': 130000, '춘천': 130000,
+        '태백': 130000, '평창': 130000, '강원': 130000
+        // 3구역 (대전, 전라권, 인접) - 추후논의: 논산, 보령, 부여, 대전, 세종 등
+      };
+
+      // 지역별 단가표 (2026년 4월 1일부터 신규 단가 적용)
+      const regionPricesNew = {
+        // 서울권 - 80,000원
+        '서울': 80000, '강남구': 80000, '서초구': 80000, '송파구': 80000, '강동구': 80000, '강북구': 80000,
+        '도봉구': 80000, '노원구': 80000, '강서구': 80000, '양천구': 80000, '동대문구': 80000, '중랑구': 80000,
+        '광진구': 80000, '성동구': 80000, '마포구': 80000, '용산구': 80000, '종로구': 80000, '영등포구': 80000,
+        '동작구': 80000, '관악구': 80000, '구로구': 80000, '금천구': 80000, '은평구': 80000, '서대문구': 80000,
+        // 경기권 1분류 - 70,000원
+        '군포': 70000, '안산': 70000, '광주시': 70000, '성남': 70000, '광명': 70000,
+        '시흥': 70000, '용인': 70000, '수원': 70000, '화성': 70000, '안양': 70000, '의왕': 70000,
+        // 경기권 2분류 - 80,000원
+        '하남': 80000, '이천': 80000, '여주': 80000, '평택': 80000, '안성': 80000, '오산': 80000,
+        '남양주': 80000, '구리': 80000, '부천': 80000,
+        // 경기권 3분류 - 110,000원
+        '가평': 110000, '양평': 110000, '고양': 110000, '파주': 110000, '김포': 110000, '의정부': 110000,
+        '포천': 110000, '동두천': 110000, '양주': 110000,
+        // 충청권 - 120,000원
+        '공주': 120000, '계룡': 120000, '당진': 120000, '서산': 120000, '예산': 120000, '홍성': 120000,
+        '증평': 120000, '청주': 120000, '충주': 120000, '제천': 120000,
+        // 충청권 (천안/음성/아산) - 90,000원
+        '천안': 90000, '음성': 90000, '아산': 90000,
+        // 인천권 - 110,000원
+        '계양': 110000, '남동구': 110000, '미추홀': 110000, '부평': 110000, '서구': 110000,
+        '연수': 110000, '인천': 110000,
+        // 강원권 - 원주만 130,000원 (그 외 협의)
+        '원주': 130000
+      };
+
+      // 강원권 협의 지역 (원주 제외)
+      const gangwonConsultRegions = ['강릉', '동해', '삼척', '속초', '춘천', '태백', '평창', '강원'];
+
+      // 주소에서 지역 추출하여 단가 계산 (2026-04-01 이후 신규 단가 적용)
+      const getRegionPrice = (address, date) => {
+        if (!address) return { region: '미정', price: 0, zone: 0 };
+        const isNewPrice = !date || date >= '2026-04-01';
+        const priceTable = isNewPrice ? regionPricesNew : regionPricesOld;
+        for (const [region, price] of Object.entries(priceTable)) {
+          if (address.includes(region)) {
+            const zone = price <= 80000 ? 1 : price <= 110000 ? 2 : 3;
+            return { region, price, zone };
+          }
+        }
+        // 강원권 협의 지역 (신규 단가 적용 시)
+        if (isNewPrice) {
+          for (const r of gangwonConsultRegions) {
+            if (address.includes(r)) {
+              return { region: r, price: 0, zone: 0 };
+            }
+          }
+        }
+        // 3구역 추후논의 지역 체크
+        const zone3Regions = ['논산', '보령', '부여', '대전', '세종', '유성', '전주', '전북', '전라'];
+        for (const r of zone3Regions) {
+          if (address.includes(r)) {
+            return { region: r, price: 0, zone: 3 };
+          }
+        }
+        return { region: '추후논의', price: 0, zone: 0 };
+      };
+
+      const assigneeList = ['이승우', '황윤선', '한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '조현식'];
+      const briefingAssigneeList = ['김현조', '박시현', ...assigneeList];
+      const statusList = ['확정', '일정조율중', '월예정', '미정'];
+
+      // 사용자 계정 정보 (비밀번호는 Firebase users/ 노드에서 로드됨)
+      const [userAccounts, setUserAccounts] = useState({
+        'admin': { password: '', name: '관리자', isAdmin: true, canManagePasswords: true },
+        'lsw': { password: '', name: '이승우', isAdmin: true, canManagePasswords: false },
+        'hys': { password: '', name: '황윤선', isAdmin: true, canManagePasswords: false },
+        'lps': { password: '', name: '이필선', isAdmin: false, canManagePasswords: false },
+        'hig': { password: '', name: '한인규', isAdmin: false, canManagePasswords: false },
+        'hjy': { password: '', name: '한준엽', isAdmin: false, canManagePasswords: false },
+        'jjh': { password: '', name: '정정훈', isAdmin: false, canManagePasswords: false },
+        'ksm': { password: '', name: '김성민', isAdmin: false, canManagePasswords: false },
+        'jjy': { password: '', name: '조재연', isAdmin: false, canManagePasswords: false },
+      });
+
+      // 초기 샘플 데이터 (빈 배열 - Firebase에서 로드)
+      const initialPtSchedules = [];
+      const initialBriefingSchedules = [];
+      const initialPersonalSchedules = [];
+
+      const [ptSchedules, setPtSchedules] = useState([]);
+      const [briefingSchedules, setBriefingSchedules] = useState([]);
+      const [personalSchedules, setPersonalSchedules] = useState([]);
+      const [seminarSchedules, setSeminarSchedules] = useState([]);
+      const [asqSchedules, setAsqSchedules] = useState([]);
+      const [vacationSchedules, setVacationSchedules] = useState([]);
+      const [dataLoaded, setDataLoaded] = useState(false);
+      
+      // PWA 뒤로가기: 완전 차단 + 2번 연속시 종료
+      const backPressCountRef = React.useRef(0);
+      const stateRef = React.useRef({});
+      
+      // 상태를 ref에 동기화 (모든 관련 상태 포함)
+      useEffect(() => {
+        stateRef.current = { 
+          showModal, showEditModal, showSettings, showLoginModal, showPasswordModal, showMyPasswordModal, 
+          showDuplicateModal, showScheduleAlert, showBriefingExport, showPriceTable, showPerformance, 
+          showMeetingView, showMeetingModal, showMeetingDetailModal, showMyPage,
+          selectedDate, scheduleType, selectedAssignee, viewMode
+        };
+      });
+      
+      // 앱 시작 시 히스토리 관리 (popstate 이벤트만)
+      useEffect(() => {
+        const handlePopState = (e) => {
+          // 무조건 히스토리 추가 (앱 이탈 방지)
+          window.history.pushState({ page: 'app' }, '', window.location.href);
+          
+          const s = stateRef.current;
+          
+          // 1. 모달 열려있으면 닫기
+          if (s.showModal || s.showEditModal || s.showSettings || s.showLoginModal || s.showPasswordModal || s.showMyPasswordModal || s.showDuplicateModal || s.showScheduleAlert || s.showBriefingExport || s.showPriceTable || s.showMeetingModal || s.showMeetingDetailModal) {
+            setShowModal(false); setShowEditModal(false); setShowSettings(false); setShowLoginModal(false);
+            setShowPasswordModal(false); setShowMyPasswordModal(false); setShowDuplicateModal(false);
+            setShowScheduleAlert(false); setShowBriefingExport(false); setShowPriceTable(false);
+            setShowMeetingModal(false); setShowMeetingDetailModal(false);
+            backPressCountRef.current = 0;
+            return;
+          }
+          
+          // 2. 마이페이지에서 → 메인
+          if (s.showMyPage) { setShowMyPage(false); setShowDashboard(true); backPressCountRef.current = 0; return; }
+
+          // 2.1. 회의관리에서 → 일정관리
+          if (s.showMeetingView) { setShowMeetingView(false); backPressCountRef.current = 0; return; }
+          
+          // 2.5. 실적관리에서 현장 목록 프리뷰 열림 → 닫기
+          if (s.showPerformance && previewAssignee) {
+            setPreviewAssignee(null);
+            setSiteListTab('all');
+            backPressCountRef.current = 0;
+            return;
+          }
+
+          // 3. 실적관리에서 담당자 선택됨 → 전체로
+          if (s.showPerformance && s.selectedAssignee !== 'all') {
+            setSelectedAssignee('all');
+            setShowWorkTypeAnalysis(false);
+            setShowLossReasonAnalysis(false);
+            setShowWinAnalysis(false);
+            setShowLossAnalysis(false);
+            setShowInProgressAnalysis(false);
+            backPressCountRef.current = 0;
+            return;
+          }
+          
+          // 4. 실적관리: 개인 상세 → 전체, 또는 전체 → 일정관리
+          if (s.showPerformance) {
+            if (selectedAssignee !== 'all') {
+              setSelectedAssignee('all');
+              setDashboardView('overview');
+              setShowWorkTypeAnalysis(false);
+              setShowLossReasonAnalysis(false);
+              setShowWinAnalysis(false);
+              setShowLossAnalysis(false);
+              setShowInProgressAnalysis(false);
+            } else {
+              setShowPerformance(false);
+              setDashboardView('overview');
+              setKanbanTab('inProgress');
+              setSelectedCategoryTab('전체');
+              setPreviewAssignee(null);
+              setSiteListTab('all');
+            }
+            backPressCountRef.current = 0;
+            return;
+          }
+          
+          // 5. 캘린더 상세내역 열려있으면 닫기
+          if (s.selectedDate) { 
+            setSelectedDate(null); 
+            backPressCountRef.current = 0; 
+            return; 
+          }
+          
+          // 6. 캘린더 필터가 전체가 아니면 → 전체로
+          if (s.scheduleType !== 'all') { 
+            setScheduleType('all'); 
+            backPressCountRef.current = 0; 
+            return; 
+          }
+          
+          // 7. 메인에서 2번 연속 → 종료 확인
+          backPressCountRef.current++;
+          if (backPressCountRef.current >= 2) {
+            backPressCountRef.current = 0;
+            if (confirm('앱을 종료하시겠습니까?')) {
+              window.location.href = 'about:blank';
+            }
+          } else {
+            setTimeout(() => { backPressCountRef.current = 0; }, 2000);
+          }
+        };
+        
+        window.addEventListener('popstate', handlePopState);
+        return () => window.removeEventListener('popstate', handlePopState);
+      }, []);
+
+      // Firebase 또는 로컬 스토리지에서 데이터 로드
+      useEffect(() => {
+        // Firebase가 활성화되지 않은 경우 - 로컬 스토리지 사용
+        if (!firebaseEnabled) {
+          const localPt = loadFromLocal('pt_schedules');
+          const localBr = loadFromLocal('briefing_schedules');
+          const localPer = loadFromLocal('personal_schedules');
+          
+          if (localPt) setPtSchedules(localPt);
+          if (localBr) setBriefingSchedules(localBr);
+          if (localPer) setPersonalSchedules(localPer);
+          setDataLoaded(true);
+          return;
+        }
+
+        setDbConnected(true);
+
+        // ID 기반 중복 제거 함수
+        const removeDuplicatesById = (arr) => {
+          const seenArr = [];
+          return arr.filter(item => {
+            if (seenArr.includes(item.id)) return false;
+            seenArr.push(item.id);
+            return true;
+          });
+        };
+
+        // 담당자 이름 정규화 (님 제거)
+        const normalizeAssignee = (name) => {
+          if (!name) return name;
+          return name.split(/[\/,+&]/).map(n => n.trim().replace(/님$/, '')).join('/');
+        };
+
+        // 일정 데이터 정규화 (담당자명에서 님 제거)
+        const normalizeSchedule = (schedule) => {
+          const normalized = { ...schedule };
+          if (normalized.ptAssignee) normalized.ptAssignee = normalizeAssignee(normalized.ptAssignee);
+          if (normalized.assignee) normalized.assignee = normalizeAssignee(normalized.assignee);
+          if (normalized.assignees && Array.isArray(normalized.assignees)) {
+            normalized.assignees = normalized.assignees.map(a => a.replace(/님$/, ''));
+          }
+          return normalized;
+        };
+
+        // 실시간 리스너 (데이터 로드)
+        const ptRef = database.ref('pt');
+        const brRef = database.ref('briefing');
+        const perRef = database.ref('personal');
+        
+        // 리스너 설정 즉시 화면 표시 (데이터는 비동기로 로드)
+        setDataLoaded(true);
+        
+        ptRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          setPtSchedules(data ? removeDuplicatesById(Object.values(data).map(normalizeSchedule)) : []);
+        });
+
+        brRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          setBriefingSchedules(data ? removeDuplicatesById(Object.values(data).map(normalizeSchedule)) : []);
+        });
+
+        perRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          setPersonalSchedules(data ? removeDuplicatesById(Object.values(data).map(normalizeSchedule)) : []);
+        });
+
+        const seminarRef = database.ref('seminar');
+        seminarRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          setSeminarSchedules(data ? removeDuplicatesById(Object.values(data).map(normalizeSchedule)) : []);
+        });
+
+        const asqRef = database.ref('asq');
+        asqRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          setAsqSchedules(data ? removeDuplicatesById(Object.values(data).map(normalizeSchedule)) : []);
+        });
+
+        const vacationRef = database.ref('vacation');
+        vacationRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          setVacationSchedules(data ? removeDuplicatesById(Object.values(data).map(normalizeSchedule)) : []);
+        });
+
+        const meetingRef = database.ref('meetings');
+        meetingRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          setMeetingSchedules(data ? Object.values(data) : []);
+        });
+        
+        const salesRef = database.ref('sales');
+        salesRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          setSalesSchedules(data ? Object.values(data) : []);
+        });
+
+        // 분기 정산 확인 데이터 로드
+        const qcRef = database.ref('quarterConfirmations');
+        qcRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          setQuarterConfirmations(data || {});
+        });
+
+        // CRM 영업 데이터 로드
+        const salesData2025Ref = database.ref('salesData2025');
+        salesData2025Ref.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            if (data.teamStats) setSalesData2025(data.teamStats);
+            if (data.personalStats) setPersonalSalesData2025(data.personalStats);
+            if (data.rawData) {
+              const rawArray = Object.values(data.rawData).map(item => {
+                // result 필드가 없으면 status 기반으로 생성
+                if (!item.result && item.status) {
+                  const statusNorm = (item.status || '').toLowerCase().replace(/[\s\(\)\[\]\/\-\_\.]/g, '');
+                  if (statusNorm.includes('수주성공') || statusNorm.includes('closedwon') || statusNorm.includes('공사완료')) {
+                    item.result = '수주성공';
+                  } else if (statusNorm.includes('수주실패') || statusNorm.includes('closedlost')) {
+                    item.result = '수주실패';
+                  } else {
+                    item.result = '';
+                  }
+                }
+                return item;
+              });
+              setRawSalesData(rawArray);
+              console.log('Firebase에서 CRM 데이터 로드:', rawArray.length + '건');
+            }
+          }
+        });
+
+        // 파이프라인 데이터 실시간 로드
+        const pipelineRef = database.ref('pipeline/data');
+        pipelineRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            const arr = Array.isArray(data) ? data : Object.values(data);
+            setPipelineData(arr);
+            setPipelineLastSync(new Date());
+            console.log('Firebase에서 파이프라인 데이터 로드:', arr.length + '건');
+          }
+        });
+
+        // 사용자 계정 - once로 초기 로드 후 실시간 동기화
+        // 비밀번호는 Firebase users/ 노드에서 로드됨 (코드에 평문 저장 금지)
+        const usersRef = database.ref('users');
+        const defaultAccounts = {
+          'admin': { password: '', name: '관리자', isAdmin: true, canManagePasswords: true, canAccessPerformance: true },
+          'lsw': { password: '', name: '이승우', isAdmin: true, canManagePasswords: false, canAccessPerformance: true },
+          'hys': { password: '', name: '황윤선', isAdmin: true, canManagePasswords: false, canAccessPerformance: true },
+          'lps': { password: '', name: '이필선', isAdmin: false, canManagePasswords: false, canAccessPerformance: true },
+          'hig': { password: '', name: '한인규', isAdmin: false, canManagePasswords: false, canAccessPerformance: true },
+          'hjy': { password: '', name: '한준엽', isAdmin: false, canManagePasswords: false, canAccessPerformance: true, isTeamLeader: true, teamMembers: ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민'] },
+          'jjh': { password: '', name: '정정훈', isAdmin: false, canManagePasswords: false, canAccessPerformance: true },
+          'ksm': { password: '', name: '김성민', isAdmin: false, canManagePasswords: false, canAccessPerformance: true },
+          'jjy': { password: '', name: '조재연', isAdmin: false, canManagePasswords: false, canAccessPerformance: true },
+          'chs': { password: '', name: '조현식', isAdmin: false, canManagePasswords: false, canAccessPerformance: false },
+        };
+        
+        // 먼저 기본값 설정 (빠른 로딩)
+        setUserAccounts(defaultAccounts);
+        
+        // 실시간 동기화 (Firebase 데이터로 덮어쓰기)
+        usersRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            setUserAccounts({ ...defaultAccounts, ...data });
+          }
+        });
+
+        return () => {
+          ptRef.off();
+          brRef.off();
+          perRef.off();
+          meetingRef.off();
+          usersRef.off();
+          salesData2025Ref.off();
+          pipelineRef.off();
+          qcRef.off();
+        };
+      }, []);
+
+      // 파이프라인 자동 동기화 (오전 9시, 오후 5시)
+      useEffect(() => {
+        const syncPipeline = () => {
+          if (!firebaseEnabled) return;
+          database.ref('pipeline/data').once('value', (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+              const arr = Array.isArray(data) ? data : Object.values(data);
+              setPipelineData(arr);
+              setPipelineLastSync(new Date());
+              console.log('[자동동기화] 파이프라인 데이터 갱신:', arr.length + '건', new Date().toLocaleTimeString());
+            }
+          });
+        };
+
+        let lastSyncedHour = null;
+        const timer = setInterval(() => {
+          const now = new Date();
+          const h = now.getHours();
+          const m = now.getMinutes();
+          // 9:00 또는 17:00 정각 ± 1분 이내에 1회만 동기화
+          if ((h === 9 || h === 17) && m === 0 && lastSyncedHour !== h) {
+            lastSyncedHour = h;
+            syncPipeline();
+          }
+          // 시간이 바뀌면 잠금 해제
+          if (h !== 9 && h !== 17) lastSyncedHour = null;
+        }, 30000); // 30초마다 체크
+
+        return () => clearInterval(timer);
+      }, []);
+
+      // 로컬 스토리지 자동 저장
+      useEffect(() => {
+        if (!firebaseEnabled && ptSchedules.length > 0) {
+          saveToLocal('pt_schedules', ptSchedules);
+        }
+      }, [ptSchedules]);
+      
+      useEffect(() => {
+        if (!firebaseEnabled && briefingSchedules.length > 0) {
+          saveToLocal('briefing_schedules', briefingSchedules);
+        }
+      }, [briefingSchedules]);
+      
+      useEffect(() => {
+        if (!firebaseEnabled && personalSchedules.length > 0) {
+          saveToLocal('personal_schedules', personalSchedules);
+        }
+      }, [personalSchedules]);
+      
+      // 자동 로그인 체크 - 더 안정적으로
+      useEffect(() => {
+        if (isLoggedIn) return; // 이미 로그인됨
+        
+        const savedLogin = localStorage.getItem('autoLogin');
+        if (!savedLogin) return;
+        
+        try {
+          const { id, password } = JSON.parse(savedLogin);
+          if (!id || !password) {
+            localStorage.removeItem('autoLogin');
+            return;
+          }
+          
+          // userAccounts가 로드되었는지 확인
+          const account = userAccounts[id];
+          if (account && account.password === password) {
+            setCurrentUser({ id, ...account });
+            setIsLoggedIn(true);
+            // 모든 사용자에게 전체 보기 기본값
+            setSelectedAssignee('all');
+            // 메인 접근 불가 사용자는 마이페이지로 이동
+            if (!canAccessMain(account)) {
+              setShowDashboard(false);
+              setShowMyPage(true);
+              setShowPerformance(false);
+              setShowMeetingView(false);
+              setShowSalesView(false);
+            }
+            console.log('자동 로그인 성공:', account.name);
+            // 자동 로그인 시에도 일정 알림 체크 (1초 후 실행 - 데이터 로드 대기)
+            setTimeout(() => {
+              checkMySchedulesOnLoad(account.name);
+            }, 1500);
+          } else if (Object.keys(userAccounts).length > 5) {
+            // userAccounts가 충분히 로드된 후에도 맞지 않으면 삭제
+            localStorage.removeItem('autoLogin');
+          }
+        } catch (e) {
+          console.error('자동 로그인 오류:', e);
+          localStorage.removeItem('autoLogin');
+        }
+      }, [userAccounts, isLoggedIn, ptSchedules, briefingSchedules]);
+      
+      // 앱 로드 시 항상 일정 알림 체크 (이미 로그인된 경우)
+      const [hasCheckedSchedule, setHasCheckedSchedule] = useState(false);
+      useEffect(() => {
+        if (isLoggedIn && currentUser && ptSchedules.length > 0 && !hasCheckedSchedule) {
+          // 오늘 다시 알리지 않음 체크
+          const dismissedDate = localStorage.getItem('scheduleAlertDismissed');
+          const today = new Date();
+          // 로컬 날짜 문자열 직접 생성 (UTC 변환 방지)
+          const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+          if (dismissedDate === todayStr) {
+            setHasCheckedSchedule(true);
+            return;
+          }
+          
+          const userName = currentUser.name;
+          const dayOfWeek = today.getDay(); // 0=일, 1=월, ..., 5=금, 6=토
+          
+          // 일정 날짜의 실제 요일을 반환하는 함수
+          const getScheduleLabel = (dateStr) => {
+            const scheduleDate = new Date(dateStr + 'T00:00:00');
+            const scheduleDayOfWeek = scheduleDate.getDay();
+            
+            // 날짜 차이 계산 (로컬 기준)
+            const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+            const scheduleMidnight = new Date(scheduleDate.getFullYear(), scheduleDate.getMonth(), scheduleDate.getDate());
+            const diffDays = Math.round((scheduleMidnight - todayMidnight) / (1000 * 60 * 60 * 24));
+            
+            const isWeekend = scheduleDayOfWeek === 0 || scheduleDayOfWeek === 6;
+            const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+            
+            // 실제 날짜 포맷 (M/D)
+            const month = scheduleDate.getMonth() + 1;
+            const day = scheduleDate.getDate();
+            const dateDisplay = `${month}/${day}(${dayNames[scheduleDayOfWeek]})`;
+            
+            if (diffDays === 0) {
+              return isWeekend ? `오늘 ${dateDisplay} - 주말 일정` : `오늘 ${dateDisplay}`;
+            }
+            if (diffDays === 1) {
+              return isWeekend ? `내일 ${dateDisplay} - 주말 일정` : `내일 ${dateDisplay}`;
+            }
+            
+            // 2일 이상 차이나는 경우: 주말은 명확하게 "주말 일정" 표시
+            if (isWeekend) {
+              return `${dateDisplay} - 주말 일정`;
+            }
+            return `${dateDisplay} 일정`;
+          };
+          
+          // 로컬 날짜를 YYYY-MM-DD 문자열로 변환하는 헬퍼
+          const toLocalDateStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          
+          // 체크할 날짜 목록 생성
+          const checkDates = [];
+          checkDates.push({ date: todayStr });
+          
+          // 내일
+          const tomorrow = new Date(today);
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          checkDates.push({ date: toLocalDateStr(tomorrow) });
+          
+          // 금/토/일이면 월요일까지 표시
+          if (dayOfWeek === 5) { // 금요일 → 토, 일, 월
+            const day2 = new Date(today);
+            day2.setDate(day2.getDate() + 2);
+            checkDates.push({ date: toLocalDateStr(day2) });
+            
+            const day3 = new Date(today);
+            day3.setDate(day3.getDate() + 3);
+            checkDates.push({ date: toLocalDateStr(day3) });
+          } else if (dayOfWeek === 6) { // 토요일 → 일, 월
+            const day2 = new Date(today);
+            day2.setDate(day2.getDate() + 2);
+            checkDates.push({ date: toLocalDateStr(day2) });
+          } else if (dayOfWeek === 0) { // 일요일 → 월
+            // 내일이 이미 월요일이므로 추가 필요 없음
+          }
+          
+          const mySchedules = [];
+          
+          ptSchedules.forEach(s => {
+            const found = checkDates.find(d => d.date === s.date);
+            if (found && s.ptAssignee === userName) {
+              const dateLabel = getScheduleLabel(s.date);
+              mySchedules.push({ ...s, type: 'pt', dateLabel, isToday: dateLabel.startsWith('오늘') });
+            }
+          });
+          
+          briefingSchedules.forEach(s => {
+            const assignees = (s.assignee || '').split(/[\/,]/).map(a => a.trim());
+            const found = checkDates.find(d => d.date === s.date);
+            if (found && assignees.includes(userName)) {
+              const dateLabel = getScheduleLabel(s.date);
+              mySchedules.push({ ...s, type: 'briefing', dateLabel, isToday: dateLabel.startsWith('오늘') });
+            }
+          });
+          
+          if (mySchedules.length > 0) {
+            setMyUpcomingSchedules(mySchedules);
+            setShowScheduleAlert(true);
+          }
+          setHasCheckedSchedule(true);
+        }
+      }, [isLoggedIn, currentUser, ptSchedules, briefingSchedules, hasCheckedSchedule]);
+
+      // DB 저장 함수들
+      const saveToDb = (path, data) => {
+        if (firebaseEnabled && database) {
+          database.ref(path).set(data);
+          setLastSaved(new Date().toLocaleTimeString());
+        }
+      };
+
+      const updatePtSchedule = (schedule) => {
+        setPtSchedules(prev => {
+          const exists = prev.find(s => s.id === schedule.id);
+          let updated;
+          if (exists) {
+            updated = prev.map(s => s.id === schedule.id ? schedule : s);
+          } else {
+            updated = [...prev, schedule];
+          }
+          // 로컬 저장
+          if (!firebaseEnabled) {
+            saveToLocal('pt_schedules', updated);
+            setLastSaved(new Date().toLocaleTimeString());
+          }
+          return updated;
+        });
+        if (firebaseEnabled && database) {
+          const safeId = schedule.id.replace(/[.#$\/\[\]]/g, '_');
+          database.ref(`pt/${safeId}`).set({...schedule, id: safeId});
+          setLastSaved(new Date().toLocaleTimeString());
+        }
+      };
+
+      const updateBriefingSchedule = (schedule) => {
+        setBriefingSchedules(prev => {
+          const exists = prev.find(s => s.id === schedule.id);
+          let updated;
+          if (exists) {
+            updated = prev.map(s => s.id === schedule.id ? schedule : s);
+          } else {
+            updated = [...prev, schedule];
+          }
+          if (!firebaseEnabled) {
+            saveToLocal('briefing_schedules', updated);
+            setLastSaved(new Date().toLocaleTimeString());
+          }
+          return updated;
+        });
+        if (firebaseEnabled && database) {
+          const safeId = schedule.id.replace(/[.#$\/\[\]]/g, '_');
+          database.ref(`briefing/${safeId}`).set({...schedule, id: safeId});
+          setLastSaved(new Date().toLocaleTimeString());
+        }
+      };
+
+      const updatePersonalSchedule = (schedule) => {
+        setPersonalSchedules(prev => {
+          const exists = prev.find(s => s.id === schedule.id);
+          let updated;
+          if (exists) {
+            updated = prev.map(s => s.id === schedule.id ? schedule : s);
+          } else {
+            updated = [...prev, schedule];
+          }
+          if (!firebaseEnabled) {
+            saveToLocal('personal_schedules', updated);
+            setLastSaved(new Date().toLocaleTimeString());
+          }
+          return updated;
+        });
+        if (firebaseEnabled && database) {
+          const safeId = schedule.id.replace(/[.#$\/\[\]]/g, '_');
+          database.ref(`personal/${safeId}`).set({...schedule, id: safeId});
+          setLastSaved(new Date().toLocaleTimeString());
+        }
+      };
+
+      const updateSeminarSchedule = (schedule) => {
+        setSeminarSchedules(prev => {
+          const exists = prev.find(s => s.id === schedule.id);
+          let updated;
+          if (exists) {
+            updated = prev.map(s => s.id === schedule.id ? schedule : s);
+          } else {
+            updated = [...prev, schedule];
+          }
+          if (!firebaseEnabled) {
+            saveToLocal('seminar_schedules', updated);
+            setLastSaved(new Date().toLocaleTimeString());
+          }
+          return updated;
+        });
+        if (firebaseEnabled && database) {
+          const safeId = schedule.id.replace(/[.#$\/\[\]]/g, '_');
+          database.ref(`seminar/${safeId}`).set({...schedule, id: safeId});
+          setLastSaved(new Date().toLocaleTimeString());
+        }
+      };
+
+      const updateAsqSchedule = (schedule) => {
+        setAsqSchedules(prev => {
+          const exists = prev.find(s => s.id === schedule.id);
+          let updated;
+          if (exists) {
+            updated = prev.map(s => s.id === schedule.id ? schedule : s);
+          } else {
+            updated = [...prev, schedule];
+          }
+          if (!firebaseEnabled) {
+            saveToLocal('asq_schedules', updated);
+            setLastSaved(new Date().toLocaleTimeString());
+          }
+          return updated;
+        });
+        if (firebaseEnabled && database) {
+          const safeId = schedule.id.replace(/[.#$\/\[\]]/g, '_');
+          database.ref(`asq/${safeId}`).set({...schedule, id: safeId});
+          setLastSaved(new Date().toLocaleTimeString());
+        }
+      };
+
+      const updateVacationSchedule = (schedule) => {
+        setVacationSchedules(prev => {
+          const exists = prev.find(s => s.id === schedule.id);
+          let updated;
+          if (exists) {
+            updated = prev.map(s => s.id === schedule.id ? schedule : s);
+          } else {
+            updated = [...prev, schedule];
+          }
+          if (!firebaseEnabled) {
+            saveToLocal('vacation_schedules', updated);
+            setLastSaved(new Date().toLocaleTimeString());
+          }
+          return updated;
+        });
+        if (firebaseEnabled && database) {
+          const safeId = schedule.id.replace(/[.#$\/\[\]]/g, '_');
+          database.ref(`vacation/${safeId}`).set({...schedule, id: safeId});
+          setLastSaved(new Date().toLocaleTimeString());
+        }
+      };
+
+      const deletePtSchedule = (id) => {
+        setPtSchedules(prev => {
+          const updated = prev.filter(s => s.id !== id);
+          if (!firebaseEnabled) {
+            saveToLocal('pt_schedules', updated);
+          }
+          return updated;
+        });
+        if (firebaseEnabled && database) {
+          // 원본 ID와 safeId 둘 다 삭제 시도
+          const safeId = id.replace(/[.#$\/\[\]]/g, '_');
+          database.ref(`pt/${id}`).remove();
+          database.ref(`pt/${safeId}`).remove();
+        }
+      };
+
+      const deleteBriefingSchedule = (id) => {
+        setBriefingSchedules(prev => {
+          const updated = prev.filter(s => s.id !== id);
+          if (!firebaseEnabled) {
+            saveToLocal('briefing_schedules', updated);
+          }
+          return updated;
+        });
+        if (firebaseEnabled && database) {
+          // 원본 ID와 safeId 둘 다 삭제 시도
+          const safeId = id.replace(/[.#$\/\[\]]/g, '_');
+          database.ref(`briefing/${id}`).remove();
+          database.ref(`briefing/${safeId}`).remove();
+        }
+      };
+
+      const deletePersonalSchedule = (id) => {
+        setPersonalSchedules(prev => {
+          const updated = prev.filter(s => s.id !== id);
+          if (!firebaseEnabled) {
+            saveToLocal('personal_schedules', updated);
+          }
+          return updated;
+        });
+        if (firebaseEnabled && database) {
+          // 원본 ID와 safeId 둘 다 삭제 시도
+          const safeId = id.replace(/[.#$\/\[\]]/g, '_');
+          database.ref(`personal/${id}`).remove();
+          database.ref(`personal/${safeId}`).remove();
+        }
+      };
+
+      const deleteSeminarSchedule = (id) => {
+        setSeminarSchedules(prev => {
+          const updated = prev.filter(s => s.id !== id);
+          if (!firebaseEnabled) {
+            saveToLocal('seminar_schedules', updated);
+          }
+          return updated;
+        });
+        if (firebaseEnabled && database) {
+          const safeId = id.replace(/[.#$\/\[\]]/g, '_');
+          database.ref(`seminar/${id}`).remove();
+          database.ref(`seminar/${safeId}`).remove();
+        }
+      };
+
+      const deleteAsqSchedule = (id) => {
+        setAsqSchedules(prev => {
+          const updated = prev.filter(s => s.id !== id);
+          if (!firebaseEnabled) {
+            saveToLocal('asq_schedules', updated);
+          }
+          return updated;
+        });
+        if (firebaseEnabled && database) {
+          const safeId = id.replace(/[.#$\/\[\]]/g, '_');
+          database.ref(`asq/${id}`).remove();
+          database.ref(`asq/${safeId}`).remove();
+        }
+      };
+
+      const deleteVacationSchedule = (id) => {
+        setVacationSchedules(prev => {
+          const updated = prev.filter(s => s.id !== id);
+          if (!firebaseEnabled) {
+            saveToLocal('vacation_schedules', updated);
+          }
+          return updated;
+        });
+        if (firebaseEnabled && database) {
+          const safeId = id.replace(/[.#$\/\[\]]/g, '_');
+          database.ref(`vacation/${id}`).remove();
+          database.ref(`vacation/${safeId}`).remove();
+        }
+      };
+      
+      // 회의 관련 함수들
+      const addMeetingSchedule = (meeting) => {
+        const newMeetingData = {
+          ...meeting,
+          id: `meeting_${Date.now()}`,
+          type: 'meeting',
+          createdAt: new Date().toISOString(),
+          responses: {}
+        };
+        // 참석자들 초기 응답 설정
+        (meeting.attendees || []).forEach(name => {
+          newMeetingData.responses[name] = { status: '미정', reason: '' };
+        });
+        
+        if (firebaseEnabled && database) {
+          database.ref(`meetings/${newMeetingData.id}`).set(newMeetingData);
+        } else {
+          setMeetingSchedules(prev => [...prev, newMeetingData]);
+        }
+      };
+      
+      const updateMeetingSchedule = (meeting) => {
+        if (firebaseEnabled && database) {
+          database.ref(`meetings/${meeting.id}`).set(meeting);
+        } else {
+          setMeetingSchedules(prev => prev.map(m => m.id === meeting.id ? meeting : m));
+        }
+      };
+      
+      const deleteMeetingSchedule = (id) => {
+        if (firebaseEnabled && database) {
+          database.ref(`meetings/${id}`).remove();
+        } else {
+          setMeetingSchedules(prev => prev.filter(m => m.id !== id));
+        }
+      };
+      
+      const updateMeetingResponse = (meetingId, userName, status, reason) => {
+        const meeting = meetingSchedules.find(m => m.id === meetingId);
+        if (!meeting) return;
+        
+        const updated = {
+          ...meeting,
+          responses: {
+            ...(meeting.responses || {}),
+            [userName]: { status, reason }
+          }
+        };
+        updateMeetingSchedule(updated);
+      };
+      
+      // 중복 일정 삭제
+      const handleDeleteDuplicate = (schedule) => {
+        if (!confirm(`"${schedule.siteName || schedule.title}" 일정을 삭제하시겠습니까?`)) return;
+        
+        if (schedule.type === 'pt') {
+          deletePtSchedule(schedule.id);
+        } else if (schedule.type === 'briefing') {
+          deleteBriefingSchedule(schedule.id);
+        } else if (schedule.type === 'personal') {
+          deletePersonalSchedule(schedule.id);
+        }
+      };
+
+      // 로그인 처리
+      const handleLogin = () => {
+        const account = userAccounts[loginId];
+        if (account && account.password === loginPw) {
+          setCurrentUser({ id: loginId, ...account });
+          setIsLoggedIn(true);
+          setShowLoginModal(false);
+          setLoginError('');
+          setLoginId('');
+          setLoginPw('');
+          // 자동 로그인 저장
+          localStorage.setItem('autoLogin', JSON.stringify({ id: loginId, password: loginPw }));
+          // 모든 사용자에게 전체 보기 기본값
+          setSelectedAssignee('all');
+          // 메인 접근 불가 사용자는 마이페이지로 이동
+          if (!canAccessMain(account)) {
+            setShowDashboard(false);
+            setShowMyPage(true);
+            setShowPerformance(false);
+            setShowMeetingView(false);
+            setShowSalesView(false);
+            updatePageTitle('마이페이지');
+          }
+          // 접속 시 일정 알림 체크
+          checkMySchedules(account.name);
+        } else {
+          setLoginError('아이디 또는 비밀번호가 올바르지 않습니다.');
+        }
+      };
+      
+      // 접속 시 일정 알림 체크 함수
+      const checkMySchedules = (userName) => {
+        // 오늘 다시 알리지 않음 체크
+        const dismissedDate = localStorage.getItem('scheduleAlertDismissed');
+        const today = new Date().toISOString().split('T')[0];
+        if (dismissedDate === today) return;
+        
+        const todayStr = today;
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowStr = tomorrow.toISOString().split('T')[0];
+        
+        // 내 일정 필터링 (오늘 + 내일)
+        const mySchedules = [];
+        
+        ptSchedules.forEach(s => {
+          if ((s.date === todayStr || s.date === tomorrowStr) && s.ptAssignee === userName) {
+            mySchedules.push({ ...s, type: 'pt', isToday: s.date === todayStr });
+          }
+        });
+        
+        briefingSchedules.forEach(s => {
+          const assignees = (s.assignee || '').split(/[\/,]/).map(a => a.trim());
+          if ((s.date === todayStr || s.date === tomorrowStr) && assignees.includes(userName)) {
+            mySchedules.push({ ...s, type: 'briefing', isToday: s.date === todayStr });
+          }
+        });
+        
+        if (mySchedules.length > 0) {
+          setMyUpcomingSchedules(mySchedules);
+          setShowScheduleAlert(true);
+        }
+      };
+      
+      // 오늘 다시 알리지 않음
+      const dismissScheduleAlert = () => {
+        const today = new Date().toISOString().split('T')[0];
+        localStorage.setItem('scheduleAlertDismissed', today);
+        setShowScheduleAlert(false);
+      };
+      
+      // 자동 로그인 시 일정 체크 (ptSchedules, briefingSchedules 접근 가능)
+      const checkMySchedulesOnLoad = (userName) => {
+        const dismissedDate = localStorage.getItem('scheduleAlertDismissed');
+        const today = new Date().toISOString().split('T')[0];
+        if (dismissedDate === today) return;
+        
+        const todayStr = today;
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowStr = tomorrow.toISOString().split('T')[0];
+        
+        const mySchedules = [];
+        
+        ptSchedules.forEach(s => {
+          if ((s.date === todayStr || s.date === tomorrowStr) && s.ptAssignee === userName) {
+            mySchedules.push({ ...s, type: 'pt', isToday: s.date === todayStr });
+          }
+        });
+        
+        briefingSchedules.forEach(s => {
+          const assignees = (s.assignee || '').split(/[\/,]/).map(a => a.trim());
+          if ((s.date === todayStr || s.date === tomorrowStr) && assignees.includes(userName)) {
+            mySchedules.push({ ...s, type: 'briefing', isToday: s.date === todayStr });
+          }
+        });
+        
+        if (mySchedules.length > 0) {
+          setMyUpcomingSchedules(mySchedules);
+          setShowScheduleAlert(true);
+        }
+      };
+      
+      // 하이웍스 휴가 데이터 동기화
+      const syncHiworksVacations = async (silent = false) => {
+        setHiworksSyncLoading(true);
+        try {
+          const response = await fetch(HIWORKS_VACATION_URL);
+          const result = await response.json();
+          
+          // 가져올 대상자 목록
+          const targetUsers = ['이승우', '황윤선', '이필선', '한준엽', '한인규', '조현식', '김성민', '정정훈', '조재연'];
+          
+          if (result && result.data) {
+            const allVacations = [];
+            
+            // 모든 월의 데이터 순회
+            Object.keys(result.data).forEach(monthKey => {
+              const monthData = result.data[monthKey];
+              if (Array.isArray(monthData)) {
+                monthData.forEach(v => {
+                  // 2월 19일 이후, 결재완료 또는 결재중, 대상자만
+                  if (v.date >= '2026-02-19' && (v.approval_status === '결재완료' || v.approval_status === '결재중') && targetUsers.includes(v.user_name)) {
+                    allVacations.push({
+                      id: `hiworks_${v.office_user_no}_${v.date}_${v.start_time}`,
+                      date: v.date,
+                      userName: v.user_name,
+                      type: v.vacation_type_title,
+                      dayType: v.type,
+                      hours: v.hours,
+                      startTime: v.start_time,
+                      endTime: v.end_time,
+                      source: 'hiworks'
+                    });
+                  }
+                });
+              }
+            });
+            
+            // 날짜순 정렬
+            allVacations.sort((a, b) => a.date.localeCompare(b.date));
+            
+            setHiworksVacations(allVacations);
+            const now = new Date();
+            setHiworksLastSync(now.toLocaleString());
+            
+            // 오늘 동기화 완료 표시 저장
+            const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+            localStorage.setItem('hiworksSyncDate', todayStr);
+            
+            if (!silent) {
+              alert(`하이웍스 휴가 ${allVacations.length}건 동기화 완료!\n(대상: ${targetUsers.join(', ')})`);
+            }
+          }
+        } catch (error) {
+          console.error('하이웍스 휴가 동기화 오류:', error);
+          if (!silent) {
+            alert('하이웍스 휴가 동기화 실패: ' + error.message);
+          }
+        }
+        setHiworksSyncLoading(false);
+      };
+      
+      // 오전 8시 이후 첫 접속 시 자동 동기화
+      useEffect(() => {
+        const autoSyncHiworks = async () => {
+          const now = new Date();
+          const hour = now.getHours();
+          const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          const lastSyncDate = localStorage.getItem('hiworksSyncDate');
+          
+          // 오전 8시 이후 + 오늘 아직 동기화 안했으면 자동 동기화
+          if (hour >= 8 && lastSyncDate !== todayStr) {
+            try {
+              const response = await fetch(HIWORKS_VACATION_URL);
+              const result = await response.json();
+              
+              const targetUsers = ['이승우', '황윤선', '이필선', '한준엽', '한인규', '조현식', '김성민', '정정훈', '조재연'];
+              
+              if (result && result.data) {
+                const allVacations = [];
+                
+                Object.keys(result.data).forEach(monthKey => {
+                  const monthData = result.data[monthKey];
+                  if (Array.isArray(monthData)) {
+                    monthData.forEach(v => {
+                      if (v.date >= '2026-02-19' && v.approval_status === '결재완료' && targetUsers.includes(v.user_name)) {
+                        allVacations.push({
+                          id: `hiworks_${v.office_user_no}_${v.date}_${v.start_time}`,
+                          date: v.date,
+                          userName: v.user_name,
+                          type: v.vacation_type_title,
+                          dayType: v.type,
+                          hours: v.hours,
+                          startTime: v.start_time,
+                          endTime: v.end_time,
+                          source: 'hiworks'
+                        });
+                      }
+                    });
+                  }
+                });
+                
+                allVacations.sort((a, b) => a.date.localeCompare(b.date));
+                setHiworksVacations(allVacations);
+                setHiworksLastSync(now.toLocaleString());
+                localStorage.setItem('hiworksSyncDate', todayStr);
+                console.log(`하이웍스 휴가 자동 동기화 완료: ${allVacations.length}건`);
+              }
+            } catch (error) {
+              console.error('하이웍스 휴가 자동 동기화 오류:', error);
+            }
+          }
+        };
+        
+        // 2초 후 실행 (다른 데이터 로드 완료 대기)
+        const timer = setTimeout(autoSyncHiworks, 2000);
+        return () => clearTimeout(timer);
+      }, []);
+
+      const handleLogout = () => {
+        setIsLoggedIn(false);
+        setCurrentUser(null);
+        setSelectedAssignee('all');
+        setShowMyPage(false);
+        setMyPageUser(null);
+        // 자동 로그인 해제
+        localStorage.removeItem('autoLogin');
+      };
+      
+      // 푸시 알림 초기화
+      const initPushNotification = async () => {
+        try {
+          // 브라우저 지원 확인
+          if (!('Notification' in window)) {
+            alert('이 브라우저는 알림을 지원하지 않습니다.');
+            return;
+          }
+          
+          if (!('serviceWorker' in navigator)) {
+            alert('이 브라우저는 Service Worker를 지원하지 않습니다.');
+            return;
+          }
+          
+          // 알림 권한 요청
+          const permission = await Notification.requestPermission();
+          if (permission !== 'granted') {
+            alert('알림 권한이 거부되었습니다.\n설정에서 알림을 허용해주세요.');
+            return;
+          }
+          
+          // Service Worker 등록
+          const registration = await navigator.serviceWorker.register('./firebase-messaging-sw.js');
+          console.log('Service Worker 등록 성공:', registration);
+          
+          // Firebase Messaging 초기화
+          const messaging = firebase.messaging();
+          
+          // 토큰 가져오기
+          const token = await messaging.getToken({
+            vapidKey: 'BCWmqqx0o9OmuetgL35Vt5hIh5oNdF8pi3eoOrc5FLqMR85U7Bp1e9X4m5mPRwFJCMjZig-lnRcY3xuECOpUVVo',
+            serviceWorkerRegistration: registration
+          });
+          
+          if (token) {
+            console.log('FCM 토큰:', token);
+            setPushToken(token);
+            setPushEnabled(true);
+            
+            // 토큰을 Firebase DB에 저장 (사용자별)
+            if (currentUser && database) {
+              database.ref(`pushTokens/${currentUser.id}`).set({
+                token: token,
+                name: currentUser.name,
+                updatedAt: new Date().toISOString()
+              });
+            }
+            
+            alert('푸시 알림이 활성화되었습니다.');
+          }
+        } catch (error) {
+          console.error('푸시 알림 초기화 오류:', error);
+          alert('푸시 알림 설정 중 오류가 발생했습니다.\n' + error.message);
+        }
+      };
+      
+      // 푸시 알림 비활성화
+      const disablePushNotification = async () => {
+        try {
+          if (currentUser && database) {
+            await database.ref(`pushTokens/${currentUser.id}`).remove();
+          }
+          setPushEnabled(false);
+          setPushToken(null);
+          localStorage.removeItem('pushEnabled');
+          alert('푸시 알림이 비활성화되었습니다.');
+        } catch (error) {
+          console.error('푸시 알림 비활성화 오류:', error);
+        }
+      };
+      
+      // 푸시 알림 상태 복원
+      useEffect(() => {
+        const savedPushState = localStorage.getItem('pushEnabled');
+        if (savedPushState === 'true') {
+          setPushEnabled(true);
+        }
+      }, []);
+      
+      // 로그인 후 미정 회의 체크 (하루 1회 앱 알림 + 전날이면 강제 체크)
+      useEffect(() => {
+        if (!currentUser || meetingSchedules.length === 0) return;
+        
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+        
+        // 미정인 회의 찾기
+        const myPendingMeetings = meetingSchedules.filter(meeting => {
+          if (meeting.date < todayStr) return false;
+          const attendees = meeting.attendees || [];
+          if (!attendees.includes(currentUser.name)) return false;
+          
+          const responseData = meeting.responses && meeting.responses[currentUser.name];
+          const status = typeof responseData === 'object' ? responseData.status : (responseData || '미정');
+          return status === '미정';
+        });
+        
+        if (myPendingMeetings.length === 0) return;
+        
+        // 내일 회의인 미정 건 찾기
+        const tomorrowPendingMeetings = myPendingMeetings.filter(m => m.date === tomorrowStr);
+        
+        // 전날이면 강제 체크 모달
+        if (tomorrowPendingMeetings.length > 0) {
+          setPendingMeetingsForUser(tomorrowPendingMeetings);
+          setShowMeetingForceCheckModal(true);
+          return;
+        }
+        
+        // 하루에 한번 알림 (localStorage로 체크)
+        const lastAlertDate = localStorage.getItem('meetingAlertDate');
+        if (lastAlertDate === todayStr) return;
+        
+        localStorage.setItem('meetingAlertDate', todayStr);
+        const nextMeeting = myPendingMeetings.sort((a, b) => a.date.localeCompare(b.date))[0];
+        setTimeout(() => {
+          alert(`회의 참석여부 확인\n\n${myPendingMeetings.length}건의 회의 참석여부를 체크해주세요.\n\n가장 빠른 회의: ${nextMeeting.title} (${nextMeeting.date})`);
+        }, 1000);
+      }, [currentUser, meetingSchedules]);
+      
+      // 비밀번호 변경 저장
+      const handleSavePasswords = () => {
+        const updated = { ...userAccounts };
+        Object.keys(passwordChanges).forEach(id => {
+          if (passwordChanges[id] && passwordChanges[id].trim()) {
+            updated[id] = { ...updated[id], password: passwordChanges[id].trim() };
+          }
+        });
+        setUserAccounts(updated);
+        if (database) {
+          database.ref('users').set(updated);
+          setLastSaved(new Date().toLocaleTimeString());
+        }
+        setPasswordChanges({});
+        setShowPasswordModal(false);
+        alert('비밀번호가 변경되었습니다!');
+      };
+      
+      // 내 비밀번호 변경
+      const handleChangeMyPassword = () => {
+        // 현재 비밀번호 확인
+        if (userAccounts[currentUser.id].password !== currentPassword) {
+          setPasswordError('현재 비밀번호가 올바르지 않습니다.');
+          return;
+        }
+        
+        // 새 비밀번호 확인
+        if (newPassword.length < 4) {
+          setPasswordError('새 비밀번호는 4자 이상이어야 합니다.');
+          return;
+        }
+        
+        if (newPassword !== confirmPassword) {
+          setPasswordError('새 비밀번호가 일치하지 않습니다.');
+          return;
+        }
+        
+        // 비밀번호 변경
+        const updated = { ...userAccounts };
+        updated[currentUser.id] = { ...updated[currentUser.id], password: newPassword };
+        setUserAccounts(updated);
+        
+        if (database) {
+          database.ref('users').set(updated);
+          setLastSaved(new Date().toLocaleTimeString());
+        }
+        
+        // 초기화
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+        setPasswordError('');
+        setShowMyPasswordModal(false);
+        alert('비밀번호가 변경되었습니다!');
+      };
+
+      // 계정 추가 (admin 전용)
+      const handleAddAccount = () => {
+        if (!newAccountId || !newAccountPw || !newAccountName) {
+          alert('모든 필드를 입력해주세요.');
+          return;
+        }
+        if (userAccounts[newAccountId]) {
+          alert('이미 존재하는 아이디입니다.');
+          return;
+        }
+        const newAccount = {
+          password: newAccountPw,
+          name: newAccountName,
+          isAdmin: false,
+          canManagePasswords: false,
+          canAccessPerformance: true
+        };
+        if (firebaseEnabled && database) {
+          database.ref(`users/${newAccountId}`).set(newAccount);
+        }
+        setUserAccounts(prev => ({ ...prev, [newAccountId]: newAccount }));
+        setNewAccountId('');
+        setNewAccountPw('');
+        setNewAccountName('');
+        alert(`계정 "${newAccountName}" (${newAccountId})이 생성되었습니다.`);
+      };
+
+      // 계정 삭제 (admin 전용)
+      const handleDeleteAccount = async (accountId) => {
+        if (accountId === 'admin') {
+          alert('관리자 계정은 삭제할 수 없습니다.');
+          return;
+        }
+        if (!confirm(`정말 "${userAccounts[accountId]?.name}" 계정을 삭제하시겠습니까?`)) return;
+        
+        // 로컬 상태 먼저 업데이트
+        const updated = { ...userAccounts };
+        delete updated[accountId];
+        
+        // Firebase에서 해당 계정만 삭제 (null로 설정)
+        if (firebaseEnabled && database) {
+          try {
+            await database.ref(`users/${accountId}`).set(null);
+            console.log(`계정 ${accountId} 삭제 완료`);
+            setUserAccounts(updated);
+            alert('계정이 삭제되었습니다.');
+          } catch (err) {
+            console.error('계정 삭제 오류:', err);
+            alert('계정 삭제 중 오류가 발생했습니다.');
+          }
+        } else {
+          setUserAccounts(updated);
+          alert('계정이 삭제되었습니다.');
+        }
+      };
+
+      // 계정 비밀번호 변경 (admin 전용)
+      const handleResetAccountPassword = (accountId) => {
+        const newPw = prompt(`"${userAccounts[accountId]?.name}" 계정의 새 비밀번호를 입력하세요:`);
+        if (!newPw) return;
+        if (firebaseEnabled && database) {
+          database.ref(`users/${accountId}/password`).set(newPw);
+        }
+        setUserAccounts(prev => ({ ...prev, [accountId]: { ...prev[accountId], password: newPw } }));
+        alert('비밀번호가 변경되었습니다.');
+      };
+
+      // 실적 사유 저장
+      const saveResultWithReason = () => {
+        const { scheduleId, assignee, result, reason, selectedCompetitors, customCompetitor } = resultReasonData;
+        if (!scheduleId || !result) return;
+        
+        const schedule = ptSchedules.find(s => s.id === scheduleId);
+        if (!schedule) return;
+        
+        const assignees = (schedule.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+        let newResults = { ...(schedule.results || {}) };
+        let newReasons = { ...(schedule.resultReasons || {}) };
+        
+        const targetAssignee = assignee || assignees[0] || null;
+        
+        // 선택된 공법사 + 기타 입력 합치기
+        const allCompetitors = [...(selectedCompetitors || []), customCompetitor].filter(Boolean);
+        const fullCompetitor = allCompetitors.join(', ');
+        
+        if (targetAssignee) {
+          newResults[targetAssignee] = result;
+          if (result === '패' || result === '무') {
+            // 패배/무승부: 경쟁사 + 사유 저장
+            newReasons[targetAssignee] = {
+              reason: reason || '',
+              competitor: fullCompetitor
+            };
+          } else if (result === '승') {
+            // 승리: 사유만 저장 (경쟁사 없음)
+            newReasons[targetAssignee] = {
+              reason: reason || '',
+              competitor: ''
+            };
+          } else {
+            // 지원: 사유 삭제
+            delete newReasons[targetAssignee];
+          }
+        }
+        
+        // ptStatus, resultConfirmDate, statusLog 업데이트
+        const todayDate = new Date().toISOString().split('T')[0];
+        const nowTime = new Date().toISOString().replace('T', ' ').substring(0, 16);
+        const ptStatusVal = result === '승' ? '승리' : (result === '무' ? '실패' : '실패');
+        const newPtStatus = { ...(schedule.ptStatus || {}), ...(targetAssignee ? { [targetAssignee]: ptStatusVal } : {}) };
+        const newConfirmDate = { ...(schedule.resultConfirmDate || {}), ...(targetAssignee ? { [targetAssignee]: todayDate } : {}) };
+        const newLastCheck = { ...(schedule.lastCheckDate || {}), ...(targetAssignee ? { [targetAssignee]: todayDate } : {}) };
+        const newStatusLog = [...(schedule.statusLog || []), ...(targetAssignee ? [{
+          date: nowTime, assignee: targetAssignee,
+          from: getPtTrackingStatus(schedule, targetAssignee) || '없음', to: ptStatusVal,
+          by: currentUser?.name || '알 수 없음'
+        }] : [])];
+
+        const updatedSchedule = { ...schedule, results: newResults, resultReasons: newReasons, inProgress: false, ptStatus: newPtStatus, resultConfirmDate: newConfirmDate, lastCheckDate: newLastCheck, statusLog: newStatusLog };
+
+        // Firebase 저장
+        if (firebaseEnabled && database) {
+          database.ref(`pt/${scheduleId}`).update({ results: newResults, resultReasons: newReasons, inProgress: false, ptStatus: newPtStatus, resultConfirmDate: newConfirmDate, lastCheckDate: newLastCheck, statusLog: newStatusLog });
+        }
+
+        // 로컬 상태 업데이트
+        setPtSchedules(prev => prev.map(s => s.id === scheduleId ? updatedSchedule : s));
+
+        setShowResultReasonModal(false);
+        setResultReasonData({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false });
+
+        // 승/무 결과 시 정산요청 확인 (패 제외)
+        if ((result === '승' || result === '무') && targetAssignee) {
+          setTimeout(() => {
+            if (window.confirm(`"${targetAssignee}" 정산요청하시겠습니까?`)) {
+              const settlementUpdate = { [`settlement/${targetAssignee}/requested`]: true };
+              if (firebaseEnabled && database) {
+                database.ref(`pt/${scheduleId}`).update(settlementUpdate);
+              }
+              setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), requested: true } } } : s));
+            }
+          }, 300);
+        }
+      };
+
+      // 관리자 크로스체크 메모 저장
+      const saveAdminNote = (scheduleId, assigneeName, note) => {
+        if (!currentUser?.isAdmin) return;
+        const schedule = ptSchedules.find(s => s.id === scheduleId);
+        if (!schedule) return;
+        const todayDate = new Date().toISOString().split('T')[0];
+        const existing = schedule.resultReasons?.[assigneeName] || {};
+        const updated = { ...existing, adminNote: note, adminNoteBy: currentUser.name, adminNoteDate: todayDate };
+        if (firebaseEnabled && database) {
+          database.ref(`pt/${scheduleId}/resultReasons/${assigneeName}`).update({ adminNote: note, adminNoteBy: currentUser.name, adminNoteDate: todayDate });
+        }
+        setPtSchedules(prev => prev.map(s => s.id !== scheduleId ? s : { ...s, resultReasons: { ...(s.resultReasons || {}), [assigneeName]: updated } }));
+        setEditingAdminNotes(prev => { const c = { ...prev }; delete c[`${scheduleId}_${assigneeName}`]; return c; });
+      };
+
+      // 개인 메모 저장
+      const saveUserMemo = (scheduleId, text) => {
+        if (!currentUser) return;
+        const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 16);
+        if (firebaseEnabled && database) {
+          database.ref(`pt/${scheduleId}/userMemos/${currentUser.name}`).set({ text, updatedAt: nowStr });
+        }
+        setPtSchedules(prev => prev.map(s => s.id !== scheduleId ? s : { ...s, userMemos: { ...(s.userMemos || {}), [currentUser.name]: { text, updatedAt: nowStr } } }));
+        setEditingUserMemos(prev => { const c = { ...prev }; delete c[scheduleId]; return c; });
+      };
+
+      // 승무패 저장 (개별 담당자 결과 지원)
+      const saveResults = () => {
+        const updatedSchedules = ptSchedules.map(s => {
+          // 개별 담당자 결과 처리
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+          let newResults = { ...(s.results || {}) };
+          let newReasons = { ...(s.resultReasons || {}) };
+          let hasChanges = false;
+          
+          assignees.forEach(assignee => {
+            const editKey = `${s.id}_${assignee}`;
+            if (editingResults.hasOwnProperty(editKey)) {
+              const newResult = editingResults[editKey];
+              newResults[assignee] = newResult;
+              // 무/지원으로 변경 시 사유 삭제
+              if (newResult === '무' || newResult === '지원' || newResult === null) {
+                delete newReasons[assignee];
+              }
+              hasChanges = true;
+            }
+          });
+          
+          // 기존 단일 result 방식도 지원 (레거시)
+          if (editingResults.hasOwnProperty(s.id)) {
+            return { ...s, result: editingResults[s.id], results: newResults, resultReasons: newReasons, inProgress: false };
+          }
+          
+          if (hasChanges) {
+            return { ...s, results: newResults, resultReasons: newReasons, inProgress: false };
+          }
+          return s;
+        });
+        
+        setPtSchedules(updatedSchedules);
+        
+        // Firebase 또는 로컬 저장 (결과 변경 + 정산/selfPT 변경 모두 저장)
+        if (firebaseEnabled && database) {
+          updatedSchedules.forEach(s => {
+            const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+            let shouldSave = editingResults.hasOwnProperty(s.id);
+            assignees.forEach(assignee => {
+              if (editingResults.hasOwnProperty(`${s.id}_${assignee}`)) {
+                shouldSave = true;
+              }
+            });
+            // 정산/selfPT 변경된 건도 저장
+            if (!shouldSave && dirtyScheduleIds.has(s.id)) {
+              shouldSave = true;
+            }
+            if (shouldSave) {
+              const safeId = s.id.replace(/[.#$\/\[\]]/g, '_');
+              database.ref(`pt/${safeId}`).set({...s, id: safeId});
+            }
+          });
+        } else {
+          saveToLocal('pt_schedules', updatedSchedules);
+        }
+        
+        setEditingResults({});
+        setDirtyScheduleIds(new Set());
+        setHasResultChanges(false);
+        setLastSaved(new Date().toLocaleTimeString());
+        alert('실적이 저장되었습니다!');
+      };
+      
+      // 개별 담당자 결과 가져오기
+      const getCurrentResult = (s, assignee = null) => {
+        // 담당자별 결과 조회
+        if (assignee) {
+          const editKey = `${s.id}_${assignee}`;
+          if (editingResults.hasOwnProperty(editKey)) {
+            return editingResults[editKey];
+          }
+          // 기존 results 객체에서 조회
+          if (s.results && s.results[assignee]) {
+            return s.results[assignee];
+          }
+          // 복수 담당자인 경우 레거시 result를 사용하지 않음 (독립 처리)
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+          if (assignees.length > 1) {
+            return null; // 복수 담당자는 각각 독립적으로 처리
+          }
+          // 단일 담당자만 레거시 result 사용
+          return s.result || null;
+        }
+        // 담당자 미지정 시 기존 방식
+        return editingResults.hasOwnProperty(s.id) ? editingResults[s.id] : s.result;
+      };
+      
+      // 공고문 공법 기반 자동 판정
+      const judgeResult = (methods) => {
+        if (!methods || methods.length === 0) return null;
+        const normalized = methods.map(m => m.toUpperCase().trim());
+        const hasPour = normalized.includes('POUR');
+        if (hasPour) {
+          const pourFamily = ['POUR', 'DO', 'CNC'];
+          const others = normalized.filter(m => !pourFamily.includes(m));
+          return others.length === 0 ? '승' : '무';
+        }
+        return '패';
+      };
+
+      // 결과 버튼 클릭 핸들러 (승/패/무는 사유 모달, 지원은 바로 저장)
+      const handleResultClick = (schedule, result, assignee = null) => {
+        // 수정 권한 체크
+        const canEdit = currentUser?.isAdmin || currentUser?.name === assignee;
+        if (!canEdit) return;
+        
+        // 현재 결과 확인
+        const currentResult = getCurrentResult(schedule, assignee);
+        
+        // 같은 결과를 다시 클릭하면 취소
+        if (currentResult === result) {
+          // 결과 취소
+          const newResults = { ...(schedule.results || {}) };
+          if (assignee) {
+            delete newResults[assignee];
+          }
+
+          // ptStatus를 '결과확인중'으로 복원 + 로그 기록
+          const todayDate = new Date().toISOString().split('T')[0];
+          const nowTime = new Date().toISOString().replace('T', ' ').substring(0, 16);
+          const newPtStatus = { ...(schedule.ptStatus || {}) };
+          if (assignee) {
+            newPtStatus[assignee] = '결과확인중';
+          }
+          const newLastCheck = { ...(schedule.lastCheckDate || {}), ...(assignee ? { [assignee]: todayDate } : {}) };
+          const newStatusLog = [...(schedule.statusLog || []), ...(assignee ? [{
+            date: nowTime, assignee: assignee,
+            from: getPtTrackingStatus(schedule, assignee) || '없음', to: '결과확인중',
+            by: currentUser?.name || '알 수 없음'
+          }] : [])];
+
+          const cancelUpdate = { results: newResults, ptStatus: newPtStatus, lastCheckDate: newLastCheck, statusLog: newStatusLog };
+
+          // Firebase 저장
+          if (database) {
+            database.ref(`pt/${schedule.id}`).update(cancelUpdate);
+          }
+
+          // 로컬 상태 업데이트
+          setPtSchedules(prev => prev.map(s => s.id === schedule.id ? { ...s, ...cancelUpdate } : s));
+          return;
+        }
+        
+        // 결과 클릭 시 진행중 즉시 해제
+        if (schedule.inProgress && database) {
+          database.ref(`pt/${schedule.id}`).update({ inProgress: false });
+          setPtSchedules(prev => prev.map(p => p.id === schedule.id ? { ...p, inProgress: false } : p));
+        }
+        
+        if (result === '승' || result === '패' || result === '무') {
+          // 승/패/무는 사유 입력 모달 열기
+          const existing = schedule.resultReasons?.[assignee] || {};
+          
+          // 원본 경쟁사 필드 (표시용)
+          const originalCompetitorStr = schedule.competitor || '';
+          
+          // 기타로 처리할 패턴: @개업체, @곳, @개사, @개, 총@개 등
+          const isExcludedPattern = (str) => /^(\d+개업체|\d+곳|\d+개사|\d+개|총\d+개)$/.test(str);
+          
+          // 원본 경쟁사 필드에서 공법사 목록 추출 (콤마, 슬래시, 마침표로 구분)
+          // 패턴 제외한 선택 가능한 목록
+          const originalCompetitors = schedule.competitor 
+            ? schedule.competitor.split(/[,\/.]+/).map(c => c.trim()).filter(c => c && !isExcludedPattern(c))
+            : [];
+          
+          // 기타로 처리해야 할 패턴 체크
+          const hasExcludedPattern = schedule.competitor && /(\d+개업체|\d+곳|\d+개사|\d+개|총\d+개)/.test(schedule.competitor);
+          
+          setResultReasonData({
+            scheduleId: schedule.id,
+            assignee: assignee,
+            result: result,
+            reason: existing.reason || '',
+            selectedCompetitors: existing.competitor ? existing.competitor.split(', ').filter(Boolean) : [],
+            availableCompetitors: originalCompetitors,
+            originalCompetitorStr: originalCompetitorStr,
+            hasNCompanyPattern: hasExcludedPattern,
+            customCompetitor: '',
+            showCustomCompetitor: hasExcludedPattern || originalCompetitors.length === 0,
+            isResultChange: !!currentResult && currentResult !== result,
+            previousResult: currentResult || null
+          });
+          setShowResultReasonModal(true);
+        } else {
+          // 지원은 바로 저장
+          const newResults = { ...(schedule.results || {}), [assignee]: result };
+
+          // Firebase 저장
+          if (database) {
+            database.ref(`pt/${schedule.id}`).update({ results: newResults, inProgress: false });
+          }
+
+          // 로컬 상태 업데이트
+          setPtSchedules(prev => prev.map(s => s.id === schedule.id ? { ...s, results: newResults, inProgress: false } : s));
+
+          // 지원 결과 시 정산요청 확인
+          if (result === '지원' && assignee) {
+            setTimeout(() => {
+              if (window.confirm(`"${assignee}" 정산요청하시겠습니까?`)) {
+                const settlementUpdate = { [`settlement/${assignee}/requested`]: true };
+                if (database) {
+                  database.ref(`pt/${schedule.id}`).update(settlementUpdate);
+                }
+                setPtSchedules(prev => prev.map(s => s.id === schedule.id ? { ...s, settlement: { ...(s.settlement || {}), [assignee]: { ...(s.settlement?.[assignee] || {}), requested: true } } } : s));
+              }
+            }, 300);
+          }
+        }
+      };
+      
+      // PT 추적 상태 조회 (하위 호환성 포함)
+      const getPtTrackingStatus = (schedule, assigneeName) => {
+        if (!schedule || !assigneeName) return null;
+        // 1) ptStatus 필드가 있으면 그대로 사용
+        if (schedule.ptStatus && schedule.ptStatus[assigneeName]) {
+          return schedule.ptStatus[assigneeName];
+        }
+        // 2) 기존 results에서 변환
+        const assignees = (schedule.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+        let result = null;
+        if (schedule.results && schedule.results[assigneeName] !== undefined) {
+          result = schedule.results[assigneeName];
+        } else if (assignees.length <= 1) {
+          result = schedule.result || null;
+        }
+        if (result === '승') return '승리';
+        if (result === '패' || result === '무') return '실패';
+        if (result === '자체진행') return '자체진행';
+        if (result === '지원') return null; // 지원은 별도 처리
+        // 3) 결과 없으면 → PT 날짜가 오늘 이전이면 '결과확인중'
+        const todayStr = new Date().toISOString().split('T')[0];
+        if (schedule.date && schedule.dateType === 'confirmed' && schedule.date < todayStr) return '결과확인중';
+        return null; // 아직 PT 전
+      };
+
+      // PT 상태 변경 (Firebase + 로컬 + 로그)
+      const updatePtStatus = (scheduleId, assigneeName, newStatus) => {
+        const schedule = ptSchedules.find(s => s.id === scheduleId);
+        if (!schedule) return;
+        // 권한 체크
+        const canEdit = currentUser?.isAdmin || currentUser?.name === assigneeName;
+        if (!canEdit) return;
+
+        const oldStatus = getPtTrackingStatus(schedule, assigneeName);
+        const todayStr = new Date().toISOString().split('T')[0];
+        const now = new Date().toISOString().replace('T', ' ').substring(0, 16);
+
+        const newPtStatus = { ...(schedule.ptStatus || {}), [assigneeName]: newStatus };
+        const newLastCheck = { ...(schedule.lastCheckDate || {}), [assigneeName]: todayStr };
+        const newLog = [...(schedule.statusLog || []), {
+          date: now, assignee: assigneeName,
+          from: oldStatus || '없음', to: newStatus,
+          by: currentUser?.name || '알 수 없음'
+        }];
+
+        let newResults = { ...(schedule.results || {}) };
+        let newConfirmDate = { ...(schedule.resultConfirmDate || {}) };
+        let extraUpdate = {};
+
+        if (newStatus === '자체진행') {
+          newResults[assigneeName] = '자체진행';
+          newConfirmDate[assigneeName] = todayStr;
+          extraUpdate = { results: newResults, resultConfirmDate: newConfirmDate };
+        }
+
+        const updateData = { ptStatus: newPtStatus, lastCheckDate: newLastCheck, statusLog: newLog, ...extraUpdate };
+
+        if (firebaseEnabled && database) {
+          database.ref(`pt/${scheduleId}`).update(updateData);
+        }
+        setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, ...updateData } : s));
+      };
+
+      // PT 후 경과일 계산
+      const getDaysSincePt = (schedule) => {
+        if (!schedule.date) return 0;
+        return Math.floor((new Date() - new Date(schedule.date)) / 86400000);
+      };
+
+      // 개별 담당자 결과 임시 저장
+      const updateResultTemp = (id, result, assignee = null) => {
+        const key = assignee ? `${id}_${assignee}` : id;
+        setEditingResults(prev => ({
+          ...prev,
+          [key]: prev[key] === result ? null : result
+        }));
+        setHasResultChanges(true);
+      };
+
+      const getPerformanceStats = (assignee, yearFilter, quarterFilter) => {
+        // 년도/분기 날짜 범위 계산
+        const getDateRangeForStats = (year, quarter) => {
+          const y = parseInt(year);
+          if (quarter === '1분기') return { start: `${y}-01-01`, end: `${y}-03-31` };
+          if (quarter === '2분기') return { start: `${y}-04-01`, end: `${y}-06-30` };
+          if (quarter === '3분기') return { start: `${y}-07-01`, end: `${y}-09-30` };
+          if (quarter === '4분기') return { start: `${y}-10-01`, end: `${y}-12-31` };
+          return { start: `${y}-01-01`, end: `${y}-12-31` };
+        };
+        const skipDateFilter = !yearFilter || yearFilter === 'all';
+        const range = skipDateFilter ? null : getDateRangeForStats(yearFilter, quarterFilter);
+
+        // 담당자 이름이 포함된 일정 필터 (복수 담당자 지원: "정정훈/김성민", "정정훈,김성민" 등)
+        const list = ptSchedules.filter(s => {
+          if (!s.date || !s.ptAssignee) return false;
+          if (s.selfPT) return false; // 협약사자체PT 제외
+          // 날짜 필터 적용
+          if (!skipDateFilter && (s.date < range.start || s.date > range.end)) return false;
+          // 구분자로 분리: /, ,, +, & 등
+          const assignees = s.ptAssignee.split(/[\/,+&]/).map(a => a.trim());
+          return assignees.includes(assignee);
+        });
+        
+        // 개별 담당자 결과 가져오기
+        const getResult = (s) => {
+          const editKey = `${s.id}_${assignee}`;
+          if (editingResults.hasOwnProperty(editKey)) {
+            return editingResults[editKey];
+          }
+          if (s.results && s.results[assignee]) {
+            return s.results[assignee];
+          }
+          // 복수 담당자인 경우 레거시 result 사용 안함
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+          if (assignees.length > 1) {
+            return null;
+          }
+          return s.result || null;
+        };
+        
+        // 본인영업 여부 확인
+        const isSelfSales = (s) => s.settlement?.[assignee]?.selfSales || false;
+        
+        const wins = list.filter(s => getResult(s) === '승').length;
+        const draws = list.filter(s => getResult(s) === '무').length;
+        const losses = list.filter(s => getResult(s) === '패').length;
+        const support = list.filter(s => getResult(s) === '지원').length;
+        const completed = wins + draws + losses; // 지원은 승률 계산에서 제외
+        
+        // 결과별 금액 (승: 50만, 무: 25만, 패: 0, 지원: 25만) - 본인영업/협약사자체PT는 0원
+        const totalAmount = list.reduce((sum, s) => {
+          const result = getResult(s);
+          if (!result || isSelfSales(s) || s.selfPT) return sum;
+          if (result === '승') return sum + 500000;
+          if (result === '무') return sum + 250000;
+          if (result === '지원') return sum + 250000;
+          return sum;
+        }, 0);
+        
+        return { wins, draws, losses, support, pending: list.filter(s => !getResult(s)).length, total: list.length, winRate: completed > 0 ? Math.round((wins / completed) * 100) : 0, totalAmount };
+      };
+
+      // PT 실적 분석 함수 (공종별/패배원인별)
+      const getPtAnalysis = (assigneeName, filteredPtList) => {
+        const myPts = filteredPtList.filter(s => {
+          if (!s.ptAssignee) return false;
+          const assignees = s.ptAssignee.split(/[\/,+&]/).map(a => a.trim());
+          return assignees.includes(assigneeName);
+        });
+
+        const getResult = (s) => {
+          if (s.results && s.results[assigneeName]) return s.results[assigneeName];
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+          if (assignees.length > 1) return null;
+          return s.result || null;
+        };
+
+        const workTypeStats = {};
+        const groupStats = {};
+
+        myPts.forEach(s => {
+          const wt = s.workType || '기타';
+          const group = getWorkTypeGroup(wt);
+          const result = getResult(s);
+          if (!result || result === '지원') return;
+
+          if (!workTypeStats[wt]) workTypeStats[wt] = { wins: 0, draws: 0, losses: 0, total: 0 };
+          workTypeStats[wt].total++;
+          if (result === '승') workTypeStats[wt].wins++;
+          else if (result === '무') workTypeStats[wt].draws++;
+          else if (result === '패') workTypeStats[wt].losses++;
+
+          if (!groupStats[group]) groupStats[group] = { wins: 0, draws: 0, losses: 0, total: 0 };
+          groupStats[group].total++;
+          if (result === '승') groupStats[group].wins++;
+          else if (result === '무') groupStats[group].draws++;
+          else if (result === '패') groupStats[group].losses++;
+        });
+
+        const calcWinRate = (stat) => {
+          const completed = stat.wins + stat.draws + stat.losses;
+          return completed > 0 ? Math.round((stat.wins / completed) * 100) : 0;
+        };
+
+        // 강점/약점을 대분류(groupStats) 기준으로 판별 (3건 이상 필수)
+        const strongGroups = Object.entries(groupStats)
+          .filter(([_, gs]) => {
+            const completed = gs.wins + gs.draws + gs.losses;
+            return completed >= 3 && calcWinRate(gs) >= 60;
+          })
+          .sort((a, b) => calcWinRate(b[1]) - calcWinRate(a[1]));
+
+        const weakGroups = Object.entries(groupStats)
+          .filter(([_, gs]) => {
+            const completed = gs.wins + gs.draws + gs.losses;
+            return completed >= 3 && calcWinRate(gs) < 40;
+          })
+          .sort((a, b) => calcWinRate(a[1]) - calcWinRate(b[1]));
+
+        // 주력 공종: 대분류 중 가장 PT 많은 그룹
+        const mainGroup = Object.entries(groupStats).sort((a, b) => b[1].total - a[1].total)[0] || null;
+
+        // 패배유형 5가지 코드 분류 (COMPETITOR → PRICE → SALES → TECH → UNKNOWN)
+        const lossTypeCounts = { COMPETITOR: 0, PRICE: 0, SALES: 0, TECH: 0, UNKNOWN: 0 };
+        const competitorDetails = {}; // 경쟁사별 상세 카운트
+        myPts.filter(s => getResult(s) === '패').forEach(s => {
+          const reasonData = s.resultReasons?.[assigneeName] || {};
+          const lossType = classifyLossType(reasonData.reason, reasonData.competitor, s.competitor);
+          lossTypeCounts[lossType] = (lossTypeCounts[lossType] || 0) + 1;
+
+          // COMPETITOR인 경우 경쟁사별 상세 집계
+          if (lossType === 'COMPETITOR') {
+            const comp = (reasonData.competitor || '').trim() || (s.competitor || '').trim();
+            const isExcluded = (str) => /^(\d+개업체|\d+곳|\d+개사|\d+개|총\d+개|외\s*\d+|등\s*\d+)$/.test(str.trim());
+            const companies = comp.split(/[\/,.+&]+/).map(c => c.trim()).filter(c => c && !isExcluded(c)).map(normalizeCompetitor);
+            companies.forEach(c => { competitorDetails[c] = (competitorDetails[c] || 0) + 1; });
+          }
+        });
+        const lossTypesSorted = Object.entries(lossTypeCounts)
+          .filter(([_, count]) => count > 0)
+          .sort((a, b) => b[1] - a[1]);
+        const competitorDetailsSorted = Object.entries(competitorDetails).sort((a, b) => b[1] - a[1]);
+
+        return { workTypeStats, groupStats, strongGroups, weakGroups, mainGroup, lossTypesSorted, competitorDetailsSorted, calcWinRate };
+      };
+
+      // 칸반 데이터 생성 함수
+      const getKanbanData = (assigneeFilter, filteredPtList, yearFilter, quarterFilter) => {
+        // 년도/분기 필터
+        const getDateRange = (year, quarter) => {
+          const y = parseInt(year);
+          if (quarter === '1분기') return { start: `${y}-01-01`, end: `${y}-03-31` };
+          if (quarter === '2분기') return { start: `${y}-04-01`, end: `${y}-06-30` };
+          if (quarter === '3분기') return { start: `${y}-07-01`, end: `${y}-09-30` };
+          if (quarter === '4분기') return { start: `${y}-10-01`, end: `${y}-12-31` };
+          return { start: `${y}-01-01`, end: `${y}-12-31` };
+        };
+        const skipDateFilter = !yearFilter || yearFilter === 'all';
+        const range = skipDateFilter ? null : getDateRange(yearFilter, quarterFilter);
+
+        const filtered = filteredPtList.filter(s => {
+          if (!s.date || !s.ptAssignee) return false;
+          if (!skipDateFilter && (s.date < range.start || s.date > range.end)) return false;
+          if (assigneeFilter !== 'all') {
+            const assignees = s.ptAssignee.split(/[\/,+&]/).map(a => a.trim());
+            if (!assignees.includes(assigneeFilter)) return false;
+          }
+          return true;
+        });
+
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+
+        const getResultForItem = (s) => {
+          if (assigneeFilter !== 'all') {
+            if (s.results && s.results[assigneeFilter]) return s.results[assigneeFilter];
+            const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+            if (assignees.length > 1) return null;
+            return s.result || null;
+          }
+          // 전체일 때: 첫번째 담당자 기준 또는 result
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+          if (s.results) {
+            for (const a of assignees) {
+              if (s.results[a]) return s.results[a];
+            }
+          }
+          return s.result || null;
+        };
+
+        const inProgress = [];
+        const win = [];
+        const lose = [];
+        const draw = [];
+        const support = [];
+
+        filtered.forEach(s => {
+          const result = getResultForItem(s);
+          const group = getWorkTypeGroup(s.workType);
+          const badgeColor = GONGONG_BADGE_COLORS[group] || '#6b7280';
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+          const manager = assigneeFilter !== 'all' ? assigneeFilter : assignees[0] || '';
+
+          const card = {
+            id: s.id, siteName: s.siteName, gongong: group, gongongBadgeColor: badgeColor,
+            date: s.date, manager, workTypeRaw: s.workType, requester: s.requester,
+            participants: s.participants, result, rawData: s
+          };
+
+          if (result === '지원') {
+            support.push(card);
+          } else if (!result) {
+            const dDate = s.date ? Math.ceil((new Date(s.date) - today) / (1000*60*60*24)) : null;
+            card.dDay = dDate;
+            card.urgency = dDate !== null && dDate <= 0 ? 'overdue' : dDate !== null && dDate <= 3 ? 'high' : 'normal';
+            inProgress.push(card);
+          } else if (result === '승') {
+            const reasonData = s.resultReasons?.[manager] || {};
+            card.winReason = reasonData.reason || s.note || '';
+            win.push(card);
+          } else if (result === '패') {
+            const reasonData = s.resultReasons?.[manager] || {};
+            card.lossReason = reasonData.reason || '';
+            card.lossType = classifyLossType(reasonData.reason, reasonData.competitor, s.competitor);
+            card.lossTypeLabel = LOSS_TYPE_LABELS[card.lossType];
+            card.competitor = reasonData.competitor || s.competitor || '';
+            lose.push(card);
+          } else if (result === '무') {
+            draw.push(card);
+          }
+        });
+
+        // 날짜 내림차순 정렬
+        const sortByDate = (a, b) => (b.date || '').localeCompare(a.date || '');
+        inProgress.sort(sortByDate);
+        win.sort(sortByDate);
+        lose.sort(sortByDate);
+        draw.sort(sortByDate);
+        support.sort(sortByDate);
+
+        return { inProgress, win, lose, draw, support };
+      };
+
+      // 팀 전체 분석 함수
+      const getTeamAnalysis = (filteredPtList, yearFilter, quarterFilter, assigneeFilter) => {
+        const getDateRange = (year, quarter) => {
+          const y = parseInt(year);
+          if (quarter === '1분기') return { start: `${y}-01-01`, end: `${y}-03-31` };
+          if (quarter === '2분기') return { start: `${y}-04-01`, end: `${y}-06-30` };
+          if (quarter === '3분기') return { start: `${y}-07-01`, end: `${y}-09-30` };
+          if (quarter === '4분기') return { start: `${y}-10-01`, end: `${y}-12-31` };
+          return { start: `${y}-01-01`, end: `${y}-12-31` };
+        };
+        const skipYearFilter = !yearFilter || yearFilter === 'all';
+        const range = skipYearFilter ? null : getDateRange(yearFilter, quarterFilter);
+
+        const filtered = filteredPtList.filter(s => {
+          if (!s.date || !s.ptAssignee) return false;
+          if (s.selfPT) return false; // 협약사자체PT 제외
+          if (!skipYearFilter && (s.date < range.start || s.date > range.end)) return false;
+          if (assigneeFilter) {
+            const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim());
+            if (!assignees.includes(assigneeFilter)) return false;
+          }
+          return true;
+        });
+
+        // 팀 전체 통계
+        let totalWin = 0, totalDraw = 0, totalLose = 0, totalInProgress = 0;
+        const groupStats = {};
+        const GROUP_ORDER = ['슁글', '금속기와', '슬라브', '재도장', '지하주차장', '복합공종', '기타'];
+        GROUP_ORDER.forEach(g => { groupStats[g] = { wins: 0, draws: 0, losses: 0, total: 0 }; });
+
+        filtered.forEach(s => {
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+          const group = getWorkTypeGroup(s.workType);
+          const targetAssignees = assigneeFilter ? assignees.filter(a => a === assigneeFilter) : assignees;
+
+          targetAssignees.forEach(assignee => {
+            let result = null;
+            if (s.results && s.results[assignee]) result = s.results[assignee];
+            else if (assignees.length === 1) result = s.result || null;
+
+            if (!result || result === '지원') {
+              if (!result) totalInProgress++;
+              return;
+            }
+            if (result === '승') { totalWin++; groupStats[group].wins++; }
+            else if (result === '무') { totalDraw++; groupStats[group].draws++; }
+            else if (result === '패') { totalLose++; groupStats[group].losses++; }
+            groupStats[group].total++;
+          });
+        });
+
+        const totalCompleted = totalWin + totalDraw + totalLose;
+        const teamWinRate = totalCompleted > 0 ? Math.round((totalWin / totalCompleted) * 100) : 0;
+
+        // 방식 B: 공종 순수 역량 집계 (서브공종 태깅 - 복합공종 분해)
+        const SUB_GROUP_ORDER = ['재도장', '슬라브', '지하주차장', '슁글', '금속기와', '기타'];
+        const subGroupStats = {};
+        SUB_GROUP_ORDER.forEach(g => { subGroupStats[g] = { wins: 0, draws: 0, losses: 0, total: 0 }; });
+
+        filtered.forEach(s => {
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+          const targetAssignees = assigneeFilter ? assignees.filter(a => a === assigneeFilter) : assignees;
+          const wt = s.workType || '';
+          const mainGroup = getWorkTypeGroup(wt);
+
+          // 서브공종 태그 추출
+          let subTags = [];
+          if (mainGroup === '복합공종') {
+            const text = wt.toLowerCase();
+            for (const sg of SUB_GROUP_ORDER) {
+              if (sg === '기타') continue;
+              const keywords = WORK_TYPE_GROUPS[sg] || [];
+              if (keywords.some(k => text.includes(k.toLowerCase()))) subTags.push(sg);
+            }
+            if (subTags.length === 0) subTags = ['기타'];
+          } else {
+            subTags = [mainGroup === '복합공종' ? '기타' : (SUB_GROUP_ORDER.includes(mainGroup) ? mainGroup : '기타')];
+          }
+
+          targetAssignees.forEach(assignee => {
+            let result = null;
+            if (s.results && s.results[assignee]) result = s.results[assignee];
+            else if (assignees.length === 1) result = s.result || null;
+            if (!result || result === '지원') return;
+
+            subTags.forEach(tag => {
+              subGroupStats[tag].total++;
+              if (result === '승') subGroupStats[tag].wins++;
+              else if (result === '무') subGroupStats[tag].draws++;
+              else if (result === '패') subGroupStats[tag].losses++;
+            });
+          });
+        });
+
+        // 새 4대 대분류 공종별 통계 (방수/재도장/주차장/도로)
+        const mainCategoryStats = {};
+        MAIN_CATEGORY_ORDER.forEach(mc => {
+          mainCategoryStats[mc] = { total: 0, wins: 0, draws: 0, losses: 0 };
+          const config = MAIN_CATEGORY_MAP[mc];
+          config.subs.forEach(sub => {
+            mainCategoryStats[mc + '_' + sub] = { total: 0, wins: 0, draws: 0, losses: 0 };
+          });
+        });
+
+        filtered.forEach(s => {
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+          const targetAssignees = assigneeFilter ? assignees.filter(a => a === assigneeFilter) : assignees;
+          const tags = getSubCategoryTags(s.workType);
+
+          targetAssignees.forEach(assignee => {
+            let result = null;
+            if (s.results && s.results[assignee]) result = s.results[assignee];
+            else if (assignees.length === 1) result = s.result || null;
+            if (!result || result === '지원') return;
+
+            // 대분류별 첫 번째 서브공종에만 집계 (중복 방지)
+            const processedMains = new Set();
+            tags.forEach(tag => {
+              const mainKey = tag.main;
+              const subKey = mainKey + '_' + tag.sub;
+              // 같은 대분류 내에서 첫 번째 서브공종에만 집계
+              if (!processedMains.has(mainKey)) {
+                if (mainCategoryStats[subKey]) {
+                  mainCategoryStats[subKey].total++;
+                  if (result === '승') mainCategoryStats[subKey].wins++;
+                  else if (result === '무') mainCategoryStats[subKey].draws++;
+                  else if (result === '패') mainCategoryStats[subKey].losses++;
+                }
+                if (mainCategoryStats[mainKey]) {
+                  mainCategoryStats[mainKey].total++;
+                  if (result === '승') mainCategoryStats[mainKey].wins++;
+                  else if (result === '무') mainCategoryStats[mainKey].draws++;
+                  else if (result === '패') mainCategoryStats[mainKey].losses++;
+                }
+                processedMains.add(mainKey);
+              }
+            });
+          });
+        });
+
+        // 이전 기간 통계 (트렌드 계산용)
+        const getPrevRange = (year, quarter) => {
+          const y = parseInt(year);
+          if (quarter === '1분기') return { start: `${y-1}-10-01`, end: `${y-1}-12-31` };
+          if (quarter === '2분기') return { start: `${y}-01-01`, end: `${y}-03-31` };
+          if (quarter === '3분기') return { start: `${y}-04-01`, end: `${y}-06-30` };
+          if (quarter === '4분기') return { start: `${y}-07-01`, end: `${y}-09-30` };
+          // 전체: 전년도
+          return { start: `${y-1}-01-01`, end: `${y-1}-12-31` };
+        };
+        const prevRange = skipYearFilter ? null : getPrevRange(yearFilter, quarterFilter);
+        const prevFiltered = skipYearFilter ? [] : filteredPtList.filter(s => {
+          if (!s.date || !s.ptAssignee || s.selfPT || s.date < prevRange.start || s.date > prevRange.end) return false;
+          if (assigneeFilter) {
+            const aa = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim());
+            if (!aa.includes(assigneeFilter)) return false;
+          }
+          return true;
+        });
+        let prevWin = 0, prevDraw = 0, prevLose = 0;
+        prevFiltered.forEach(s => {
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+          const targetPrev = assigneeFilter ? assignees.filter(a => a === assigneeFilter) : assignees;
+          targetPrev.forEach(assignee => {
+            let result = null;
+            if (s.results && s.results[assignee]) result = s.results[assignee];
+            else if (assignees.length === 1) result = s.result || null;
+            if (result === '승') prevWin++;
+            else if (result === '무') prevDraw++;
+            else if (result === '패') prevLose++;
+          });
+        });
+        const prevCompleted = prevWin + prevDraw + prevLose;
+        const prevWinRate = prevCompleted > 0 ? Math.round((prevWin / prevCompleted) * 100) : 0;
+
+        return {
+          teamSummary: {
+            totalPT: filtered.length, win: totalWin, draw: totalDraw, lose: totalLose,
+            inProgress: totalInProgress, winRate: teamWinRate, totalCompleted
+          },
+          prevSummary: { win: prevWin, draw: prevDraw, lose: prevLose, winRate: prevWinRate, totalPT: prevFiltered.length },
+          groupStats, GROUP_ORDER, subGroupStats, SUB_GROUP_ORDER, mainCategoryStats
+        };
+      };
+
+      // 분기별 엑셀 내보내기 함수 (대표님 보고용)
+      const exportQuarterlyExcel = async (year, quarterStr, exportSettlementFilter = 'all') => {
+        const quarterRanges = {
+          '1분기': { start: `${year}-01-01`, end: `${year}-03-31`, label: '1분기' },
+          '2분기': { start: `${year}-04-01`, end: `${year}-06-30`, label: '2분기' },
+          '3분기': { start: `${year}-07-01`, end: `${year}-09-30`, label: '3분기' },
+          '4분기': { start: `${year}-10-01`, end: `${year}-12-31`, label: '4분기' },
+          '전체': { start: `${year}-01-01`, end: `${year}-12-31`, label: '전체' },
+          'all': { start: `${year}-01-01`, end: `${year}-12-31`, label: '전체' }
+        };
+        
+        const range = quarterRanges[quarterStr];
+        
+        if (!range) {
+          alert('올바른 분기를 선택해주세요.');
+          return;
+        }
+        
+        // 결과별 금액 설정
+        const resultAmount = {
+          '승': 500000,
+          '무': 250000,
+          '패': 0,
+          '지원': 250000
+        };
+        
+        // 내보낼 담당자 목록 결정
+        let exportAssignees = [];
+        if (selectedAssignee === 'all') {
+          if (currentUser?.isAdmin) {
+            exportAssignees = assigneeList;
+          } else {
+            exportAssignees = [currentUser?.name];
+          }
+        } else {
+          exportAssignees = [selectedAssignee];
+        }
+        
+        // 해당 분기 일정 필터
+        let quarterSchedules = ptSchedules.filter(s => {
+          if (!s.date) return false;
+          return s.date >= range.start && s.date <= range.end;
+        });
+        
+        // 금액 포맷 함수
+        const formatMoney = (num) => num.toLocaleString('ko-KR');
+        
+        const assigneeLabel = selectedAssignee === 'all' ? '전체' : selectedAssignee;
+        const reportDate = new Date().toLocaleDateString('ko-KR');
+        
+        // CSV 데이터 생성
+        let csv = '\uFEFF'; // BOM for Excel UTF-8
+        
+        if (exportSettlementFilter === 'requested') {
+          // 정산 요청서 CSV (담당자별로 구분)
+          csv += `PT 정산 요청서\n`;
+          csv += `\n`;
+          csv += `작성일,${reportDate}\n`;
+          csv += `기간,${year}년 ${range.label} (${range.start} ~ ${range.end})\n`;
+          csv += `\n`;
+          
+          // 담당자별 데이터 수집
+          const assigneeData = {};
+          let grandTotalCount = 0;
+          let grandTotalAmount = 0;
+          
+          quarterSchedules.forEach(s => {
+            if (s.isDuplicate) return;
+            const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+            assignees.forEach(assignee => {
+              if (!exportAssignees.includes(assignee)) return;
+              const result = s.results?.[assignee] || (assignees.length === 1 ? s.result : null);
+              const sd = s.settlement?.[assignee] || {};
+              if ((result === '승' || result === '무' || result === '지원') && sd.requested && !sd.completed && !sd.selfSales && !s.selfPT) {
+                if (!assigneeData[assignee]) {
+                  assigneeData[assignee] = { items: [], totalAmount: 0 };
+                }
+                const amount = resultAmount[result] || 0;
+                const reasonData = s.resultReasons?.[assignee] || {};
+                // 경쟁사: resultReasons에 있으면 사용, 없으면 원본 s.competitor 사용
+                const competitor = reasonData.competitor || s.competitor || '';
+                assigneeData[assignee].items.push({
+                  date: s.date || '',
+                  siteName: (s.siteName || '').replace(/,/g, ' '),
+                  workType: (s.workType || '').replace(/,/g, ' '),
+                  result,
+                  amount,
+                  competitor: competitor.replace(/,/g, ' '),
+                  reason: (reasonData.reason || '').replace(/,/g, ' ').replace(/\n/g, ' ')
+                });
+                assigneeData[assignee].totalAmount += amount;
+                grandTotalCount++;
+                grandTotalAmount += amount;
+              }
+            });
+          });
+          
+          // 전체 요약
+          csv += `[전체 요약]\n`;
+          csv += `총 요청건수,${grandTotalCount}건\n`;
+          csv += `총 요청금액,${formatMoney(grandTotalAmount)}원\n`;
+          csv += `\n`;
+          
+          // 담당자별 요약
+          csv += `[담당자별 요약]\n`;
+          csv += `담당자,건수,금액\n`;
+          Object.entries(assigneeData).sort((a, b) => b[1].totalAmount - a[1].totalAmount).forEach(([name, data]) => {
+            csv += `${name},${data.items.length}건,${formatMoney(data.totalAmount)}원\n`;
+          });
+          csv += `합계,${grandTotalCount}건,${formatMoney(grandTotalAmount)}원\n`;
+          csv += `\n`;
+          
+          // 담당자별 상세 내역
+          Object.entries(assigneeData).sort((a, b) => b[1].totalAmount - a[1].totalAmount).forEach(([name, data]) => {
+            csv += `\n`;
+            csv += `========================================\n`;
+            csv += `[${name}] ${data.items.length}건 / ${formatMoney(data.totalAmount)}원\n`;
+            csv += `========================================\n`;
+            csv += `순번,날짜,현장명,공종,결과,금액,경쟁사,사유\n`;
+            
+            data.items.sort((a, b) => (a.date || '').localeCompare(b.date || '')).forEach((item, idx) => {
+              csv += `${idx + 1},${item.date},${item.siteName},${item.workType},${item.result},${formatMoney(item.amount)}원,${item.competitor},${item.reason}\n`;
+            });
+            csv += `소계,,,${data.items.length}건,,${formatMoney(data.totalAmount)}원\n`;
+          });
+          
+        } else {
+          // 전체 보고서 CSV (기존 형식)
+          csv += `PT 실적 보고서\n`;
+          csv += `\n`;
+          csv += `기간,${year}년 ${range.label} (${range.start} ~ ${range.end})\n`;
+          csv += `대상,${assigneeLabel}\n`;
+          csv += `작성일,${reportDate}\n`;
+          csv += `\n`;
+          
+          // 금액 기준 안내
+          csv += `[금액 기준]\n`;
+          csv += `승,${formatMoney(resultAmount['승'])}원\n`;
+          csv += `무,${formatMoney(resultAmount['무'])}원\n`;
+          csv += `패,${formatMoney(resultAmount['패'])}원\n`;
+          csv += `지원,${formatMoney(resultAmount['지원'])}원\n`;
+          csv += `\n`;
+          
+          // 담당자별 통계 계산
+          const stats = {};
+          exportAssignees.forEach(assignee => {
+            const list = quarterSchedules.filter(s => {
+              if (!s.ptAssignee) return false;
+              const assignees = s.ptAssignee.split(/[\/,+&]/).map(a => a.trim());
+              return assignees.includes(assignee);
+            });
+            
+            const getResult = (s) => {
+              if (s.results && s.results[assignee]) return s.results[assignee];
+              const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+              if (assignees.length > 1) return null;
+              return s.result || null;
+            };
+            
+            const wins = list.filter(s => getResult(s) === '승').length;
+            const draws = list.filter(s => getResult(s) === '무').length;
+            const losses = list.filter(s => getResult(s) === '패').length;
+            const support = list.filter(s => getResult(s) === '지원').length;
+            const pending = list.filter(s => !getResult(s)).length;
+            const completed = wins + draws + losses;
+            const winRate = completed > 0 ? Math.round((wins / completed) * 100) : 0;
+            
+            const totalAmount = list.reduce((sum, s) => {
+              const result = getResult(s);
+              const isSelfSales = s.settlement?.[assignee]?.selfSales || false;
+              if (!result || isSelfSales) return sum;
+              return sum + (resultAmount[result] || 0);
+            }, 0);
+            
+            if (list.length > 0) {
+              stats[assignee] = { wins, draws, losses, support, pending, total: list.length, winRate, totalAmount };
+            }
+          });
+          
+          // 요약 통계
+          let totalWins = 0, totalDraws = 0, totalLosses = 0, totalSupport = 0, totalPending = 0, totalCount = 0, grandTotalAmount = 0;
+          Object.values(stats).forEach(st => {
+            totalWins += st.wins;
+            totalDraws += st.draws;
+            totalLosses += st.losses;
+            totalSupport += st.support;
+            totalPending += st.pending;
+            totalCount += st.total;
+            grandTotalAmount += st.totalAmount;
+          });
+          const totalCompleted = totalWins + totalDraws + totalLosses;
+          const totalWinRate = totalCompleted > 0 ? Math.round((totalWins / totalCompleted) * 100) : 0;
+          
+          csv += `[전체 요약]\n`;
+          csv += `총 PT 건수,${totalCount}건\n`;
+          csv += `승,${totalWins}건\n`;
+          csv += `무,${totalDraws}건\n`;
+          csv += `패,${totalLosses}건\n`;
+          csv += `지원,${totalSupport}건\n`;
+          csv += `미정,${totalPending}건\n`;
+          csv += `승률,${totalWinRate}%\n`;
+          csv += `총 금액,${formatMoney(grandTotalAmount)}원\n`;
+          csv += `\n`;
+          
+          // 담당자별 상세
+          csv += `[담당자별 실적]\n`;
+          csv += `담당자,승,무,패,지원,미정,총건수,승률,금액\n`;
+          
+          const sortedStats = Object.entries(stats).sort((a, b) => b[1].totalAmount - a[1].totalAmount);
+          
+          sortedStats.forEach(([name, st]) => {
+            csv += `${name},${st.wins},${st.draws},${st.losses},${st.support},${st.pending},${st.total},${st.winRate}%,${formatMoney(st.totalAmount)}원\n`;
+          });
+          
+          if (Object.keys(stats).length > 1) {
+            csv += `합계,${totalWins},${totalDraws},${totalLosses},${totalSupport},${totalPending},${totalCount},${totalWinRate}%,${formatMoney(grandTotalAmount)}원\n`;
+          }
+          
+          // 상세 내역
+          csv += '\n\n[상세 내역]\n';
+          csv += '날짜,현장명,공종,담당자,요청사,결과,본인영업,금액,경쟁사,사유\n';
+          
+          quarterSchedules.sort((a, b) => (a.date || '').localeCompare(b.date || '')).forEach(s => {
+            const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+            assignees.forEach(assignee => {
+              if (!exportAssignees.includes(assignee)) return;
+              
+              let result = '';
+              let competitor = '';
+              let reason = '';
+              
+              if (s.results && s.results[assignee]) {
+                result = s.results[assignee];
+              } else if (assignees.length === 1) {
+                result = s.result || '';
+              }
+              
+              const isSelfSales = s.settlement?.[assignee]?.selfSales || false;
+              const amount = (result && !isSelfSales) ? (resultAmount[result] || 0) : 0;
+              
+              if (s.resultReasons && s.resultReasons[assignee]) {
+                competitor = s.resultReasons[assignee].competitor || '';
+                reason = s.resultReasons[assignee].reason || '';
+              }
+              
+              const siteName = (s.siteName || '').replace(/,/g, ' ');
+              const workType = (s.workType || '').replace(/,/g, ' ');
+              const requester = (s.requester || '').replace(/,/g, ' ');
+              const reasonText = reason.replace(/,/g, ' ').replace(/\n/g, ' ');
+              const competitorText = competitor.replace(/,/g, ' ');
+              
+              csv += `${s.date || ''},${siteName},${workType},${assignee},${requester},${result},${isSelfSales ? 'O' : ''},${formatMoney(amount)}원,${competitorText},${reasonText}\n`;
+            });
+          });
+        }
+        
+        // 다운로드
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        const fileAssignee = selectedAssignee === 'all' ? '전체' : selectedAssignee;
+        const fileFilter = exportSettlementFilter === 'requested' ? '_정산요청' : '';
+        link.download = `PT실적보고서_${year}년_${range.label}_${fileAssignee}${fileFilter}.csv`;
+        link.click();
+        
+        setShowExportDropdown(false);
+      };
+      // PPT 내보내기 함수
+      const exportToPPT = async (year, quarterStr) => {
+        const quarterRanges = {
+          '1분기': { start: `${year}-01-01`, end: `${year}-03-31`, label: '1분기' },
+          '2분기': { start: `${year}-04-01`, end: `${year}-06-30`, label: '2분기' },
+          '3분기': { start: `${year}-07-01`, end: `${year}-09-30`, label: '3분기' },
+          '4분기': { start: `${year}-10-01`, end: `${year}-12-31`, label: '4분기' },
+          '전체': { start: `${year}-01-01`, end: `${year}-12-31`, label: '전체' },
+          'all': { start: `${year}-01-01`, end: `${year}-12-31`, label: '전체' }
+        };
+        
+        const range = quarterRanges[quarterStr];
+        if (!range) {
+          alert('올바른 분기를 선택해주세요.');
+          return;
+        }
+        
+        // pptxgenjs 동적 로드
+        if (!window.PptxGenJS) {
+          const script = document.createElement('script');
+          script.src = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js';
+          document.head.appendChild(script);
+          await new Promise(resolve => script.onload = resolve);
+        }
+        
+        const resultAmount = { '승': 500000, '무': 250000, '패': 0, '지원': 250000 };
+        const formatMoney = (num) => num.toLocaleString('ko-KR');
+        
+        let exportAssignees = [];
+        if (selectedAssignee === 'all') {
+          exportAssignees = currentUser?.isAdmin ? assigneeList : [currentUser?.name];
+        } else {
+          exportAssignees = [selectedAssignee];
+        }
+        
+        let quarterSchedules = ptSchedules.filter(s => {
+          if (!s.date) return false;
+          return s.date >= range.start && s.date <= range.end;
+        });
+        
+        // 담당자별 데이터 수집
+        const assigneeData = {};
+        let grandTotalCount = 0;
+        let grandTotalAmount = 0;
+        
+        quarterSchedules.forEach(s => {
+          if (s.isDuplicate) return;
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+          assignees.forEach(assignee => {
+            if (!exportAssignees.includes(assignee)) return;
+            const result = s.results?.[assignee] || (assignees.length === 1 ? s.result : null);
+            const sd = s.settlement?.[assignee] || {};
+            if ((result === '승' || result === '무' || result === '지원') && sd.requested && !sd.completed && !sd.selfSales && !s.selfPT) {
+              if (!assigneeData[assignee]) {
+                assigneeData[assignee] = { items: [], totalAmount: 0 };
+              }
+              const amount = resultAmount[result] || 0;
+              const reasonData = s.resultReasons?.[assignee] || {};
+              // 경쟁사: resultReasons에 있으면 사용, 없으면 원본 s.competitor 사용
+              const competitor = reasonData.competitor || s.competitor || '';
+              assigneeData[assignee].items.push({
+                date: s.date || '',
+                siteName: s.siteName || '',
+                workType: s.workType || '',
+                result,
+                amount,
+                competitor: competitor,
+                reason: reasonData.reason || ''
+              });
+              assigneeData[assignee].totalAmount += amount;
+              grandTotalCount++;
+              grandTotalAmount += amount;
+            }
+          });
+        });
+        
+        // PPT 생성
+        const pptx = new window.PptxGenJS();
+        pptx.layout = 'LAYOUT_16x9';
+        pptx.title = 'PT 정산 요청서';
+        pptx.author = currentUser?.name || '';
+        
+        const reportDate = new Date().toLocaleDateString('ko-KR');
+        const primaryColor = '2563eb';
+        
+        // 표지 슬라이드
+        const slide1 = pptx.addSlide();
+        slide1.addText('PT 정산 요청서', { x: 0.5, y: 2, w: 9, h: 1, fontSize: 44, bold: true, color: '1e293b', fontFace: 'Arial' });
+        slide1.addText(`${year}년 ${range.label}`, { x: 0.5, y: 3, w: 9, h: 0.5, fontSize: 24, color: primaryColor, fontFace: 'Arial' });
+        slide1.addText(`작성일: ${reportDate}`, { x: 0.5, y: 4.8, w: 4, h: 0.3, fontSize: 12, color: '64748b', fontFace: 'Arial' });
+        
+        // 전체 요약 슬라이드
+        const slide2 = pptx.addSlide();
+        slide2.addText('정산 요약', { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 28, bold: true, color: '1e293b', fontFace: 'Arial' });
+        slide2.addShape(pptx.shapes.RECTANGLE, { x: 0.5, y: 0.9, w: 1.5, h: 0.08, fill: { color: primaryColor } });
+        
+        // 전체 요약 테이블
+        const summaryRows = [
+          [{ text: '담당자', options: { fill: primaryColor, color: 'ffffff', bold: true, align: 'center' } },
+           { text: '건수', options: { fill: primaryColor, color: 'ffffff', bold: true, align: 'center' } },
+           { text: '금액', options: { fill: primaryColor, color: 'ffffff', bold: true, align: 'center' } }]
+        ];
+        
+        Object.entries(assigneeData).sort((a, b) => b[1].totalAmount - a[1].totalAmount).forEach(([name, data], idx) => {
+          const rowFill = idx % 2 === 0 ? 'ffffff' : 'f8fafc';
+          summaryRows.push([
+            { text: name, options: { fill: rowFill, bold: true } },
+            { text: `${data.items.length}건`, options: { fill: rowFill, align: 'center' } },
+            { text: `${formatMoney(data.totalAmount)}원`, options: { fill: rowFill, align: 'right' } }
+          ]);
+        });
+        
+        summaryRows.push([
+          { text: '합계', options: { fill: 'eff6ff', bold: true, align: 'center' } },
+          { text: `${grandTotalCount}건`, options: { fill: 'eff6ff', bold: true, align: 'center', color: primaryColor } },
+          { text: `${formatMoney(grandTotalAmount)}원`, options: { fill: 'eff6ff', bold: true, align: 'right', color: primaryColor } }
+        ]);
+        
+        slide2.addTable(summaryRows, { x: 0.5, y: 1.2, w: 9, colW: [3, 2, 4], rowH: 0.45, border: { pt: 0.5, color: 'e2e8f0' }, fontFace: 'Arial', fontSize: 14 });
+        
+        // 담당자별 상세 슬라이드
+        Object.entries(assigneeData).sort((a, b) => b[1].totalAmount - a[1].totalAmount).forEach(([name, data]) => {
+          const itemsPerSlide = 8;
+          const totalSlides = Math.ceil(data.items.length / itemsPerSlide);
+          
+          for (let slideIdx = 0; slideIdx < totalSlides; slideIdx++) {
+            const slide = pptx.addSlide();
+            const startIdx = slideIdx * itemsPerSlide;
+            const pageItems = data.items.slice(startIdx, startIdx + itemsPerSlide);
+            
+            slide.addText(`${name} ${totalSlides > 1 ? `(${slideIdx + 1}/${totalSlides})` : ''}`, { x: 0.5, y: 0.3, w: 7, h: 0.5, fontSize: 24, bold: true, color: '1e293b', fontFace: 'Arial' });
+            slide.addText(`${data.items.length}건 / ${formatMoney(data.totalAmount)}원`, { x: 7, y: 0.35, w: 2.5, h: 0.4, fontSize: 14, color: primaryColor, align: 'right', fontFace: 'Arial' });
+            slide.addShape(pptx.shapes.RECTANGLE, { x: 0.5, y: 0.8, w: 1.2, h: 0.06, fill: { color: primaryColor } });
+            
+            const rows = [
+              [{ text: '순번', options: { fill: primaryColor, color: 'ffffff', bold: true, align: 'center' } },
+               { text: '날짜', options: { fill: primaryColor, color: 'ffffff', bold: true, align: 'center' } },
+               { text: '현장명', options: { fill: primaryColor, color: 'ffffff', bold: true, align: 'center' } },
+               { text: '공종', options: { fill: primaryColor, color: 'ffffff', bold: true, align: 'center' } },
+               { text: '결과', options: { fill: primaryColor, color: 'ffffff', bold: true, align: 'center' } },
+               { text: '금액', options: { fill: primaryColor, color: 'ffffff', bold: true, align: 'center' } },
+               { text: '경쟁사/사유', options: { fill: primaryColor, color: 'ffffff', bold: true, align: 'center' } }]
+            ];
+            
+            pageItems.forEach((item, idx) => {
+              const rowFill = idx % 2 === 0 ? 'ffffff' : 'f8fafc';
+              const reasonText = [item.competitor, item.reason].filter(Boolean).join(' - ').substring(0, 20);
+              rows.push([
+                { text: String(startIdx + idx + 1), options: { fill: rowFill, align: 'center' } },
+                { text: item.date, options: { fill: rowFill, align: 'center' } },
+                { text: item.siteName.substring(0, 12), options: { fill: rowFill } },
+                { text: item.workType.substring(0, 8), options: { fill: rowFill } },
+                { text: item.result, options: { fill: rowFill, align: 'center', color: item.result === '승' ? '16a34a' : 'f59e0b', bold: true } },
+                { text: `${formatMoney(item.amount)}원`, options: { fill: rowFill, align: 'right' } },
+                { text: reasonText || '-', options: { fill: rowFill, fontSize: 9 } }
+              ]);
+            });
+            
+            if (slideIdx === totalSlides - 1) {
+              rows.push([
+                { text: '소계', options: { fill: 'eff6ff', bold: true, align: 'center', colspan: 4 } },
+                { text: '', options: { fill: 'eff6ff' } },
+                { text: '', options: { fill: 'eff6ff' } },
+                { text: '', options: { fill: 'eff6ff' } },
+                { text: `${data.items.length}건`, options: { fill: 'eff6ff', bold: true, align: 'center' } },
+                { text: `${formatMoney(data.totalAmount)}원`, options: { fill: 'eff6ff', bold: true, align: 'right', color: primaryColor } },
+                { text: '', options: { fill: 'eff6ff' } }
+              ]);
+            }
+            
+            slide.addTable(rows, { x: 0.2, y: 1, w: 9.6, colW: [0.5, 1.0, 2.0, 1.0, 0.6, 1.3, 2.4], rowH: 0.4, border: { pt: 0.5, color: 'e2e8f0' }, fontFace: 'Arial', fontSize: 10 });
+          }
+        });
+        
+        // 다운로드
+        const fileAssignee = selectedAssignee === 'all' ? '전체' : selectedAssignee;
+        pptx.writeFile({ fileName: `PT정산요청서_${year}년_${range.label}_${fileAssignee}.pptx` });
+      };
+
+      // PDF 내보내기 함수 (html2canvas 방식, 담당자별 구분)
+      const exportToPDF = async (year, quarterStr) => {
+        const quarterRanges = {
+          '1분기': { start: `${year}-01-01`, end: `${year}-03-31`, label: '1분기' },
+          '2분기': { start: `${year}-04-01`, end: `${year}-06-30`, label: '2분기' },
+          '3분기': { start: `${year}-07-01`, end: `${year}-09-30`, label: '3분기' },
+          '4분기': { start: `${year}-10-01`, end: `${year}-12-31`, label: '4분기' },
+          '전체': { start: `${year}-01-01`, end: `${year}-12-31`, label: '전체' },
+          'all': { start: `${year}-01-01`, end: `${year}-12-31`, label: '전체' }
+        };
+        
+        const range = quarterRanges[quarterStr];
+        if (!range) {
+          alert('올바른 분기를 선택해주세요.');
+          return;
+        }
+        
+        // html2canvas 동적 로드
+        if (!window.html2canvas) {
+          const script = document.createElement('script');
+          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+          document.head.appendChild(script);
+          await new Promise(resolve => script.onload = resolve);
+        }
+        
+        // jspdf 동적 로드
+        if (!window.jspdf) {
+          const script = document.createElement('script');
+          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+          document.head.appendChild(script);
+          await new Promise(resolve => script.onload = resolve);
+        }
+        
+        const resultAmount = { '승': 500000, '무': 250000, '패': 0, '지원': 250000 };
+        const formatMoney = (num) => num.toLocaleString('ko-KR');
+        
+        let exportAssignees = [];
+        if (selectedAssignee === 'all') {
+          exportAssignees = currentUser?.isAdmin ? assigneeList : [currentUser?.name];
+        } else {
+          exportAssignees = [selectedAssignee];
+        }
+        
+        let quarterSchedules = ptSchedules.filter(s => {
+          if (!s.date) return false;
+          return s.date >= range.start && s.date <= range.end;
+        });
+        
+        // 담당자별 데이터 수집
+        const assigneeData = {};
+        let grandTotalCount = 0;
+        let grandTotalAmount = 0;
+        
+        quarterSchedules.forEach(s => {
+          if (s.isDuplicate) return;
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+          assignees.forEach(assignee => {
+            if (!exportAssignees.includes(assignee)) return;
+            const result = s.results?.[assignee] || (assignees.length === 1 ? s.result : null);
+            const sd = s.settlement?.[assignee] || {};
+            if ((result === '승' || result === '무' || result === '지원') && sd.requested && !sd.completed && !sd.selfSales && !s.selfPT) {
+              if (!assigneeData[assignee]) {
+                assigneeData[assignee] = { items: [], totalAmount: 0 };
+              }
+              const amount = resultAmount[result] || 0;
+              const reasonData = s.resultReasons?.[assignee] || {};
+              // 경쟁사: resultReasons에 있으면 사용, 없으면 원본 s.competitor 사용
+              const competitor = reasonData.competitor || s.competitor || '';
+              assigneeData[assignee].items.push({
+                date: s.date || '',
+                siteName: (s.siteName || '').substring(0, 18),
+                workType: (s.workType || '').substring(0, 10),
+                result,
+                amount,
+                competitor: competitor,
+                reason: reasonData.reason || ''
+              });
+              assigneeData[assignee].totalAmount += amount;
+              grandTotalCount++;
+              grandTotalAmount += amount;
+            }
+          });
+        });
+        
+        const reportDate = new Date().toLocaleDateString('ko-KR');
+        
+        // HTML 요소 생성
+        const container = document.createElement('div');
+        container.style.cssText = 'position: fixed; left: -9999px; top: 0; width: 900px; background: white; font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", "맑은 고딕", sans-serif;';
+        
+        // 담당자별 섹션 HTML 생성
+        let assigneeSections = '';
+        Object.entries(assigneeData).sort((a, b) => b[1].totalAmount - a[1].totalAmount).forEach(([name, data]) => {
+          assigneeSections += `
+            <div style="margin-top: 30px; page-break-inside: avoid;">
+              <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #2563eb; padding-bottom: 8px; margin-bottom: 15px;">
+                <h2 style="margin: 0; color: #1e3a5f; font-size: 18px;">${name}</h2>
+                <span style="color: #2563eb; font-weight: 600;">${data.items.length}건 / ${formatMoney(data.totalAmount)}원</span>
+              </div>
+              <table style="width: 100%; border-collapse: collapse; font-size: 10px;">
+                <thead>
+                  <tr style="background: #2563eb; color: white;">
+                    <th style="padding: 6px 3px; text-align: center; border: 1px solid #e2e8f0; width: 30px;">순번</th>
+                    <th style="padding: 6px 3px; text-align: center; border: 1px solid #e2e8f0; width: 70px;">날짜</th>
+                    <th style="padding: 6px 3px; text-align: left; border: 1px solid #e2e8f0; width: 140px;">현장명</th>
+                    <th style="padding: 6px 3px; text-align: left; border: 1px solid #e2e8f0; width: 60px;">공종</th>
+                    <th style="padding: 6px 3px; text-align: center; border: 1px solid #e2e8f0; width: 35px;">결과</th>
+                    <th style="padding: 6px 3px; text-align: right; border: 1px solid #e2e8f0; width: 80px;">금액</th>
+                    <th style="padding: 6px 3px; text-align: left; border: 1px solid #e2e8f0;">경쟁사/사유</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${data.items.sort((a, b) => (a.date || '').localeCompare(b.date || '')).map((row, idx) => `
+                    <tr style="background: ${idx % 2 === 0 ? '#f8fafc' : 'white'};">
+                      <td style="padding: 6px 4px; text-align: center; border: 1px solid #e2e8f0;">${idx + 1}</td>
+                      <td style="padding: 6px 4px; text-align: center; border: 1px solid #e2e8f0;">${row.date}</td>
+                      <td style="padding: 6px 4px; border: 1px solid #e2e8f0;">${row.siteName}</td>
+                      <td style="padding: 6px 4px; border: 1px solid #e2e8f0;">${row.workType}</td>
+                      <td style="padding: 6px 4px; text-align: center; border: 1px solid #e2e8f0; color: ${row.result === '승' ? '#2563eb' : '#f59e0b'}; font-weight: 600;">${row.result}</td>
+                      <td style="padding: 6px 4px; text-align: right; border: 1px solid #e2e8f0;">${formatMoney(row.amount)}원</td>
+                      <td style="padding: 6px 4px; border: 1px solid #e2e8f0; font-size: 9px;">${[row.competitor, row.reason].filter(Boolean).join(' - ').substring(0, 30) || '-'}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+                <tfoot>
+                  <tr style="background: #eff6ff; font-weight: 600;">
+                    <td colspan="5" style="padding: 8px 4px; text-align: center; border: 1px solid #e2e8f0;">소계</td>
+                    <td style="padding: 8px 4px; text-align: center; border: 1px solid #e2e8f0;">${data.items.length}건</td>
+                    <td style="padding: 8px 4px; text-align: right; border: 1px solid #e2e8f0; color: #2563eb;">${formatMoney(data.totalAmount)}원</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          `;
+        });
+        
+        // 전체 요약 테이블
+        let summaryRows = Object.entries(assigneeData).sort((a, b) => b[1].totalAmount - a[1].totalAmount).map(([name, data]) => `
+          <tr style="background: white;">
+            <td style="padding: 8px 6px; border: 1px solid #e2e8f0; font-weight: 600;">${name}</td>
+            <td style="padding: 8px 6px; text-align: center; border: 1px solid #e2e8f0;">${data.items.length}건</td>
+            <td style="padding: 8px 6px; text-align: right; border: 1px solid #e2e8f0;">${formatMoney(data.totalAmount)}원</td>
+          </tr>
+        `).join('');
+        
+        container.innerHTML = `
+          <div style="padding: 40px; background: white;">
+            <h1 style="text-align: center; color: #1e3a5f; font-size: 28px; margin-bottom: 8px;">PT 정산 요청서</h1>
+            <p style="text-align: center; color: #64748b; font-size: 14px; margin-bottom: 4px;">${year}년 ${range.label} (${range.start} ~ ${range.end})</p>
+            <p style="text-align: center; color: #94a3b8; font-size: 12px; margin-bottom: 30px;">작성일: ${reportDate}</p>
+            
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+              <h3 style="margin: 0 0 15px 0; color: #1e3a5f; font-size: 16px;">전체 요약</h3>
+              <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                <thead>
+                  <tr style="background: #2563eb; color: white;">
+                    <th style="padding: 10px 6px; text-align: left; border: 1px solid #e2e8f0;">담당자</th>
+                    <th style="padding: 10px 6px; text-align: center; border: 1px solid #e2e8f0;">건수</th>
+                    <th style="padding: 10px 6px; text-align: right; border: 1px solid #e2e8f0;">금액</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${summaryRows}
+                </tbody>
+                <tfoot>
+                  <tr style="background: #eff6ff; font-weight: 600;">
+                    <td style="padding: 10px 6px; text-align: center; border: 1px solid #e2e8f0;">합계</td>
+                    <td style="padding: 10px 6px; text-align: center; border: 1px solid #e2e8f0; color: #2563eb;">${grandTotalCount}건</td>
+                    <td style="padding: 10px 6px; text-align: right; border: 1px solid #e2e8f0; color: #2563eb;">${formatMoney(grandTotalAmount)}원</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            
+            ${assigneeSections}
+          </div>
+        `;
+        
+        document.body.appendChild(container);
+        
+        try {
+          const canvas = await window.html2canvas(container, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+          const imgData = canvas.toDataURL('image/png');
+          
+          const { jsPDF } = window.jspdf;
+          const pdf = new jsPDF('p', 'mm', 'a4');
+          
+          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfHeight = pdf.internal.pageSize.getHeight();
+          const imgWidth = pdfWidth - 20;
+          const imgHeight = (canvas.height * imgWidth) / canvas.width;
+          
+          let heightLeft = imgHeight;
+          let position = 10;
+          
+          pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+          heightLeft -= (pdfHeight - 20);
+          
+          while (heightLeft > 0) {
+            position = heightLeft - imgHeight + 10;
+            pdf.addPage();
+            pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+            heightLeft -= (pdfHeight - 20);
+          }
+          
+          const fileAssignee = selectedAssignee === 'all' ? '전체' : selectedAssignee;
+          pdf.save(`PT정산요청서_${year}년_${range.label}_${fileAssignee}.pdf`);
+        } finally {
+          document.body.removeChild(container);
+        }
+      };
+
+      // 오늘 날짜 (동적)
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      
+      // 공종 키워드 목록 (고정)
+      const workTypeKeywords = ['재도장', '슬라브', '에폭시', '금속기와', '슁글', 'PVC', '균열보수', '우레탄', '배면차수', '감리', '도장', '방수', '듀얼', '아스콘', '보도블럭'];
+
+      // 공종 대분류 그룹 (7개 체계 - 기존 호환)
+      const WORK_TYPE_GROUPS = {
+        '슁글': ['슁글', '싱글', 'shingle', '칼라강판(슁글형)'],
+        '금속기와': ['금속기와', '금속지붕', '기와', '칼라강판'],
+        '슬라브': ['슬라브', '듀얼', 'PVC', 'pvc', '우레탄', '방수', '옥상', '외방', '방수시트', '복합압축시트', 'POUR', 'pour', '지붕방수', '평지붕', '드레인', '루프'],
+        '재도장': ['재도장', '도장공사', '외벽도장', '써밋페인트', '써밋바인더', '탄성코트', '외벽', '도색'],
+        '지하주차장': ['지하주차장', '에폭시', '주차장바닥', '주차장에폭시', '트렌치', '지하', '계단에폭시']
+      };
+
+      // POUR공법 협약업체 목록 (고객군 분류_26.01.12.xlsx 기반, 257개사)
+      const POUR_AGREEMENT_COMPANIES = {
+        "에이치제이건설":"S","동현이앤씨":"S","초담건설":"A","삼인유엔아이":"A","로토텍다이아몬드":"F(B)",
+        "국제특수건설":"S","도방건설":"C","성훈종합건설":"B","삼우건설":"B","조광피엔텍":"B",
+        "도원씨엔씨":"B","이두건설":"C","경기이앤에스":"A","천강건설":"A","대명이엔씨":"A",
+        "모아씨앤에스":"S","세원산업개발":"C","국일구조":"A","주원디엔피":"A","예운":"C",
+        "신양아이엔지건설":"B","석진건설":"A","정민씨앤씨":"B","예은건설":"A","정문씨앤씨":"B",
+        "성림건설":"C","금환기업":"B","엠에스이앤지":"C","파가니건설":"C","효덕산업":"A",
+        "루아이앤씨":"B","바름피앤에스":"C","적산건설":"B","수안건설":"A","자오건설":"C",
+        "이루미건설":"B","태영씨엔씨":"C","제이비이엔씨":"C","부영씨엔씨":"S","현대도건":"B",
+        "혜성씨앤씨":"B","지앤필드종합건설":"A","유진에코":"B","아우리":"B","덕일산업":"B",
+        "한림제코":"B","대경건설":"B","금강건설공사":"C","제네시스광고기획":"C","송주종합건설":"C",
+        "명하씨앤씨":"B","지온산업":"C","세영건설":"C","알지씨앤씨":"A","건영이앤씨":"B",
+        "광일포장건설":"C","두레이엔씨":"B","석민이앤씨":"S","엘케이개발":"S","진성이앤지":"S",
+        "기림이앤씨":"S","색채산업개발":"S","새로이건설":"B","대한진단건설":"S","은성이엔씨":"S",
+        "이음건설":"S","금보":"C","선진기술공사":"C","풍산씨앤씨":"C","동해건업":"C",
+        "일오삼지앤씨":"C","지에스성신건설":"C","다원건설":"C","가온건설산업":"C","서현건설":"C",
+        "대성이앤씨":"C","도은건설":"C","다우산업":"C","씨에스청산건설":"C","모두건설":"C",
+        "건양산업":"C","비전씨앤씨":"C","가나랜드":"C","창대이엔씨":"C","정원아이앤디":"C",
+        "다인건설":"C","진원피앤씨":"C","에이치디건설":"B","우단건설":"C","이원건설":"C",
+        "은화":"B","진수이앤씨":"C","나원":"C","윤산씨앤씨":"C","미화건설":"C",
+        "강명건설":"C","백승":"B","세림산업":"B","창일건설":"C","디엘씨앤씨":"C",
+        "인경건설":"B","동심건설":"C","다온":"C","로이스":"C","삼성리페어링":"B",
+        "삼정아이엔지건설":"A","신정이엔씨":"C","영성조경":"C","조양도장산업":"C","보고넷":"C",
+        "진웅건설":"C","신한건설산업":"B","삼원건설":"F","대길산업개발":"C","대길건설":"C",
+        "퍼펙트방수":"C","동일산건":"B","은천":"C","수주건설":"B","미성건설":"C",
+        "SH":"B","에이플러스건설":"C","다수건설":"B","서린건설":"C","태형산업개발":"C",
+        "에스에스건설":"C","대림도장":"C","탱크마스타":"C","K.B건설":"C","삼흥티에스건설":"B",
+        "에이원건설":"B","대성건업":"C","신창건업":"C","하진건설":"C","방수존건설":"C",
+        "두영건설":"C","예화건설":"C","제이제이ENG":"C","건진개발":"B","동건씨앤씨":"C",
+        "대진건설":"C","덕산기업":"C","명가종합건설":"N","흥산건설산업":"C","삼강기업":"C",
+        "경성기업":"C","청학건설":"C","대안이엔씨":"C","케이원씨앤씨":"N(B)","미래건축":"C",
+        "엠지건설":"C","도경이엔지":"C","효원이엔씨":"C","제이에이치건설":"C","건인씨엔알":"C",
+        "경동하우징":"C","덕경":"C","은광비엠씨":"C","유일건설":"B","태동건설":"C",
+        "코지건설":"S","한별이엔씨":"B","보람씨앤씨":"B","지호건설":"B","드림종합건설":"B",
+        "대표건설":"B","여름건설":"S","명서건설":"C","우영엘디아이":"C","수산기업":"C",
+        "미르건축":"C","두영이앤씨":"B","신화건설":"B","무한하우징":"C","태영건설":"B",
+        "에스엠에이":"C","일진건설":"C","세원":"C","더베스트 이앤비":"C","청람건설":"B",
+        "상미건설":"C","제일특수케미칼":"C","우리방재건설":"B","채도건설":"C","위즈페인팅":"C",
+        "케이탑건설":"B","한빛":"C","경하이앤씨":"B","종명건설":"N","보라씨엔씨":"F",
+        "성진에스솔루션":"F","삼창엔지니어링":"F","하은건설":"F","정광이엔씨":"B",
+        "세오엔지니어링":"F","썬시카방수":"F","동양에폭시":"F","강남이앤알":"F",
+        "레인보우테크":"N","도경":"N(S)","지건씨앤씨":"N(A)","다산종합건설":"A","로운건설":"A",
+        "한국전문건설":"N(A)","희민건설":"N(A)","효성씨앤씨":"N(B)","대흥씨앤씨":"N(B)",
+        "대로건설":"B","덕수건설":"N(B)","더세움":"B","예랑건설":"N(B)","일성기업":"N(B)",
+        "풍전이엔씨":"B","미사건설":"N(B)","세원티엠":"B","나노지음":"N(B)","우주티앤아이":"N(B)",
+        "네오텍건설":"N(B)","더자람":"N(B)","스타건설":"B","주태건설":"N(B)","태강건설":"N(B)",
+        "태연건설":"B","채우건설":"B","에이피티건설":"N(B)","헤븐":"B","영성건설":"N",
+        "예신건설":"N","청우엔지니어링":"N","대신엘엔씨건설":"N","탑이앤씨":"N",
+        "자연담은건설":"N","명가건설(유)":"N","대승이앤씨":"N","디아이산업":"N","대륜씨엔씨":"N",
+        "케이씨건설":"N","아트텍":"N","장수씨앤씨":"N","석암산업":"N","경창산업개발":"N",
+        "쌍용조경":"N","유복건설":"N","어썸코퍼레이션":"N","삼정엔지니어링":"N","대신하우징":"N",
+        "대하씨엔디":"N","토형건설":"N","삼호종합건설":"N","유광씨앤씨":"N","와이티 파트너스":"N",
+        "창도건설":"N","피앤텍이엔지":"N","더이스트코리아":"N","청명이앤디":"N","유현건설":"N",
+        "두루빌엔지니어링":"N"
+      };
+
+      // 업체명 정규화 (이앤씨↔이엔씨 등 변환)
+      const normalizeCompanyName = (name) => {
+        return name.toLowerCase()
+          .replace(/e&c/gi, '이엔씨').replace(/enc/gi, '이엔씨').replace(/e\&c/gi, '이엔씨')
+          .replace(/c&s/gi, '씨엔에스').replace(/c&c/gi, '씨엔씨').replace(/e&s/gi, '이엔에스').replace(/e&g/gi, '이엔지')
+          .replace(/ms/g, '엠에스').replace(/sh/g, '에스에이치')
+          .replace(/이앤씨/g, '이엔씨').replace(/씨앤씨/g, '씨엔씨').replace(/이앤지/g, '이엔지')
+          .replace(/씨앤에스/g, '씨엔에스').replace(/이앤에스/g, '이엔에스').replace(/앤/g, '엔')
+          .replace(/[㈜\(\)주식회사\s]/g, '').trim();
+      };
+
+      // POUR 협약업체 여부 체크 (관리사무소, 연합회는 예외)
+      const checkPourAgreement = (requester) => {
+        if (!requester || !requester.trim()) return { isAgreement: true, grade: null, isException: false };
+        const name = requester.trim();
+        // 예외: 관리사무소, 연합회, POUR공법 자체, 솔루션, 지사, 내부직원
+        const nameLower = name.toLowerCase();
+        const nameNoSpace = name.replace(/\s/g, '');
+        const exceptionPeople = ['김훈','조민준','정정훈','빈성진','이필선','한인규','한준엽','조재연','이승우','황윤선','조현식','김성민'];
+        if (name.includes('관리사무소') || name.includes('관리소장') || name.includes('동대표') || name.includes('입주자대표') || name.includes('아파트') || name.includes('연합회') || nameLower.includes('pour') || name.includes('포어') || name.includes('양산지사') || name.includes('경남지사') || name.includes('솔루션') || exceptionPeople.some(p => nameNoSpace.includes(p))) {
+          return { isAgreement: true, grade: null, isException: true };
+        }
+        // 협약업체 목록에서 검색
+        // 1) 정확히 일치
+        if (POUR_AGREEMENT_COMPANIES[name]) {
+          return { isAgreement: true, grade: POUR_AGREEMENT_COMPANIES[name], isException: false };
+        }
+        // 2) 정규화 후 매칭 (이앤씨↔이엔씨, 법인표기 제거 등)
+        const normalized = normalizeCompanyName(name);
+        // 요청자에서 회사명 부분 추출 (예: "우단 민건태대표" → "우단", "아파트동대표+새로이 김현중" → "새로이")
+        const nameParts = name.split(/[\s,+]+/);
+        const nameUpper = name.toUpperCase();
+        for (const [companyName, grade] of Object.entries(POUR_AGREEMENT_COMPANIES)) {
+          const normalizedCompany = normalizeCompanyName(companyName);
+          const companyUpper = companyName.toUpperCase();
+          if (normalized === normalizedCompany || nameUpper.includes(companyUpper) || companyUpper.includes(nameUpper) || normalized.includes(normalizedCompany) || normalizedCompany.includes(normalized)
+            || nameParts.some(part => part.length >= 2 && companyUpper.includes(part.toUpperCase()))) {
+            return { isAgreement: true, grade, isException: false };
+          }
+        }
+        return { isAgreement: false, grade: null, isException: false };
+      };
+
+      // 새로운 4대 대분류 체계 (방수/재도장/주차장/도로)
+      const MAIN_CATEGORY_MAP = {
+        '방수': {
+          subs: ['싱글', '금속기와', '슬라브', 'PVC', '우레탄'],
+          keywords: {
+            'PVC': ['pvc', 'PVC'],
+            '금속기와': ['금속기와', '금속지붕', '기와', '칼라강판'],
+            '슬라브': ['슬라브', '듀얼', '방수', '옥상', '외방', '방수시트', '복합압축시트', 'POUR', 'pour', '지붕방수', '평지붕', '드레인', '루프'],
+            '싱글': ['슁글', '싱글', 'shingle', '칼라강판(슁글형)'],
+            '우레탄': ['우레탄']
+          },
+          color: '#89CFF0'
+        },
+        '재도장': {
+          subs: ['균열보수', '재도장'],
+          keywords: {
+            '균열보수': ['균열', '보수', '크랙'],
+            '재도장': ['재도장', '도장공사', '외벽도장', '써밋페인트', '써밋바인더', '탄성코트', '외벽', '도색']
+          },
+          color: '#C3A6F0'
+        },
+        '주차장': {
+          subs: ['배면차수', '에폭시', '재도장'],
+          keywords: {
+            '배면차수': ['배면', '차수', '누수', '방수'],
+            '에폭시': ['에폭시', '주차장바닥', '주차장에폭시', '트렌치', '계단에폭시'],
+            '재도장': ['재도장', '도장', '도색']
+          },
+          color: '#FFB885'
+        },
+        '도로': {
+          subs: ['보도블럭', '아스콘'],
+          keywords: {
+            '보도블럭': ['보도블럭', '보도블록', '블럭', '블록', '인터로킹'],
+            '아스콘': ['아스콘', '아스팔트', '도로포장', '포장']
+          },
+          color: '#88D8A8'
+        }
+      };
+      const MAIN_CATEGORY_ORDER = ['방수', '재도장', '주차장', '도로'];
+
+      // 공종 텍스트 → 새 대분류의 서브공종 태그 배열 반환
+      const getSubCategoryTags = (workTypeText) => {
+        if (!workTypeText) return [];
+        const text = workTypeText.toLowerCase();
+        const tags = [];
+
+        // 1단계: "지하주차장 재도장" 판별 - 지하주차장+재도장이 함께 있으면 주차장_재도장만
+        const hasJiha = text.includes('지하주차장') || text.includes('지하') || text.includes('주차장');
+        const hasJedojang = ['재도장', '도장공사', '외벽도장', '써밋페인트', '써밋바인더', '탄성코트', '도색'].some(k => text.includes(k));
+        const isJihaJedojang = hasJiha && hasJedojang;
+
+        // 2단계: 균열보수 vs 재도장 판별
+        const hasGyunyeol = ['균열', '보수', '크랙'].some(k => text.includes(k));
+        // 균열보수+재도장 함께 있으면 → 재도장으로만 (균열보수 무시)
+        // 균열보수 단독 → 균열보수
+        const gyunyeolOnly = hasGyunyeol && !hasJedojang;
+
+        for (const [mainCat, config] of Object.entries(MAIN_CATEGORY_MAP)) {
+          for (const [subName, kws] of Object.entries(config.keywords)) {
+            // 재도장 대분류의 균열보수: 균열보수 단독일 때만 매칭
+            if (mainCat === '재도장' && subName === '균열보수') {
+              if (gyunyeolOnly) {
+                tags.push({ main: mainCat, sub: subName });
+              }
+              continue;
+            }
+            // 재도장 대분류의 재도장: 지하주차장 재도장이면 제외
+            if (mainCat === '재도장' && subName === '재도장') {
+              if (hasJedojang && !isJihaJedojang) {
+                tags.push({ main: mainCat, sub: subName });
+              }
+              continue;
+            }
+            // 주차장 대분류의 재도장: 지하주차장+재도장일 때만 매칭
+            if (mainCat === '주차장' && subName === '재도장') {
+              if (isJihaJedojang) {
+                tags.push({ main: mainCat, sub: subName });
+              }
+              continue;
+            }
+            // 나머지는 기존 로직
+            if (kws.some(k => text.includes(k.toLowerCase()))) {
+              tags.push({ main: mainCat, sub: subName });
+            }
+          }
+        }
+        // 방수 대분류 내에서 구체적 서브공종(싱글,금속기와,PVC,우레탄)이 포괄적 '슬라브'보다 우선되도록 정렬
+        const specificSubs = new Set(['싱글', '금속기와', 'PVC', '우레탄']);
+        tags.sort((a, b) => {
+          if (a.main !== b.main || a.main !== '방수') return 0;
+          const aSpec = specificSubs.has(a.sub) ? 0 : 1;
+          const bSpec = specificSubs.has(b.sub) ? 0 : 1;
+          return aSpec - bSpec;
+        });
+        return tags;
+      };
+
+      // 공종 뱃지 색상 맵
+      const GONGONG_BADGE_COLORS = {
+        '슁글': '#FFD580', '금속기와': '#C0B8B4', '슬라브': '#89CFF0',
+        '재도장': '#C3A6F0', '지하주차장': '#FFB885', '복합공종': '#F5A0C8', '기타': '#B0B8C8',
+        '방수': '#89CFF0', '주차장': '#FFB885', '도로': '#88D8A8'
+      };
+
+      const GONGONG_BADGE_STYLES = {
+        '재도장': { bg: '#EDE0FF', text: '#9B7BD8' },
+        '슬라브': { bg: '#D6EFFF', text: '#5EA8D0' },
+        '지하주차장': { bg: '#FFE8D6', text: '#E08A58' },
+        '복합공종': { bg: '#FFD6EA', text: '#E07098' },
+        '슁글': { bg: '#FFF5C8', text: '#CCA040' },
+        '금속기와': { bg: '#F0EDED', text: '#8A8580' },
+        '기타': { bg: '#E8EEF5', text: '#7A8DA0' }
+      };
+
+      // 복합공종 감지 패턴
+      const COMPOUND_PATTERNS = /\s*(?:및|\/|\+|복합)\s*/;
+
+      // 공종 텍스트 → 대분류 그룹 반환 (7개 분류)
+      const getWorkTypeGroup = (workTypeText) => {
+        if (!workTypeText) return '기타';
+        const text = workTypeText.toLowerCase();
+
+        // 1) 복합공종 감지: "및", "+", "/", "복합" 으로 2개 이상 공종 연결
+        const parts = workTypeText.split(COMPOUND_PATTERNS).filter(p => p.trim());
+        if (parts.length >= 2) {
+          const subGroups = parts.map(p => {
+            const pt = p.toLowerCase();
+            for (const [group, keywords] of Object.entries(WORK_TYPE_GROUPS)) {
+              if (keywords.some(k => pt.includes(k.toLowerCase()))) return group;
+            }
+            return '기타';
+          });
+          const uniqueGroups = [...new Set(subGroups)];
+          // 2개 이상 서로 다른 그룹이면 복합공종
+          if (uniqueGroups.length >= 2 || (uniqueGroups.length === 1 && uniqueGroups[0] !== '기타' && subGroups.includes('기타'))) {
+            return '복합공종';
+          }
+          // 재도장이 다른 공종과 함께 → 복합공종
+          if (subGroups.includes('재도장') && subGroups.some(g => g !== '재도장')) {
+            return '복합공종';
+          }
+        }
+
+        // 2) 텍스트 내에 "및", "+" 가 있고 재도장이 포함된 경우 → 복합공종
+        if (COMPOUND_PATTERNS.test(workTypeText)) {
+          const matchedGroups = [];
+          for (const [group, keywords] of Object.entries(WORK_TYPE_GROUPS)) {
+            if (keywords.some(k => text.includes(k.toLowerCase()))) matchedGroups.push(group);
+          }
+          if (matchedGroups.length >= 2) return '복합공종';
+          if (matchedGroups.includes('재도장') && matchedGroups.length === 1 && text.match(/균열|보수|옥상|방수|에폭시|지하/)) return '복합공종';
+        }
+
+        // 3) 단일 공종 분류 (우선순위: 슁글 → 금속기와 → 지하주차장 → 슬라브 → 재도장)
+        for (const k of WORK_TYPE_GROUPS['슁글']) { if (text.includes(k.toLowerCase())) return '슁글'; }
+        for (const k of WORK_TYPE_GROUPS['금속기와']) { if (text.includes(k.toLowerCase())) return '금속기와'; }
+        for (const k of WORK_TYPE_GROUPS['지하주차장']) { if (text.includes(k.toLowerCase())) return '지하주차장'; }
+        for (const k of WORK_TYPE_GROUPS['슬라브']) { if (text.includes(k.toLowerCase())) return '슬라브'; }
+        for (const k of WORK_TYPE_GROUPS['재도장']) { if (text.includes(k.toLowerCase())) return '재도장'; }
+
+        return '기타';
+      };
+
+      // 패배유형 분류 (5가지 코드 체계, 우선순위: COMPETITOR → PRICE → SALES → TECH → UNKNOWN)
+      const LOSS_TYPE_LABELS = {
+        'COMPETITOR': '경쟁사 패배',
+        'PRICE': '가격 경쟁 패배',
+        'SALES': '영업력 부족',
+        'TECH': '기술력/공법 패배',
+        'UNKNOWN': '원인 미기재'
+      };
+
+      // 경쟁사명 정규화 (동일 업체 변형 표기 통합)
+      const normalizeCompetitor = (name) => {
+        const n = (name || '').trim();
+        if (!n) return n;
+        const lower = n.toLowerCase();
+        // 슈퍼크랙씰 계열
+        if (/^[수슈]퍼/.test(n) || lower.includes('수퍼') || lower.includes('슈퍼')) return '슈퍼크랙씰';
+        // 에코크랙씰 계열
+        if (/^에코/.test(n) || lower.includes('에코')) return '에코크랙씰';
+        return n;
+      };
+
+      const classifyLossType = (reason, competitor, topLevelCompetitor) => {
+        const comp = (competitor || '').trim();
+        const fallbackComp = (topLevelCompetitor || '').trim();
+        const reasonText = (reason || '').toLowerCase();
+        const allComp = comp || fallbackComp;
+
+        // COMPETITOR: 경쟁사 정보가 있으면
+        if (allComp) {
+          const isExcluded = (str) => /^(\d+개업체|\d+곳|\d+개사|\d+개|총\d+개|외\s*\d+|등\s*\d+)$/.test(str.trim());
+          const companies = allComp.split(/[\/,.+&]+/).map(c => c.trim()).filter(c => c && !isExcluded(c));
+          if (companies.length > 0) return 'COMPETITOR';
+        }
+        // COMPETITOR: 사유 텍스트에 경쟁사 키워드
+        if (/SRE|PMC|LG|경쟁사|타사|기존업체|지명|수의계약/.test(reason || '')) return 'COMPETITOR';
+
+        // PRICE: 가격 관련
+        if (/가격|단가|예산|저가|금액|비싸|원가/.test(reasonText)) return 'PRICE';
+
+        // SALES: 영업력 관련
+        if (/영업\s*패배|영업력|영업실패|영업패배|관계부족|사전영업|네트워크|담당자\s*부재/.test(reasonText)) return 'SALES';
+
+        // TECH: 기술력/공법 관련
+        if (/특허|공법|기술|협약공법|자재|실적부족|레퍼런스|인증/.test(reasonText)) return 'TECH';
+
+        // UNKNOWN: 원인 미기재
+        return 'UNKNOWN';
+      };
+
+      // ═══════════════════════════════════════════════════════════════
+      // 영업 전략 분석 헬퍼 함수들
+      // ═══════════════════════════════════════════════════════════════
+
+      // 1-A. 경쟁사별 전체 성적 (승/무/패/승률)
+      const getCompetitorStats = (ptList, yearFilter, quarterFilter, assigneeFilter) => {
+        const getRange = (y, q) => {
+          const yr = parseInt(y);
+          if (q === '1분기') return { s: `${yr}-01-01`, e: `${yr}-03-31` };
+          if (q === '2분기') return { s: `${yr}-04-01`, e: `${yr}-06-30` };
+          if (q === '3분기') return { s: `${yr}-07-01`, e: `${yr}-09-30` };
+          if (q === '4분기') return { s: `${yr}-10-01`, e: `${yr}-12-31` };
+          return { s: `${yr}-01-01`, e: `${yr}-12-31` };
+        };
+        const skipY = !yearFilter || yearFilter === 'all';
+        const range = skipY ? null : getRange(yearFilter, quarterFilter);
+        const stats = {};
+        const isExcl = (str) => /^(\d+개업체|\d+곳|\d+개사|\d+개|총\d+개|외\s*\d+|등\s*\d+)$/.test(str.trim());
+
+        ptList.filter(s => {
+          if (!s.date || !s.ptAssignee || s.selfPT) return false;
+          if (!skipY && (s.date < range.s || s.date > range.e)) return false;
+          return true;
+        }).forEach(s => {
+          const compRaw = (s.competitor || '').trim();
+          if (!compRaw) return;
+          const companies = compRaw.split(/[\/,.+&]+/).map(c => c.trim()).filter(c => c && !isExcl(c)).map(normalizeCompetitor);
+          if (companies.length === 0) return;
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(Boolean);
+          const targets = assigneeFilter && assigneeFilter !== 'all' ? assignees.filter(a => a === assigneeFilter) : assignees;
+          targets.forEach(asgn => {
+            let r = s.results?.[asgn] || (assignees.length === 1 ? s.result : null);
+            if (!r || r === '지원') return;
+            companies.forEach(comp => {
+              if (!stats[comp]) stats[comp] = { wins: 0, draws: 0, losses: 0, total: 0 };
+              stats[comp].total++;
+              if (r === '승') stats[comp].wins++;
+              else if (r === '무') stats[comp].draws++;
+              else if (r === '패') stats[comp].losses++;
+            });
+          });
+        });
+        return Object.entries(stats).map(([name, st]) => ({
+          name, ...st, winRate: st.total > 0 ? Math.round((st.wins / st.total) * 100) : 0
+        })).sort((a, b) => b.total - a.total);
+      };
+
+      // 1-B. 담당자별 전략 분석
+      const getAssigneeStrategyStats = (ptList, yearFilter, quarterFilter, filterMainCat, filterSubCat) => {
+        const getRange = (y, q) => {
+          const yr = parseInt(y);
+          if (q === '1분기') return { s: `${yr}-01-01`, e: `${yr}-03-31` };
+          if (q === '2분기') return { s: `${yr}-04-01`, e: `${yr}-06-30` };
+          if (q === '3분기') return { s: `${yr}-07-01`, e: `${yr}-09-30` };
+          if (q === '4분기') return { s: `${yr}-10-01`, e: `${yr}-12-31` };
+          return { s: `${yr}-01-01`, e: `${yr}-12-31` };
+        };
+        const skipY = !yearFilter || yearFilter === 'all';
+        const range = skipY ? null : getRange(yearFilter, quarterFilter);
+        const allNames = ['한준엽', '조재연', '정정훈', '김성민', '이필선', '조현식', '한인규'];
+        const teamMap = { '한준엽': '1팀', '조재연': '1팀', '정정훈': '1팀', '김성민': '1팀', '이필선': '2팀', '조현식': '3팀', '한인규': '3팀' };
+        const stats = {};
+        allNames.forEach(n => { stats[n] = { total: 0, wins: 0, draws: 0, losses: 0, workTypeStats: {} }; });
+        ptList.filter(s => {
+          if (!s.date || !s.ptAssignee || s.selfPT) return false;
+          if (!skipY && (s.date < range.s || s.date > range.e)) return false;
+          // 공종 필터 적용
+          if (filterMainCat || filterSubCat) {
+            const tags = getSubCategoryTags(s.workType || '');
+            if (filterSubCat) {
+              if (!tags.some(t => t.main === filterMainCat && t.sub === filterSubCat)) return false;
+            } else if (filterMainCat) {
+              if (!tags.some(t => t.main === filterMainCat)) return false;
+            }
+          }
+          return true;
+        }).forEach(s => {
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(Boolean);
+          const tags = getSubCategoryTags(s.workType || '');
+          const mainCats = [...new Set(tags.map(t => t.main))];
+          if (mainCats.length === 0) mainCats.push('기타');
+          assignees.forEach(asgn => {
+            if (!stats[asgn]) return;
+            let r = s.results?.[asgn] || (assignees.length === 1 ? s.result : null);
+            if (!r || r === '지원') return;
+            stats[asgn].total++;
+            if (r === '승') stats[asgn].wins++;
+            else if (r === '무') stats[asgn].draws++;
+            else if (r === '패') stats[asgn].losses++;
+            mainCats.forEach(mc => {
+              if (!stats[asgn].workTypeStats[mc]) stats[asgn].workTypeStats[mc] = { wins: 0, draws: 0, losses: 0, total: 0 };
+              stats[asgn].workTypeStats[mc].total++;
+              if (r === '승') stats[asgn].workTypeStats[mc].wins++;
+              else if (r === '무') stats[asgn].workTypeStats[mc].draws++;
+              else if (r === '패') stats[asgn].workTypeStats[mc].losses++;
+            });
+          });
+        });
+        return Object.entries(stats).map(([name, st]) => {
+          const comp = st.wins + st.draws + st.losses;
+          return { name, team: teamMap[name] || '', ...st, winRate: comp > 0 ? Math.round((st.wins / comp) * 100) : 0 };
+        }).sort((a, b) => b.winRate - a.winRate);
+      };
+
+      // 1-C. 공법 조합별 승률 분석
+      const getMethodAnalysis = (ptList, yearFilter, quarterFilter, assigneeFilter) => {
+        const getRange = (y, q) => {
+          const yr = parseInt(y);
+          if (q === '1분기') return { s: `${yr}-01-01`, e: `${yr}-03-31` };
+          if (q === '2분기') return { s: `${yr}-04-01`, e: `${yr}-06-30` };
+          if (q === '3분기') return { s: `${yr}-07-01`, e: `${yr}-09-30` };
+          if (q === '4분기') return { s: `${yr}-10-01`, e: `${yr}-12-31` };
+          return { s: `${yr}-01-01`, e: `${yr}-12-31` };
+        };
+        const skipY = !yearFilter || yearFilter === 'all';
+        const range = skipY ? null : getRange(yearFilter, quarterFilter);
+        const combos = {}, indiv = {};
+        const pourFamily = ['POUR', 'DO', 'CNC'];
+
+        ptList.filter(s => {
+          if (!s.date || !s.ptAssignee || !s.announcementMethods) return false;
+          if (!skipY && (s.date < range.s || s.date > range.e)) return false;
+          return true;
+        }).forEach(s => {
+          const methods = s.announcementMethods.split(',').map(m => m.trim().toUpperCase()).filter(Boolean);
+          if (methods.length === 0) return;
+          const hasPour = methods.includes('POUR');
+          let comboKey;
+          if (hasPour) {
+            const pf = methods.filter(m => pourFamily.includes(m)).sort().join('+');
+            const others = methods.filter(m => !pourFamily.includes(m)).sort();
+            comboKey = others.length === 0 ? (methods.length === 1 ? 'POUR 단독' : pf) : pf + ' vs ' + others.join('+');
+          } else {
+            comboKey = methods.sort().join('+') + ' (POUR 미포함)';
+          }
+          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(Boolean);
+          const targets = assigneeFilter && assigneeFilter !== 'all' ? assignees.filter(a => a === assigneeFilter) : assignees;
+          targets.forEach(asgn => {
+            let r = s.results?.[asgn] || (assignees.length === 1 ? s.result : null);
+            if (!r || r === '지원') return;
+            if (!combos[comboKey]) combos[comboKey] = { wins: 0, draws: 0, losses: 0, total: 0 };
+            combos[comboKey].total++;
+            if (r === '승') combos[comboKey].wins++;
+            else if (r === '무') combos[comboKey].draws++;
+            else if (r === '패') combos[comboKey].losses++;
+            methods.forEach(m => {
+              if (!indiv[m]) indiv[m] = { wins: 0, draws: 0, losses: 0, total: 0 };
+              indiv[m].total++;
+              if (r === '승') indiv[m].wins++;
+              else if (r === '무') indiv[m].draws++;
+              else if (r === '패') indiv[m].losses++;
+            });
+          });
+        });
+        const toArr = (obj) => Object.entries(obj).map(([key, st]) => ({ key, ...st, winRate: st.total > 0 ? Math.round((st.wins / st.total) * 100) : 0 })).sort((a, b) => b.total - a.total);
+        return { combosSorted: toArr(combos), methodsSorted: toArr(indiv) };
+      };
+
+      // 1-D. PT 승리 확률 예측
+      const predictWinProbability = (pt, ptList) => {
+        // 전체 승률 (base)
+        const allComp = ptList.filter(s => {
+          if (!s.date || !s.ptAssignee || s.selfPT) return false;
+          const asgs = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim());
+          return asgs.some(a => { const r = s.results?.[a] || (asgs.length === 1 ? s.result : null); return ['승', '무', '패'].includes(r); });
+        });
+        const allWins = allComp.filter(s => {
+          const asgs = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim());
+          return asgs.some(a => (s.results?.[a] || (asgs.length === 1 ? s.result : null)) === '승');
+        });
+        const baseRate = allComp.length > 0 ? (allWins.length / allComp.length) * 100 : 50;
+
+        // 공종 승률
+        let catRate = baseRate;
+        const tags = getSubCategoryTags(pt.workType || '');
+        if (tags.length > 0) {
+          const mc = tags[0].main;
+          const catPts = allComp.filter(s => getSubCategoryTags(s.workType || '').some(t => t.main === mc));
+          const catW = catPts.filter(s => { const asgs = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()); return asgs.some(a => (s.results?.[a] || (asgs.length === 1 ? s.result : null)) === '승'); });
+          if (catPts.length >= 3) catRate = (catW.length / catPts.length) * 100;
+        }
+
+        // 담당자 승률
+        let asgnRate = baseRate;
+        const ptAsgn = (pt.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(Boolean)[0];
+        if (ptAsgn) {
+          const asgnPts = allComp.filter(s => (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).includes(ptAsgn));
+          const asgnW = asgnPts.filter(s => (s.results?.[ptAsgn] || (((s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).length === 1) ? s.result : null)) === '승');
+          if (asgnPts.length >= 3) asgnRate = (asgnW.length / asgnPts.length) * 100;
+        }
+
+        // 경쟁사 승률 (역: 경쟁사 강할수록 감점)
+        let compRate = baseRate;
+        const compRaw = (pt.competitor || '').trim();
+        const competitorDetails = []; // 경쟁사별 상세 승률
+        if (compRaw) {
+          const isExcl = (str) => /^(\d+개업체|\d+곳|\d+개사)$/.test(str.trim());
+          const comps = compRaw.split(/[\/,.+&]+/).map(c => c.trim()).filter(c => c && !isExcl(c)).map(normalizeCompetitor);
+          if (comps.length > 0) {
+            const compStats = getCompetitorStats(ptList, null, null, null);
+            comps.forEach(c => {
+              const cs = compStats.find(s => s.name === c);
+              if (cs) {
+                competitorDetails.push({ name: c, winRate: cs.winRate, wins: cs.wins, losses: cs.losses, total: cs.total });
+              } else {
+                competitorDetails.push({ name: c, winRate: baseRate, wins: 0, losses: 0, total: 0 });
+              }
+            });
+            const matched = competitorDetails.filter(c => c.total > 0);
+            if (matched.length > 0) {
+              compRate = matched.reduce((s, c) => s + c.winRate, 0) / matched.length;
+            }
+          }
+        }
+
+        // 공법 판정 가산/감점
+        let methodBonus = 0;
+        if (pt.announcementMethods) {
+          const mArr = pt.announcementMethods.split(',').map(m => m.trim()).filter(Boolean);
+          const jr = judgeResult(mArr);
+          if (jr === '승') methodBonus = 15;
+          else if (jr === '무') methodBonus = 0;
+          else if (jr === '패') methodBonus = -15;
+        }
+
+        const weighted = baseRate * 0.15 + catRate * 0.30 + asgnRate * 0.25 + compRate * 0.20 + baseRate * 0.10 + methodBonus;
+        const finalRate = Math.round(Math.max(5, Math.min(95, weighted)));
+        return { rate: finalRate, competitorDetails };
+      };
+
+      // 1-E. 패배 원인 6분류
+      const REFINED_LOSS_TYPES = {
+        PRICE: { label: '가격', color: '#f59e0b', icon: '💰' },
+        METHOD: { label: '공법', color: '#06b6d4', icon: '🔧' },
+        BRAND: { label: '브랜드', color: '#8b5cf6', icon: '🏷️' },
+        EXISTING: { label: '기존업체', color: '#ef4444', icon: '🏢' },
+        TECH_EVAL: { label: '기술평가', color: '#6366f1', icon: '📋' },
+        OTHER: { label: '기타', color: '#94a3b8', icon: '❓' }
+      };
+      const classifyLossTypeRefined = (reason, competitor, topComp) => {
+        const txt = (reason || '').toLowerCase();
+        if (/가격|단가|예산|저가|금액|비싸|원가|견적/.test(txt)) return 'PRICE';
+        if (/공법|자재|시공법|시공방법|방식/.test(txt)) return 'METHOD';
+        if (/브랜드|인지도|신뢰|이미지|지명도|네임/.test(txt)) return 'BRAND';
+        if (/기존|수의|지명|관계|재계약/.test(txt)) return 'EXISTING';
+        if (/기술|평가|심사|레퍼런스|실적|인증|점수/.test(txt)) return 'TECH_EVAL';
+        const allComp = (competitor || topComp || '').trim();
+        if (allComp) {
+          const isExcl = (str) => /^(\d+개업체|\d+곳|\d+개사)$/.test(str.trim());
+          const comps = allComp.split(/[\/,.+&]+/).map(c => c.trim()).filter(c => c && !isExcl(c));
+          if (comps.length > 0) return 'EXISTING';
+        }
+        return 'OTHER';
+      };
+
+      // 1-F. 공종 전략 라벨
+      const getStrategyLabel = (winRate, completed) => {
+        if (completed < 3) return { label: '데이터부족', color: '#94a3b8', bg: '#f1f5f9' };
+        if (winRate >= 60) return { label: '핵심', color: '#16a34a', bg: '#f0fdf4' };
+        if (winRate >= 40) return { label: '개선필요', color: '#f59e0b', bg: '#fffbeb' };
+        return { label: '관심', color: '#ef4444', bg: '#fef2f2' };
+      };
+
+      // ═══════════════════════════════════════════════════════════════
+
+      // 공종 텍스트에서 키워드 추출
+      const extractWorkTypes = (text) => {
+        if (!text) return [];
+        const found = [];
+        workTypeKeywords.forEach(keyword => {
+          if (text.toLowerCase().includes(keyword.toLowerCase())) {
+            found.push(keyword);
+          }
+        });
+        return found;
+      };
+      
+      // 모든 PT에서 사용된 공종 키워드 수집
+      const usedWorkTypes = ptSchedules.flatMap(s => {
+          const combined = `${s.workType || ''} ${s.mainCategory || ''}`;
+          return extractWorkTypes(combined);
+        }).filter((v, i, a) => a.indexOf(v) === i).sort();
+      
+      // 최종 공종 목록 (키워드 기반)
+      const allWorkTypes = workTypeKeywords.filter(wt => 
+        usedWorkTypes.includes(wt) || ['재도장', '슬라브', '에폭시', '금속기와', '슁글', 'PVC', '균열보수', '우레탄'].includes(wt)
+      );
+      
+      // 공종 필터 적용 함수 (멀티 공종 지원)
+      const matchesWorkTypeFilter = (schedule) => {
+        if (selectedWorkTypes.length === 0) return true;
+        const combined = `${schedule.workType || ''} ${schedule.mainCategory || ''}`.toLowerCase();
+        return selectedWorkTypes.some(selected => combined.includes(selected.toLowerCase()));
+      };
+      
+      // 검색 필터 함수
+      const matchesSearchQuery = (schedule) => {
+        if (!searchQuery.trim()) return true;
+        const query = searchQuery.toLowerCase().trim();
+        const searchableFields = [
+          schedule.siteName || '',
+          schedule.title || '',
+          schedule.address || '',
+          schedule.workType || '',
+          schedule.ptAssignee || '',
+          schedule.assignee || '',
+          (schedule.assignees || []).join(' '),
+          schedule.requester || '',
+          schedule.note || '',
+          schedule.location || ''
+        ].join(' ').toLowerCase();
+        return searchableFields.includes(query);
+      };
+      
+      // 모든 일정 합치기 (ID 기반 중복 제거)
+      // 회의를 일정 형식으로 변환
+      const meetingAsSchedules = meetingSchedules.map(m => ({
+        ...m,
+        type: 'meeting',
+        siteName: m.title,
+        dateType: 'confirmed'
+      }));
+      
+      // 하이웍스 휴가 데이터를 일정 형식으로 변환
+      const hiworksAsSchedules = hiworksVacations.map(v => {
+        // 반차 시간 표시
+        let timeDisplay = '';
+        if (v.dayType === 'hours' && v.hours > 0) {
+          const start = v.startTime.substring(0, 5);
+          const end = v.endTime.substring(0, 5);
+          timeDisplay = `${start}~${end}`;
+        }
+        
+        return {
+          id: v.id,
+          date: v.date,
+          title: `${v.userName} ${v.type}`,
+          siteName: `${v.userName} ${v.type}`,
+          time: timeDisplay,
+          assignees: [v.userName],
+          type: 'vacation',
+          dateType: 'confirmed',
+          vacationType: v.type,
+          source: 'hiworks'
+        };
+      });
+      
+      const salesAsSchedules = salesSchedules.map(s => ({ ...s, type: s.type || 'sales', dateType: s.dateType || 'confirmed', siteName: s.siteName || s.company }));
+      const allSchedulesRaw = [...ptSchedules, ...briefingSchedules, ...personalSchedules, ...seminarSchedules, ...asqSchedules, ...vacationSchedules, ...hiworksAsSchedules, ...meetingAsSchedules, ...salesAsSchedules];
+      const allSeenIdsList = [];
+      const allSchedules = allSchedulesRaw.filter(s => {
+        if (allSeenIdsList.includes(s.id)) return false;
+        allSeenIdsList.push(s.id);
+        return true;
+      });
+      const confirmedSchedules = allSchedules.filter(s => s.dateType === 'confirmed' && s.date);
+      const filteredConfirmedSchedules = confirmedSchedules.filter(s => (scheduleType === 'all' || s.type === scheduleType) && matchesWorkTypeFilter(s) && matchesSearchQuery(s));
+      
+      // 담당자 체크 함수
+      const hasAssignee = (s) => s.type === 'pt' ? !!s.ptAssignee : s.type === 'briefing' ? !!s.assignee : (s.assignees && s.assignees.length > 0);
+      
+      // 미확정: 담당자가 없는 경우만 (담당자 있으면 날짜 타입 상관없이 예정으로)
+      const isPending = (s) => {
+        return !hasAssignee(s);
+      };
+      
+      // 미확정 상태 세분화: 담당자X+날짜O / 담당자X+날짜X
+      const getPendingStatus = (s) => {
+        const hasDate = s.dateType === 'confirmed' && s.date;
+        
+        if (hasDate) return 'dateOnly'; // 담당자X, 날짜O - 회색 음영
+        return 'neither'; // 담당자X, 날짜X - 아무것도 없음
+      };
+      
+      const getPendingStyle = (status) => {
+        if (status === 'dateOnly') return { bg: '#e5e7eb', border: '1px solid #d1d5db' }; // 회색 음영
+        return { bg: 'white', border: '1px solid #e5e7eb' }; // 아무것도 없음
+      };
+      
+      const pendingSchedules = allSchedules.filter(isPending);
+      const filteredPendingSchedules = pendingSchedules.filter(s => (scheduleType === 'all' || s.type === scheduleType) && matchesWorkTypeFilter(s) && matchesSearchQuery(s));
+
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      const firstDay = new Date(year, month, 1).getDay();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const days = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+
+      // 한국 공휴일 데이터 (2025-2026)
+      const holidays = {
+        '2025-01-01': '신정',
+        '2025-01-28': '설날 연휴',
+        '2025-01-29': '설날',
+        '2025-01-30': '설날 연휴',
+        '2025-03-01': '삼일절',
+        '2025-03-03': '대체공휴일(삼일절)',
+        '2025-05-05': '어린이날',
+        '2025-05-06': '대체공휴일(부처님오신날)',
+        '2025-05-15': '부처님오신날',
+        '2025-06-06': '현충일',
+        '2025-08-15': '광복절',
+        '2025-10-03': '개천절',
+        '2025-10-05': '추석 연휴',
+        '2025-10-06': '추석',
+        '2025-10-07': '추석 연휴',
+        '2025-10-08': '대체공휴일(추석)',
+        '2025-10-09': '한글날',
+        '2025-12-25': '성탄절',
+        '2026-01-01': '신정',
+        '2026-02-16': '설날 연휴',
+        '2026-02-17': '설날',
+        '2026-02-18': '설날 연휴',
+        '2026-03-01': '삼일절',
+        '2026-03-02': '대체공휴일(삼일절)',
+        '2026-05-05': '어린이날',
+        '2026-05-24': '부처님오신날',
+        '2026-05-25': '대체공휴일(부처님오신날)',
+        '2026-06-06': '현충일',
+        '2026-08-15': '광복절',
+        '2026-08-17': '대체공휴일(광복절)',
+        '2026-09-24': '추석 연휴',
+        '2026-09-25': '추석',
+        '2026-09-26': '추석 연휴',
+        '2026-10-03': '개천절',
+        '2026-10-05': '대체공휴일(개천절)',
+        '2026-10-09': '한글날',
+        '2026-12-25': '성탄절',
+        '2027-01-01': '신정',
+        '2027-02-06': '설날 연휴',
+        '2027-02-07': '설날',
+        '2027-02-08': '설날 연휴',
+        '2027-02-09': '대체공휴일(설날)',
+        '2027-03-01': '삼일절',
+        '2027-05-05': '어린이날',
+        '2027-05-13': '부처님오신날',
+        '2027-06-06': '현충일',
+        '2027-06-07': '대체공휴일(현충일)',
+        '2027-08-15': '광복절',
+        '2027-08-16': '대체공휴일(광복절)',
+        '2027-09-25': '추석 연휴',
+        '2027-09-26': '추석',
+        '2027-09-27': '추석 연휴',
+        '2027-09-28': '대체공휴일(추석)',
+        '2027-10-03': '개천절',
+        '2027-10-04': '대체공휴일(개천절)',
+        '2027-10-09': '한글날',
+        '2027-10-11': '대체공휴일(한글날)',
+        '2027-12-25': '성탄절',
+        '2027-12-27': '대체공휴일(성탄절)',
+        '2028-01-01': '신정',
+        '2028-01-03': '대체공휴일(신정)',
+        '2028-01-25': '설날 연휴',
+        '2028-01-26': '설날',
+        '2028-01-27': '설날 연휴',
+        '2028-03-01': '삼일절',
+        '2028-05-02': '부처님오신날',
+        '2028-05-05': '어린이날',
+        '2028-06-06': '현충일',
+        '2028-08-15': '광복절',
+        '2028-09-13': '추석 연휴',
+        '2028-09-14': '추석',
+        '2028-09-15': '추석 연휴',
+        '2028-10-03': '개천절',
+        '2028-10-09': '한글날',
+        '2028-12-25': '성탄절'
+      };
+      
+      // 공휴일 확인 함수 (날짜 문자열로도 확인 가능)
+      const isHoliday = (day) => {
+        if (!day) return null;
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        return holidays[dateStr] || null;
+      };
+      
+      const getHolidayByDateStr = (dateStr) => {
+        return holidays[dateStr] || null;
+      };
+
+      const getTypePriority = (type) => {
+        const priority = { pt: 0, sales: 1, briefing: 2, seminar: 3, asq: 4, personal: 5, vacation: 6, meeting: 7 };
+        return priority[type] ?? 99;
+      };
+
+      const isUnassigned = (s) => s.type === 'pt' ? !s.ptAssignee : s.type === 'briefing' ? !s.assignee : s.type === 'personal' ? (!s.assignees || s.assignees.length === 0) : false;
+
+      const getSchedulesForDate = (day) => {
+        if (!day) return [];
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        return filteredConfirmedSchedules.filter(s => s.date === dateStr).sort((a, b) => {
+          const aUnassigned = isUnassigned(a) ? 0 : 1;
+          const bUnassigned = isUnassigned(b) ? 0 : 1;
+          if (aUnassigned !== bUnassigned) return aUnassigned - bUnassigned;
+          return getTypePriority(a.type) - getTypePriority(b.type);
+        });
+      };
+
+      const selectedSchedules = selectedDate ? getSchedulesForDate(selectedDate.day) : [];
+      const getTypeStyle = (type) => type === 'pt' ? { bg: '#A7D8F0', color: '#1e293b', label: 'PT' } : type === 'briefing' ? { bg: '#A8E6CF', color: '#1e293b', label: '현설' } : type === 'meeting' ? { bg: '#F0C0E8', color: '#1e293b', label: '회의' } : type === 'seminar' ? { bg: '#E8D0F5', color: '#1e293b', label: '세미나' } : type === 'asq' ? { bg: '#BDE0FE', color: '#1e293b', label: '아.스.퀘' } : type === 'vacation' ? { bg: '#C1E8C1', color: '#1e293b', label: '휴가' } : type === 'sales' ? { bg: '#FFF0B3', color: '#1e293b', label: '영업' } : { bg: '#FFD4B8', color: '#1e293b', label: '개인' };
+      const getResultStyle = (r) => r === '승' ? { bg: '#eff6ff', color: '#2563eb', border: '#93c5fd' } : r === '무' ? { bg: '#fffbeb', color: '#d97706', border: '#fcd34d' } : r === '패' ? { bg: '#fef2f2', color: '#ef4444', border: '#fca5a5' } : r === '지원' ? { bg: '#f3e8ff', color: '#7c3aed', border: '#c4b5fd' } : { bg: '#f8fafc', color: '#94a3b8', border: '#e2e8f0' };
+      const getStatusStyle = (s) => s === '확정' ? { bg: '#eff6ff', color: '#3b82f6' } : s === '예정' ? { bg: '#fff7ed', color: '#ea580c' } : s === '미정' ? { bg: '#fffbeb', color: '#d97706' } : s === '일정조율중' ? { bg: '#fffbeb', color: '#d97706' } : s === '월예정' ? { bg: '#fff7ed', color: '#ea580c' } : { bg: '#f8fafc', color: '#94a3b8' };
+      // dateType 기준으로 표시할 상태 결정
+      const getDisplayStatus = (s) => {
+        // dateType이 명시적으로 있으면 그걸 사용
+        if (s.dateType === 'confirmed') return '확정';
+        if (s.dateType === 'monthOnly') return '예정';
+        if (s.dateType === 'pending') return '미정';
+        // dateType이 없는 경우: 날짜가 있으면 확정, 예정월만 있으면 예정, 둘다 없으면 미정
+        if (s.date && s.date.match(/^\d{4}-\d{2}-\d{2}$/)) return '확정';
+        if (s.expectedMonth) return '예정';
+        return '미정';
+      };
+      const getExpectedMonthLabel = (m) => m ? `${m.split('-')[0]}년 ${parseInt(m.split('-')[1])}월` : '';
+      
+      // 요일 구하기
+      const getDayOfWeek = (year, month, day) => {
+        const days = ['일', '월', '화', '수', '목', '금', '토'];
+        const date = new Date(year, month, day);
+        return days[date.getDay()];
+      };
+      
+      // 날짜 문자열에서 요일 구하기 (2025-12-17 -> 수)
+      const getDayOfWeekFromStr = (dateStr) => {
+        if (!dateStr) return '';
+        const [y, m, d] = dateStr.split('-').map(Number);
+        const days = ['일', '월', '화', '수', '목', '금', '토'];
+        const date = new Date(y, m - 1, d);
+        return days[date.getDay()];
+      };
+      
+      // 날짜 포맷팅 (2025-12-17 -> 2025-12-17(수))
+      const formatDateWithDay = (dateStr) => {
+        if (!dateStr) return '';
+        return `${dateStr}(${getDayOfWeekFromStr(dateStr)})`;
+      };
+      
+      // 시간에 오전/오후 붙이기
+      const formatTimeWithAmPm = (timeStr) => {
+        if (!timeStr) return '';
+        // "미정", "조율중" 등 텍스트는 그대로 반환
+        if (!/\d/.test(timeStr)) return timeStr;
+        const match = timeStr.match(/^(\d{1,2}):?(\d{2})?/);
+        if (!match) return timeStr;
+        const hour = parseInt(match[1]);
+        const minute = match[2] || '00';
+        if (hour === 0) {
+          return `오전 12:${minute}`;
+        } else if (hour < 12) {
+          return `오전 ${hour}:${minute}`;
+        } else if (hour === 12) {
+          return `오후 12:${minute}`;
+        } else {
+          return `오후 ${hour - 12}:${minute}`;
+        }
+      };
+
+      // 시간 문자열을 오전/오후/미정으로 분류
+      const getAmPmPeriod = (timeStr) => {
+        if (!timeStr) return 'none';
+        if (!/\d/.test(timeStr)) return 'none';
+        const match = timeStr.match(/^(\d{1,2}):?(\d{2})?/);
+        if (!match) return 'none';
+        const hour = parseInt(match[1]);
+        return hour < 12 ? 'am' : 'pm';
+      };
+
+      // 일정 리스트를 오전/오후/미정으로 분류
+      const groupSchedulesByAmPm = (schedules) => {
+        const am = [];
+        const pm = [];
+        const none = [];
+        schedules.forEach(s => {
+          const period = getAmPmPeriod(s.time);
+          if (period === 'am') am.push(s);
+          else if (period === 'pm') pm.push(s);
+          else none.push(s);
+        });
+        // 시간 순 정렬
+        const byTime = (a, b) => {
+          const ta = (a.time || '').match(/^(\d{1,2}):?(\d{2})?/);
+          const tb = (b.time || '').match(/^(\d{1,2}):?(\d{2})?/);
+          if (!ta || !tb) return 0;
+          const na = parseInt(ta[1]) * 60 + parseInt(ta[2] || '0');
+          const nb = parseInt(tb[1]) * 60 + parseInt(tb[2] || '0');
+          return na - nb;
+        };
+        am.sort(byTime);
+        pm.sort(byTime);
+        return { am, pm, none };
+      };
+
+      // 예정: 담당자가 있고 미래 날짜이거나, 담당자가 있고 날짜 미확정인 일정
+      const allFilteredSchedules = allSchedules.filter(s => (scheduleType === 'all' || s.type === scheduleType) && matchesWorkTypeFilter(s) && matchesSearchQuery(s));
+      const upcomingWithAssignee = allFilteredSchedules.filter(s => {
+        if (!hasAssignee(s)) return false; // 담당자 없으면 제외
+        if (s.dateType === 'confirmed' && s.date >= todayStr) return true; // 확정된 미래 날짜
+        if (s.dateType === 'monthOnly' || s.dateType === 'pending') return true; // 예정월/미정이지만 담당자 있음
+        return false;
+      }).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999'));
+      
+      const upcomingSchedules = filteredConfirmedSchedules.filter(s => s.date >= todayStr).sort((a, b) => a.date.localeCompare(b.date));
+      const pastSchedules = filteredConfirmedSchedules.filter(s => s.date < todayStr).sort((a, b) => b.date.localeCompare(a.date));
+      
+      // 년도/월 분리 필터 적용
+      const filterByYearMonth = (schedules) => {
+        return schedules.filter(s => {
+          // 년/월 필터가 둘 다 'all'이면 모든 일정 통과
+          if (listYear === 'all' && listMonthOnly === 'all') return true;
+          
+          // 년/월 필터 선택 시 확정 날짜가 있는 일정만 표시
+          if (!s.date) return false;
+          
+          const [y, m] = s.date.split('-');
+          const matchYear = listYear === 'all' || y === listYear;
+          const matchMonth = listMonthOnly === 'all' || m === listMonthOnly;
+          return matchYear && matchMonth;
+        });
+      };
+      const filteredUpcoming = filterByYearMonth(upcomingWithAssignee);
+      const filteredPast = filterByYearMonth(pastSchedules);
+      
+      // 앞으로 탭: 오늘 이후(당일 포함) 확정 일정 + 미정/예정 모두 포함
+      const filteredFutureRaw = allFilteredSchedules.filter(s => {
+        // 확정 날짜가 오늘 이후인 경우
+        if (s.dateType === 'confirmed' && s.date >= todayStr) return true;
+        // 예정월, 미정인 경우 모두 포함
+        if (s.dateType === 'monthOnly' || s.dateType === 'pending') return true;
+        return false;
+      });
+      
+      // ID 기반 중복 제거
+      const seenIdsList2228 = [];
+      const filteredFuture = filteredFutureRaw.filter(s => {
+        if (seenIdsList2228.includes(s.id)) return false;
+        seenIdsList2228.push(s.id);
+        return true;
+      }).sort((a, b) => {
+        // 정렬 우선순위: 1.확정날짜(날짜순) → 2.예정월(월순) → 3.미정
+        const aIsConfirmed = a.dateType === 'confirmed';
+        const bIsConfirmed = b.dateType === 'confirmed';
+        const aIsMonthOnly = a.dateType === 'monthOnly';
+        const bIsMonthOnly = b.dateType === 'monthOnly';
+        
+        // 확정 vs 비확정: 확정 먼저
+        if (aIsConfirmed && !bIsConfirmed) return -1;
+        if (!aIsConfirmed && bIsConfirmed) return 1;
+        
+        // 둘 다 확정이면 날짜순
+        if (aIsConfirmed && bIsConfirmed) {
+          return (a.date || '').localeCompare(b.date || '');
+        }
+        
+        // 둘 다 비확정: 예정월 vs 미정
+        if (aIsMonthOnly && !bIsMonthOnly) return -1;
+        if (!aIsMonthOnly && bIsMonthOnly) return 1;
+        
+        // 둘 다 예정월이면 월순
+        if (aIsMonthOnly && bIsMonthOnly) {
+          return (a.expectedMonth || '').localeCompare(b.expectedMonth || '');
+        }
+        
+        return 0;
+      });
+      
+      // 중복 일정 찾기 (같은 날짜 + 같은 현장명 + 같은 타입)
+      const findDuplicates = () => {
+        const duplicates = [];
+        const seen = new Map();
+        
+        allSchedules.forEach(s => {
+          const key = `${s.date || ''}_${s.siteName || s.title || ''}_${s.type}`;
+          if (seen.has(key)) {
+            duplicates.push(s);
+            if (!duplicates.includes(seen.get(key))) {
+              duplicates.push(seen.get(key));
+            }
+          } else {
+            seen.set(key, s);
+          }
+        });
+        
+        return duplicates;
+      };
+      
+      const duplicateSchedules = findDuplicates();
+      
+      // 이용 가능한 년도/월 목록 생성 (데이터 기반)
+      const getAvailableYears = () => {
+        const yearsList = [];
+        [...upcomingSchedules, ...pastSchedules].forEach(s => {
+          if (s.date && !yearsList.includes(s.date.substring(0, 4))) {
+            yearsList.push(s.date.substring(0, 4));
+          }
+        });
+        return yearsList.sort((a, b) => b.localeCompare(a));
+      };
+      const availableYears = getAvailableYears();
+      
+      // 팀장용 팀원 필터 함수 (한준엽 하드코딩)
+      const teamLeaderName = '한준엽';
+      const teamMembersList = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민'];
+      const isCurrentUserTeamLeader = currentUser?.name === teamLeaderName;
+      
+      const isTeamMemberSchedule = (schedule) => {
+        if (!isCurrentUserTeamLeader) return true;
+        if (!schedule.ptAssignee) return false;
+        const assignees = schedule.ptAssignee.split(/[\/,+&]/).map(a => a.trim());
+        return assignees.some(a => teamMembersList.includes(a));
+      };
+      
+      const filteredPtByAssignee = (selectedAssignee === 'all' 
+        ? (isCurrentUserTeamLeader ? ptSchedules.filter(isTeamMemberSchedule) : ptSchedules)
+        : ptSchedules.filter(s => {
+            if (!s.ptAssignee) return false;
+            const assignees = s.ptAssignee.split(/[\/,+&]/).map(a => a.trim());
+            return assignees.includes(selectedAssignee);
+          })
+      ).filter(matchesWorkTypeFilter).filter(matchesSearchQuery);
+      const pastPtSchedules = filteredPtByAssignee.filter(s => s.dateType === 'confirmed' && s.date < todayStr).sort((a, b) => b.date.localeCompare(a.date));
+      const upcomingPtSchedules = filteredPtByAssignee.filter(s => s.dateType === 'confirmed' && s.date >= todayStr).sort((a, b) => a.date.localeCompare(b.date));
+      const pendingPtSchedules = filteredPtByAssignee.filter(s => s.dateType !== 'confirmed');
+
+      const handleAddSchedule = () => {
+        const data = { ...newSchedule, result: null };
+        if (modalType === 'pt') {
+          const newItem = { id: `pt_${Date.now()}`, type: 'pt', ...data };
+          const updated = [...ptSchedules, newItem];
+          setPtSchedules(updated);
+          if (firebaseEnabled && database) {
+            database.ref(`pt/${newItem.id}`).set(newItem);
+          } else {
+            saveToLocal('pt_schedules', updated);
+          }
+        } else if (modalType === 'briefing') {
+          const newItem = { id: `br_${Date.now()}`, type: 'briefing', ...data };
+          const updated = [...briefingSchedules, newItem];
+          setBriefingSchedules(updated);
+          if (firebaseEnabled && database) {
+            database.ref(`briefing/${newItem.id}`).set(newItem);
+          } else {
+            saveToLocal('briefing_schedules', updated);
+          }
+        } else if (modalType === 'seminar') {
+          const newItem = { id: `sem_${Date.now()}`, type: 'seminar', ...data };
+          const updated = [...seminarSchedules, newItem];
+          setSeminarSchedules(updated);
+          if (firebaseEnabled && database) {
+            database.ref(`seminar/${newItem.id}`).set(newItem);
+          } else {
+            saveToLocal('seminar_schedules', updated);
+          }
+        } else if (modalType === 'asq') {
+          const newItem = { id: `asq_${Date.now()}`, type: 'asq', ...data };
+          const updated = [...asqSchedules, newItem];
+          setAsqSchedules(updated);
+          if (firebaseEnabled && database) {
+            database.ref(`asq/${newItem.id}`).set(newItem);
+          } else {
+            saveToLocal('asq_schedules', updated);
+          }
+        } else if (modalType === 'vacation') {
+          const newItem = { id: `vac_${Date.now()}`, type: 'vacation', ...data };
+          const updated = [...vacationSchedules, newItem];
+          setVacationSchedules(updated);
+          if (firebaseEnabled && database) {
+            database.ref(`vacation/${newItem.id}`).set(newItem);
+          } else {
+            saveToLocal('vacation_schedules', updated);
+          }
+        } else {
+          const newItem = { id: `per_${Date.now()}`, type: 'personal', ...data };
+          const updated = [...personalSchedules, newItem];
+          setPersonalSchedules(updated);
+          if (firebaseEnabled && database) {
+            database.ref(`personal/${newItem.id}`).set(newItem);
+          } else {
+            saveToLocal('personal_schedules', updated);
+          }
+        }
+        setLastSaved(new Date().toLocaleTimeString());
+        setShowModal(false);
+        setNewSchedule({ siteName: '', address: '', date: '', time: '', workType: '', participants: '', requester: '', competitor: '', mainCategory: '재도장', status: '확정', ptAssignee: '', ptProduct: '', bidDeadline: '', title: '', location: '', assignee: '', assignees: [], note: '', dateType: 'confirmed', expectedMonth: '', dateNote: '' });
+      };
+
+      // CRM 엑셀 파일 업로드 처리
+      const handleCrmExcelUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs');
+          const data = await file.arrayBuffer();
+          const workbook = XLSX.read(data);
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const jsonData = XLSX.utils.sheet_to_json(sheet);
+          
+          const targetLists = ['아파트스퀘어', '석민이앤씨', 'POUR솔루션'];
+          const filtered = jsonData.filter(row => {
+            const pl = (row['Process List name'] || '').trim();
+            return targetLists.includes(pl);
+          });
+          
+          const normalize = (str) => (str || '').toLowerCase().replace(/[\s\(\)\[\]\/\-\_\.]/g, '');
+          const processedData = [];
+          const seenIds = new Set();
+          
+          filtered.forEach(row => {
+            const entryId = row['Process entry id'];
+            if (seenIds.has(entryId)) return;
+            seenIds.add(entryId);
+            
+            const status = row['Process status name'] || '';
+            const processList = row['Process List name'] || '';
+            
+            // status 기반으로 result 결정
+            const statusNorm = normalize(status);
+            let result = '';
+            if (statusNorm.includes('수주성공') || statusNorm.includes('closedwon') || statusNorm.includes('공사완료')) {
+              result = '수주성공';
+            } else if (statusNorm.includes('수주실패') || statusNorm.includes('closedlost')) {
+              result = '수주실패';
+            }
+            
+            let assigneeRaw = row['담당자'] || row['영업담당자'] || '';
+            const assignees = assigneeRaw ? assigneeRaw.split(/[,\/\s]+/).map(a => a.trim()).filter(a => a) : [];
+            const assignee = assignees[0] || '';
+            
+            let constructionYear = row['공사계획년도 *'] || '';
+            if (!constructionYear && processList === '석민이앤씨') constructionYear = row['석민이앤씨 > 공사계획년도'] || '';
+            if (!constructionYear && processList === '아파트스퀘어') constructionYear = row['아파트스퀘어 > 공사계획년도'] || '';
+            if (!constructionYear && processList === 'POUR솔루션') constructionYear = row['POUR솔루션 > 공사계획년도'] || '';
+            
+            processedData.push({
+              entryId,
+              name: row['Organization name'] || '',
+              status,
+              result,
+              processList,
+              revenue: row['Process entry one time value'] || 0,
+              assignee,
+              assigneeAll: assignees.join(', '),
+              constructionYear,
+              majorCategory: row['공종(대분류) *'] || '',
+              minorCategory: row['공종(소분류) *'] || '',
+              households: row['단지규모[세대수]'] || '',
+              buildings: row['단지규모[동수]'] || '',
+              competitor: row['경쟁사 *'] || '',
+              note: row['note *'] || '',
+              createdDate: row['Process entry creation date'] || ''
+            });
+          });
+          
+          setRawSalesData(processedData);
+          
+          // Firebase에 저장 (salesData2025/rawData 경로)
+          try {
+            const salesDataRef = database.ref('salesData2025/rawData');
+            const saveData = {};
+            processedData.forEach((item, idx) => {
+              saveData[item.entryId || `item_${idx}`] = item;
+            });
+            await salesDataRef.set(saveData);
+            alert('CRM 데이터 ' + processedData.length + '건 저장 완료');
+          } catch (fbError) {
+            console.error('Firebase 저장 오류:', fbError);
+            alert('CRM 데이터 ' + processedData.length + '건 로드 (Firebase 저장 실패)');
+          }
+        } catch (error) {
+          console.error('CRM 파싱 오류:', error);
+          alert('파일 처리 중 오류가 발생했습니다.');
+        }
+      };
+
+      // 파이프라인 JSON 업로드 핸들러
+      const handlePipelineJsonUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const json = JSON.parse(text);
+          const dataArray = json.data || json;
+          if (!Array.isArray(dataArray)) { alert('올바른 파이프라인 JSON 형식이 아닙니다.'); return; }
+          const pipelineRef = database.ref('pipeline/data');
+          await pipelineRef.set(dataArray);
+          alert('파이프라인 데이터 ' + dataArray.length + '건 저장 완료');
+        } catch (error) {
+          console.error('파이프라인 JSON 파싱 오류:', error);
+          alert('JSON 파일 처리 중 오류가 발생했습니다.');
+        }
+        e.target.value = '';
+      };
+
+      // 첨부파일 업로드 핸들러
+      const handleFileUpload = async (e, isEdit = false) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        if (!storageEnabled || !storage) {
+          alert('파일 업로드 기능을 사용할 수 없습니다.\nindex.html에 Firebase Storage SDK를 추가하고 다시 배포해주세요.');
+          return;
+        }
+        
+        if (file.size > 10 * 1024 * 1024) {
+          alert('파일 크기는 10MB 이하만 가능합니다.');
+          return;
+        }
+        
+        try {
+          const fileName = `attachments/${Date.now()}_${file.name}`;
+          const storageRef = storage.ref(fileName);
+          const snapshot = await storageRef.put(file);
+          const downloadUrl = await snapshot.ref.getDownloadURL();
+          
+          if (isEdit) {
+            setEditingSchedule(prev => ({...prev, attachmentUrl: downloadUrl, attachmentName: file.name}));
+          } else {
+            setNewSchedule(prev => ({...prev, attachmentUrl: downloadUrl, attachmentName: file.name}));
+          }
+          alert('파일 업로드 완료!');
+        } catch (error) {
+          console.error('파일 업로드 오류:', error);
+          alert('파일 업로드 중 오류가 발생했습니다.\n' + error.message);
+        }
+      };
+
+      const handleEditClick = (schedule) => {
+        if (schedule.type === 'meeting') {
+          // 회의는 회의 상세 모달로
+          setSelectedMeeting(schedule);
+          setShowMeetingDetailModal(true);
+        } else if (schedule.type === 'sales') {
+          // 영업은 영업일지 모달로
+          setEditingSales(schedule);
+          setShowSalesModal(true);
+        } else {
+          setEditingSchedule({ ...schedule, originalType: schedule.type });
+          setShowEditModal(true);
+        }
+      };
+
+      const handleSaveEdit = () => {
+        if (!editingSchedule) return;
+        
+        // dateType에 따라 status 자동 설정
+        let updatedSchedule = { ...editingSchedule };
+        if (updatedSchedule.dateType === 'confirmed') {
+          updatedSchedule.status = '확정';
+        } else if (updatedSchedule.dateType === 'monthOnly') {
+          updatedSchedule.status = '월예정';
+        } else if (updatedSchedule.dateType === 'pending') {
+          updatedSchedule.status = '일정조율중';
+        }
+        
+        const originalType = updatedSchedule.originalType;
+        const newType = updatedSchedule.type;
+        const originalId = updatedSchedule.id;
+        
+        // 유형이 변경된 경우
+        if (originalType && originalType !== newType) {
+          // 새 ID 생성
+          const prefix = newType === 'pt' ? 'pt' : newType === 'briefing' ? 'br' : newType === 'seminar' ? 'sem' : newType === 'asq' ? 'asq' : newType === 'vacation' ? 'vac' : newType === 'meeting' ? 'mtg' : 'per';
+          updatedSchedule.id = `${prefix}_${Date.now()}`;
+          delete updatedSchedule.originalType;
+          
+          // 먼저 새 유형으로 저장
+          if (newType === 'pt') {
+            updatePtSchedule(updatedSchedule);
+          } else if (newType === 'briefing') {
+            updateBriefingSchedule(updatedSchedule);
+          } else if (newType === 'seminar') {
+            updateSeminarSchedule(updatedSchedule);
+          } else if (newType === 'asq') {
+            updateAsqSchedule(updatedSchedule);
+          } else if (newType === 'vacation') {
+            updateVacationSchedule(updatedSchedule);
+          } else {
+            updatePersonalSchedule(updatedSchedule);
+          }
+          
+          // 그 다음 기존 유형에서 삭제
+          setTimeout(() => {
+            if (originalType === 'pt') deletePtSchedule(originalId);
+            else if (originalType === 'briefing') deleteBriefingSchedule(originalId);
+            else if (originalType === 'seminar') deleteSeminarSchedule(originalId);
+            else if (originalType === 'asq') deleteAsqSchedule(originalId);
+            else if (originalType === 'vacation') deleteVacationSchedule(originalId);
+            else if (originalType === 'personal') deletePersonalSchedule(originalId);
+          }, 100);
+        } else {
+          // 유형 변경 없이 일반 수정
+          if (updatedSchedule.type === 'pt') {
+            updatePtSchedule(updatedSchedule);
+          } else if (updatedSchedule.type === 'briefing') {
+            updateBriefingSchedule(updatedSchedule);
+          } else if (updatedSchedule.type === 'seminar') {
+            updateSeminarSchedule(updatedSchedule);
+          } else if (updatedSchedule.type === 'asq') {
+            updateAsqSchedule(updatedSchedule);
+          } else if (updatedSchedule.type === 'vacation') {
+            updateVacationSchedule(updatedSchedule);
+          } else {
+            updatePersonalSchedule(updatedSchedule);
+          }
+        }
+        setShowEditModal(false);
+        setEditingSchedule(null);
+      };
+
+      const handleDelete = () => {
+        if (!editingSchedule) return;
+        if (!confirm('정말 삭제하시겠습니까?')) return;
+        
+        if (editingSchedule.type === 'pt') {
+          deletePtSchedule(editingSchedule.id);
+        } else if (editingSchedule.type === 'briefing') {
+          deleteBriefingSchedule(editingSchedule.id);
+        } else if (editingSchedule.type === 'seminar') {
+          deleteSeminarSchedule(editingSchedule.id);
+        } else if (editingSchedule.type === 'asq') {
+          deleteAsqSchedule(editingSchedule.id);
+        } else if (editingSchedule.type === 'vacation') {
+          deleteVacationSchedule(editingSchedule.id);
+        } else {
+          deletePersonalSchedule(editingSchedule.id);
+        }
+        setShowEditModal(false);
+        setEditingSchedule(null);
+      };
+
+      if (isLoading) {
+        return (
+          <div className="loading-overlay">
+            <div className="spinner"></div>
+            <p style={{ marginTop: '16px', color: '#64748b' }}>데이터 로딩중...</p>
+          </div>
+        );
+      }
+
+      return (
+        <div style={{ minHeight: '100vh', background: '#f8fafc', padding: isMobile ? '12px' : '20px', paddingTop: (showInstallBanner && isMobile) ? '56px' : (isMobile ? '12px' : '20px') }} onClick={() => showWorkTypeFilter && setShowWorkTypeFilter(false)}>
+          {/* DB 연결 상태 표시 */}
+          <div style={{ position: 'fixed', bottom: '12px', right: '12px', padding: '8px 12px', borderRadius: '8px', fontSize: '11px', background: dbConnected ? '#dcfce7' : '#e0f2fe', color: dbConnected ? '#166534' : '#0369a1', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', zIndex: 100 }}>
+            {dbConnected ? 'DB' : '로컬'}
+            {lastSaved && !isMobile && <span style={{ marginLeft: '8px', opacity: 0.7 }}>저장: {lastSaved}</span>}
+          </div>
+
+          {/* Header */}
+          <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <h1 style={{ fontSize: isMobile ? '14px' : '20px', fontWeight: '700', color: '#1e293b', margin: 0 }}>{APP_NAME}</h1>
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+              {/* 로그인/로그아웃 버튼 */}
+              {isLoggedIn ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span
+                    onClick={() => {
+                      setMyPageUser(currentUser.name);
+                      setShowMyPage(true);
+                      setShowDashboard(false);
+                      setShowPerformance(false);
+                      setShowMeetingView(false);
+                      setShowSalesView(false);
+                    }}
+                    style={{
+                      fontSize: isMobile ? '11px' : '12px',
+                      color: showMyPage ? '#2563eb' : '#3b82f6',
+                      padding: isMobile ? '6px 10px' : '8px 12px',
+                      background: showMyPage ? '#dbeafe' : '#eff6ff',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      border: '1px solid #93c5fd',
+                      fontWeight: '600'
+                    }}
+                    title="마이페이지로 이동"
+                  >
+                    👤 마이페이지
+                  </span>
+                  {currentUser?.canManagePasswords && (
+                    <button
+                      onClick={() => setShowPasswordModal(true)}
+                      style={{ background: '#f1f5f9', color: '#64748b', border: '1px dashed #94a3b8', padding: isMobile ? '6px 8px' : '8px 10px', borderRadius: '6px', fontSize: isMobile ? '10px' : '11px', fontWeight: '600', cursor: 'pointer' }}
+                      title="비밀번호 관리"
+                    >비밀번호</button>
+                  )}
+                  <button onClick={handleLogout} style={{ background: '#fee2e2', color: '#dc2626', border: 'none', padding: isMobile ? '6px 10px' : '8px 12px', borderRadius: '6px', fontSize: isMobile ? '11px' : '12px', fontWeight: '600', cursor: 'pointer' }}>로그아웃</button>
+                </div>
+              ) : (
+                <button onClick={() => setShowLoginModal(true)} style={{ background: '#e2e8f0', color: '#475569', border: 'none', padding: isMobile ? '6px 12px' : '8px 14px', borderRadius: '6px', fontSize: isMobile ? '11px' : '12px', fontWeight: '600', cursor: 'pointer' }}>로그인</button>
+              )}
+              {/* +일정추가 버튼 */}
+              <button 
+                onClick={() => { setAddTypeModalDate(null); setShowAddTypeModal(true); }} 
+                style={{ background: '#4b5563', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
+              >+일정추가</button>
+              <button onClick={() => setShowMeetingModal(true)} style={{ background: '#4b5563', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}>+ 회의</button>
+            </div>
+          </div>
+
+          {/* Main Tab - 3개 탭 + 톱니바퀴 */}
+          <div style={{ marginBottom: '12px', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {(!currentUser || currentUser.isAdmin || currentUser.name === '이승우' || currentUser.name === '황윤선') && (
+            <button onClick={() => { setShowDashboard(true); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); updatePageTitle('메인'); }} style={{ padding: isMobile ? '10px 14px' : '12px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '14px', fontWeight: '700', cursor: 'pointer', background: showDashboard ? '#93c5fd' : '#e2e8f0', color: showDashboard ? '#1e40af' : '#64748b' }}>메인</button>
+            )}
+            <button onClick={() => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); updatePageTitle('일정'); }} style={{ padding: isMobile ? '10px 14px' : '12px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '14px', fontWeight: '700', cursor: 'pointer', background: !showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage ? '#4b5563' : '#e2e8f0', color: !showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage ? 'white' : '#64748b' }}>일정</button>
+            <button onClick={() => { setPipelineAssigneeFilter('all'); setPipelineSource('global'); setShowDashboard(false); setShowSalesView(true); setShowPerformance(false); setShowMeetingView(false); setShowMyPage(false); updatePageTitle('파이프라인'); }} style={{ padding: isMobile ? '10px 14px' : '12px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '14px', fontWeight: '700', cursor: 'pointer', background: showSalesView ? '#4b5563' : '#e2e8f0', color: showSalesView ? 'white' : '#64748b' }}>파이프라인</button>
+            {/* 실적관리 - 조현식(canAccessPerformance: false)만 제외 */}
+            {(!currentUser || currentUser.canAccessPerformance !== false) && (
+              <button onClick={() => {
+                if (!isLoggedIn) {
+                  setShowLoginModal(true);
+                  return;
+                }
+                setShowDashboard(false);
+                setShowPerformance(true);
+                setShowMeetingView(false);
+                setShowSalesView(false);
+                setShowMyPage(false);
+                setSelectedAssignee('all');
+                setDashboardView('overview');
+                setKanbanTab('inProgress');
+                setSelectedCategoryTab('전체');
+                setPreviewAssignee(null);
+                setSiteListTab('all');
+                setSettlementFilter('all');
+                updatePageTitle('실적');
+              }} style={{ padding: isMobile ? '10px 14px' : '12px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '14px', fontWeight: '700', cursor: 'pointer', background: showPerformance ? '#4b5563' : '#e2e8f0', color: showPerformance ? 'white' : '#64748b' }}>실적</button>
+            )}
+            <button onClick={() => {
+              if (!isLoggedIn) {
+                setShowLoginModal(true);
+                return;
+              }
+              setShowDashboard(false);
+              setShowPerformance(false);
+              setShowMeetingView(true);
+              setShowSalesView(false);
+              setShowMyPage(false);
+              updatePageTitle('회의');
+            }} style={{ padding: isMobile ? '10px 14px' : '12px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '14px', fontWeight: '700', cursor: 'pointer', background: showMeetingView ? '#4b5563' : '#e2e8f0', color: showMeetingView ? 'white' : '#64748b' }}>회의</button>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {!isMobile && (
+                <div style={{ display: 'flex', gap: '10px', fontSize: '12px', color: '#64748b' }}>
+                  <span>총 <strong style={{ color: '#1e293b' }}>{allSchedules.length}</strong></span>
+                  <span>확정 <strong style={{ color: '#16a34a' }}>{confirmedSchedules.length}</strong></span>
+                  <span>미확정 <strong style={{ color: '#f59e0b' }}>{pendingSchedules.length}</strong></span>
+                  <span>미배정 <strong style={{ color: '#dc2626' }}>{allSchedules.filter(isUnassigned).length}</strong></span>
+                </div>
+              )}
+              <button onClick={() => setShowSettings(true)} style={{ background: '#f1f5f9', color: '#475569', border: 'none', padding: isMobile ? '8px 10px' : '10px 14px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}>설정</button>
+            </div>
+          </div>
+
+
+
+          {/* 메인 */}
+          {showDashboard && (() => {
+            const team1 = ['한준엽', '조재연', '정정훈', '김성민'];
+            const team2 = ['이필선'];
+            const team3 = ['조현식', '한인규'];
+            
+            // 2025년 영업 데이터는 컴포넌트 상단에서 관리
+            
+            
+            const allMembers = [...team1, ...team2, ...team3];
+            
+            const userName = currentUser?.name || '';
+            const isAdmin = currentUser?.isAdmin === true;
+            
+            const filterByAssignee = (list, names) => list.filter(s => {
+              const assignee = s.assignee || s.ptAssignee || '';
+              return names.some(n => assignee.includes(n));
+            });
+            
+            // 년도 필터링 함수
+            const filterPtByYear = (data) => {
+              if (mainYearFilter === 'all') return data;
+              return data.filter(item => {
+                const dateValue = item.date || '';
+                return dateValue.startsWith(mainYearFilter);
+              });
+            };
+            
+            // 년도 필터 적용된 PT 데이터
+            const yearFilteredPt = filterPtByYear(ptSchedules);
+
+            // ===== 파이프라인 기반 대시보드 KPI =====
+            const filterPipelineByYear = (data) => {
+              if (mainYearFilter === 'all') return data;
+              return data.filter(item => {
+                const itemYear = String(item['공사계획년도'] || '').trim();
+                return itemYear === mainYearFilter;
+              });
+            };
+            const yearFilteredPipeline = filterPipelineByYear(pipelineData);
+
+            const dashboardStageGroups = {
+              early: ['대기고객', '유대관계 강화', '컨설팅 자료 발송완료', '침묵 관리 단계'],
+              consulting: ['컨설팅 설계단계', '2차 미팅', '견적서 발송'],
+              compete: ['경쟁 단계', '입찰단계', '공사 임박 단계'],
+              contract: ['계약단계', '시공단계', '공사 진행', '준공단계', '인계'],
+              won: ['수주 성공', '공사완료'],
+              lost: ['수주 실패']
+            };
+            const getStageGroupKey = (stage) => {
+              for (const [key, stages] of Object.entries(dashboardStageGroups)) {
+                if (stages.some(s => (stage || '').includes(s) || s.includes(stage || ''))) return key;
+              }
+              return 'early';
+            };
+
+            // 파이프라인 기반 영업현황 통계
+            const getPipelineSalesStats = (data) => {
+              const total = data.length;
+              const contractItems = data.filter(i => { const gk = getStageGroupKey(i.stage); return gk === 'contract' || gk === 'won'; });
+              const wonItems = data.filter(i => i.stageType === 'won');
+              const lostItems = data.filter(i => i.stageType === 'lost');
+              const revenue = contractItems.reduce((s, i) => s + (Number(i.dealValue) || 0), 0);
+              const decidedCount = wonItems.length + lostItems.length;
+              const progressRate = total > 0 ? Math.round(contractItems.length / total * 100) : 0;
+              const winRate = decidedCount > 0 ? Math.round(wonItems.length / decidedCount * 100) : 0;
+              const lossRate = decidedCount > 0 ? Math.round(lostItems.length / decidedCount * 100) : 0;
+              return { total, revenue, progressRate, winRate, lossRate };
+            };
+
+            // 파이프라인 기반 수의계약 통계
+            const getPipelineSuiStats = (data) => {
+              const suiItems = data.filter(i => { const gk = getStageGroupKey(i.stage); return gk === 'contract' || gk === 'won'; });
+              const revenue = suiItems.reduce((s, i) => s + (Number(i.dealValue) || 0), 0);
+              return { count: suiItems.length, revenue };
+            };
+
+            // 파이프라인 담당자 필터
+            const filterPipelineByAssignee = (data, names) => data.filter(i => names.includes(i.assigneeName));
+
+            // 파이프라인 진행률 (전체 → PT진행 → 계약 퍼널)
+            const getPipelineFunnel = (data) => {
+              const totalPipeline = data.length;
+              const ptReached = data.filter(i => { const gk = getStageGroupKey(i.stage); return gk === 'compete' || gk === 'contract' || gk === 'won'; }).length;
+              const contracted = data.filter(i => { const gk = getStageGroupKey(i.stage); return gk === 'contract' || gk === 'won'; }).length;
+              return {
+                total: totalPipeline, ptReached, contracted,
+                ptRate: totalPipeline > 0 ? Math.round(ptReached / totalPipeline * 100) : 0,
+                contractRate: totalPipeline > 0 ? Math.round(contracted / totalPipeline * 100) : 0
+              };
+            };
+
+            // PT → 계약 전환율
+            const getConversionRate = (pipeData, ptData) => {
+              const ptWithResult = ptData.filter(s => s.results && Object.values(s.results).some(r => r === '승' || r === '패' || r === '무')).length;
+              const ptWins = ptData.filter(s => s.results && Object.values(s.results).some(r => r === '승')).length;
+              const contractedPipeline = pipeData.filter(i => { const gk = getStageGroupKey(i.stage); return gk === 'contract' || gk === 'won'; }).length;
+              return {
+                ptWithResult, ptWins, contracts: contractedPipeline,
+                conversionRate: ptWithResult > 0 ? Math.round(contractedPipeline / ptWithResult * 100) : 0,
+                ptWinRate: ptWithResult > 0 ? Math.round(ptWins / ptWithResult * 100) : 0
+              };
+            };
+
+            // 예상매출 (계약확정 + 고확률×50%)
+            const getExpectedRevenue = (data) => {
+              const contracted = data.filter(i => { const gk = getStageGroupKey(i.stage); return gk === 'contract' || gk === 'won'; });
+              const highProb = data.filter(i => getStageGroupKey(i.stage) === 'compete');
+              const contractedRevenue = contracted.reduce((s, i) => s + (Number(i.dealValue) || 0), 0);
+              const highProbRevenue = highProb.reduce((s, i) => s + (Number(i.dealValue) || 0), 0);
+              return {
+                contractedRevenue, highProbRevenue,
+                totalExpected: contractedRevenue + Math.round(highProbRevenue * 0.5),
+                contractedCount: contracted.length, highProbCount: highProb.length
+              };
+            };
+
+            // 데이터 검증 툴팁 생성 함수들
+            const pipeTip = (items, showRev = false, max = 15) => {
+              if (!items || items.length === 0) return '데이터 없음';
+              const sorted = [...items].sort((a, b) => (Number(b.dealValue) || 0) - (Number(a.dealValue) || 0));
+              const lines = sorted.slice(0, max).map((i, idx) => {
+                const name = i.orgName || '(미지정)';
+                const stage = i.stage || '';
+                const assignee = i.assigneeName || '';
+                if (showRev) {
+                  const val = Number(i.dealValue) || 0;
+                  return `${idx + 1}. ${name} — ${(val / 100000000).toFixed(2)}억 [${stage}] (${assignee})`;
+                }
+                return `${idx + 1}. ${name} [${stage}] (${assignee})`;
+              });
+              if (items.length > max) lines.push(`... 외 ${items.length - max}건`);
+              return lines.join('\n');
+            };
+
+            const ptTip = (items, filterResult, max = 15) => {
+              if (!items || items.length === 0) return '데이터 없음';
+              const filtered = filterResult ? items.filter(s => s.results && Object.values(s.results).some(r => r === filterResult)) : items;
+              if (filtered.length === 0) return '해당 없음';
+              const lines = filtered.slice(0, max).map((s, idx) => {
+                const date = s.date || '';
+                const assignee = s.ptAssignee || '';
+                const org = s.orgName || s.buildingName || s.siteName || '(미지정)';
+                const resultStr = s.results ? Object.entries(s.results).map(([k, v]) => `${k}:${v}`).join(', ') : '';
+                return `${idx + 1}. ${date} ${org} (${assignee}) ${resultStr ? '→ ' + resultStr : ''}`;
+              });
+              if (filtered.length > max) lines.push(`... 외 ${filtered.length - max}건`);
+              return lines.join('\n');
+            };
+
+            // 파이프라인 필터별 항목 추출 (툴팁용)
+            const pipeAll = yearFilteredPipeline;
+            const pipeContract = pipeAll.filter(i => { const gk = getStageGroupKey(i.stage); return gk === 'contract' || gk === 'won'; });
+            const pipeWon = pipeAll.filter(i => i.stageType === 'won');
+            const pipeLost = pipeAll.filter(i => i.stageType === 'lost');
+            const pipeCompete = pipeAll.filter(i => { const gk = getStageGroupKey(i.stage); return gk === 'compete' || gk === 'contract' || gk === 'won'; });
+            const pipeCompeteOnly = pipeAll.filter(i => getStageGroupKey(i.stage) === 'compete');
+
+            // PT 통계 - results 객체는 { 담당자명: '승'/'패'/'무' } 형태
+            const totalPt = yearFilteredPt.length;
+            const totalWithResult = yearFilteredPt.filter(s => s.results && Object.values(s.results).some(r => r === '승' || r === '패' || r === '무')).length;
+            const totalWins = yearFilteredPt.filter(s => s.results && Object.values(s.results).some(r => r === '승')).length;
+            const totalLoss = yearFilteredPt.filter(s => s.results && Object.values(s.results).some(r => r === '패')).length;
+            const totalDraw = yearFilteredPt.filter(s => s.results && Object.values(s.results).some(r => r === '무')).length;
+            const totalWinRate = totalWithResult > 0 ? Math.round(totalWins / totalWithResult * 100) : 0;
+            
+            // 수의계약 (년도 필터 적용)
+            const suiList = yearFilteredPt.filter(s => s.contractType === '수의' || s.type === '수의');
+            const suiRevenue = suiList.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
+            
+            // 팀별 통계
+            const getTeamStats = (members) => {
+              // PT - results 객체는 { 담당자명: '승'/'패'/'무' } 형태 (년도 필터 적용)
+              const teamPt = filterByAssignee(yearFilteredPt, members);
+              const withResult = teamPt.filter(s => s.results && Object.values(s.results).some(r => r === '승' || r === '패' || r === '무')).length;
+              const wins = teamPt.filter(s => s.results && Object.values(s.results).some(r => r === '승')).length;
+              const loss = teamPt.filter(s => s.results && Object.values(s.results).some(r => r === '패')).length;
+              const draw = teamPt.filter(s => s.results && Object.values(s.results).some(r => r === '무')).length;
+              // 영업 - 파이프라인 데이터 기반
+              const teamPipeline = filterPipelineByAssignee(yearFilteredPipeline, members);
+              const sales = getPipelineSalesStats(teamPipeline);
+              // 수의계약 - 파이프라인 계약/수주 단계
+              const teamSuiStats = getPipelineSuiStats(teamPipeline);
+
+              return {
+                pt: teamPt.length, wins, loss, draw, ptRate: withResult > 0 ? Math.round(wins / withResult * 100) : 0,
+                sui: teamSuiStats.count, suiRev: teamSuiStats.revenue,
+                sales
+              };
+            };
+            
+            // 개인별 통계
+            const getPersonStats = (name) => {
+              const mySales = filterByAssignee(salesSchedules, [name]);
+              const mySui = filterByAssignee(suiList, [name]);
+              const myPt = filterByAssignee(ptSchedules, [name]);
+              const myWithResult = myPt.filter(s => s.results && Object.values(s.results).some(r => r === '승' || r === '패' || r === '무')).length;
+              const myWins = myPt.filter(s => s.results && Object.values(s.results).some(r => r === '승')).length;
+              const myLoss = myPt.filter(s => s.results && Object.values(s.results).some(r => r === '패')).length;
+              const myDraw = myPt.filter(s => s.results && Object.values(s.results).some(r => r === '무')).length;
+              // 지원 횟수 계산 (다른 사람 PT에 지원으로 참여한 경우)
+              const mySupport = ptSchedules.filter(s => {
+                const assignee = s.ptAssignee || s.assignee || '';
+                const supporters = s.supporters || s.support || '';
+                return !assignee.includes(name) && supporters.includes(name);
+              }).length;
+              
+              return {
+                sales: { count: mySales.length, revenue: mySales.reduce((sum, s) => sum + (parseFloat(s.revenue) || 0), 0), profit: mySales.reduce((sum, s) => sum + (parseFloat(s.profit) || 0), 0), rate: myWithResult > 0 ? Math.round(myWins / myWithResult * 100) : 0 },
+                sui: { count: mySui.length, revenue: mySui.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0) },
+                pt: { count: myPt.length, wins: myWins, loss: myLoss, draw: myDraw, rate: myWithResult > 0 ? Math.round(myWins / myWithResult * 100) : 0, support: mySupport }
+              };
+            };
+            
+            const team1Stats = getTeamStats(team1);
+            const team2Stats = getTeamStats(team2);
+            const team3Stats = getTeamStats(team3);
+            
+            // (파이프라인 기반으로 전환 완료 - getTeamStats에서 sales 객체로 제공)
+            
+            // 도넛 차트
+            const DonutChart = ({ percent, size = 80 }) => {
+              const strokeWidth = 8;
+              const radius = (size - strokeWidth) / 2;
+              const circumference = 2 * Math.PI * radius;
+              const offset = circumference - (percent / 100) * circumference;
+              
+              return (
+                <div style={{ position: 'relative', width: size, height: size }}>
+                  <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+                    <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke="#e5e7eb" strokeWidth={strokeWidth} />
+                    <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke="#3b82f6" strokeWidth={strokeWidth} strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round" />
+                  </svg>
+                  <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}>
+                    <div style={{ fontSize: '16px', fontWeight: '700', color: '#111827' }}>{percent}%</div>
+                  </div>
+                </div>
+              );
+            };
+            
+            // 개인 상세 모달 state
+            // selectedPerson moved to top
+            
+            // 전체 영업 현황 (CRM 데이터 기반)
+            // 전체 영업 현황 (파이프라인 데이터 기반)
+            const totalSalesStats = getPipelineSalesStats(yearFilteredPipeline);
+            const totalSuiStats = getPipelineSuiStats(yearFilteredPipeline);
+            const totalFunnel = getPipelineFunnel(yearFilteredPipeline);
+            const totalConversion = getConversionRate(yearFilteredPipeline, yearFilteredPt);
+            const totalExpectedRev = getExpectedRevenue(yearFilteredPipeline);
+            
+            // 년도 필터링 함수
+            const filterByYear = (dataList, yearField = 'date') => {
+              if (mainYearFilter === 'all') return dataList;
+              return dataList.filter(item => {
+                const dateValue = item[yearField] || item.createdDate || '';
+                if (!dateValue) return false;
+                return dateValue.startsWith(mainYearFilter);
+              });
+            };
+            
+            // 년도 필터 적용된 PT 데이터
+            const filteredPtByYear = filterByYear(ptSchedules, 'date');
+            const filteredSuiByYear = filterByYear(suiList, 'date');
+            const filteredRawSalesByYear = filterByYear(rawSalesData, 'createdDate');
+            
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                
+                {/* 년도 필터 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>년도</span>
+                  <select 
+                    value={mainYearFilter} 
+                    onChange={e => setMainYearFilter(e.target.value)} 
+                    style={{ 
+                      padding: '10px 16px', 
+                      borderRadius: '8px', 
+                      border: '1px solid #d1d5db', 
+                      fontSize: '14px', 
+                      fontWeight: '500',
+                      color: '#374151', 
+                      background: 'white',
+                      cursor: 'pointer',
+                      minWidth: '120px'
+                    }}
+                  >
+                    <option value="all">전체</option>
+                    <option value="2024">2024년</option>
+                    <option value="2025">2025년</option>
+                    <option value="2026">2026년</option>
+                    <option value="2027">2027년</option>
+                    <option value="2028">2028년</option>
+                    <option value="2029">2029년</option>
+                    <option value="2030">2030년</option>
+                  </select>
+                </div>
+                
+                {/* 상단 3개 카드 */}
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: '16px' }}>
+                  
+                  {/* 영업 현황 - 파이프라인 데이터 기반 */}
+                  <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '1px solid #e5e7eb' }}>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '16px' }}>영업 현황</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                      <DonutChart percent={totalSalesStats.progressRate} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', cursor: 'help' }} title={`[영업 전체 ${pipeAll.length}건]\n${pipeTip(pipeAll)}`}>
+                          <span style={{ fontSize: '13px', color: '#6b7280' }}>건수</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#111827' }}>{totalSalesStats.total}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', cursor: 'help' }} title={`[매출 상세 — 계약/수주 단계 ${pipeContract.length}건]\n${pipeTip(pipeContract, true)}`}>
+                          <span style={{ fontSize: '13px', color: '#6b7280' }}>매출</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#111827' }}>{(totalSalesStats.revenue / 100000000).toFixed(1)}억</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', cursor: 'help' }} title={`[진행률 = 계약·수주 ${pipeContract.length}건 / 전체 ${pipeAll.length}건]\n\n계약·수주 단계:\n${pipeTip(pipeContract, true)}`}>
+                          <span style={{ fontSize: '13px', color: '#6b7280' }}>진행률</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#111827' }}>{totalSalesStats.progressRate}%</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', cursor: 'help' }} title={`[승 ${pipeWon.length}건]\n${pipeTip(pipeWon, true)}\n\n[패 ${pipeLost.length}건]\n${pipeTip(pipeLost, true)}`}>
+                          <span style={{ fontSize: '13px', color: '#6b7280' }}>승/패</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#111827' }}>{totalSalesStats.winRate}% / {totalSalesStats.lossRate}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* 수의계약 - 파이프라인 계약/수주 단계 기반 */}
+                  <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '1px solid #e5e7eb' }}>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '16px' }}>수의계약</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                      <DonutChart percent={yearFilteredPipeline.length > 0 ? Math.round(totalSuiStats.count / yearFilteredPipeline.length * 100) : 0} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', cursor: 'help' }} title={`[수의계약 ${pipeContract.length}건 — 계약/수주 단계]\n${pipeTip(pipeContract)}`}>
+                          <span style={{ fontSize: '13px', color: '#6b7280' }}>건수</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#111827' }}>{totalSuiStats.count}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', cursor: 'help' }} title={`[수의계약 매출 상세]\n${pipeTip(pipeContract, true)}`}>
+                          <span style={{ fontSize: '13px', color: '#6b7280' }}>매출</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#111827' }}>{(totalSuiStats.revenue / 100000000).toFixed(1)}억</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* PT - 승/패/무 표시 */}
+                  <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '1px solid #e5e7eb' }}>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '16px' }}>PT</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                      <DonutChart percent={totalWinRate} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', cursor: 'help' }} title={`[PT 전체 ${totalPt}건]\n${ptTip(yearFilteredPt, null)}`}>
+                          <span style={{ fontSize: '13px', color: '#6b7280' }}>건수</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#111827' }}>{totalPt}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', cursor: 'help' }} title={`[PT 승 ${totalWins}건]\n${ptTip(yearFilteredPt, '승')}`}>
+                          <span style={{ fontSize: '13px', color: '#3b82f6' }}>승</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#3b82f6' }}>{totalWins}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', cursor: 'help' }} title={`[PT 패 ${totalLoss}건]\n${ptTip(yearFilteredPt, '패')}`}>
+                          <span style={{ fontSize: '13px', color: '#ef4444' }}>패</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#ef4444' }}>{totalLoss}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', cursor: 'help' }} title={`[PT 무 ${totalDraw}건]\n${ptTip(yearFilteredPt, '무')}`}>
+                          <span style={{ fontSize: '13px', color: '#6b7280' }}>무</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#6b7280' }}>{totalDraw}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 신규 KPI 3개 카드: 파이프라인 진행률 / 전환율 / 예상매출 */}
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: '16px' }}>
+                  {/* 파이프라인 진행률 */}
+                  <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '1px solid #e5e7eb' }}>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '16px' }}>파이프라인 진행률</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                      <DonutChart percent={totalFunnel.contractRate} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', cursor: 'help' }} title={`[전체 파이프라인 ${pipeAll.length}건]\n${pipeTip(pipeAll)}`}>
+                          <span style={{ fontSize: '13px', color: '#6b7280' }}>전체</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#111827' }}>{totalFunnel.total}건</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', cursor: 'help' }} title={`[PT진행 ${pipeCompete.length}건 — 경쟁/계약/수주 단계]\n${pipeTip(pipeCompete)}`}>
+                          <span style={{ fontSize: '13px', color: '#f59e0b' }}>PT진행</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#f59e0b' }}>{totalFunnel.ptReached}건 ({totalFunnel.ptRate}%)</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', cursor: 'help' }} title={`[계약 ${pipeContract.length}건 — 계약/수주 단계]\n${pipeTip(pipeContract, true)}`}>
+                          <span style={{ fontSize: '13px', color: '#8b5cf6' }}>계약</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#8b5cf6' }}>{totalFunnel.contracted}건 ({totalFunnel.contractRate}%)</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* PT → 계약 전환율 */}
+                  <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '1px solid #e5e7eb' }}>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '16px' }}>PT→계약 전환율</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                      <DonutChart percent={totalConversion.conversionRate} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', cursor: 'help' }} title={`[PT결과 있는 건 ${totalConversion.ptWithResult}건 — 승/패/무 결과가 있는 PT]\n${ptTip(yearFilteredPt.filter(s => s.results && Object.values(s.results).some(r => r === '승' || r === '패' || r === '무')), null)}`}>
+                          <span style={{ fontSize: '13px', color: '#6b7280' }}>PT결과</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#111827' }}>{totalConversion.ptWithResult}건</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', cursor: 'help' }} title={`[PT승률 = 승 ${totalConversion.ptWins}건 / 결과 ${totalConversion.ptWithResult}건]\n\nPT 승 목록:\n${ptTip(yearFilteredPt, '승')}`}>
+                          <span style={{ fontSize: '13px', color: '#3b82f6' }}>PT승률</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#3b82f6' }}>{totalConversion.ptWinRate}%</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', cursor: 'help' }} title={`[계약전환 = 계약/수주 ${totalConversion.contracts}건 / PT결과 ${totalConversion.ptWithResult}건]\n\n계약/수주 단계:\n${pipeTip(pipeContract, true)}`}>
+                          <span style={{ fontSize: '13px', color: '#10b981' }}>계약전환</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#10b981' }}>{totalConversion.contracts}건 ({totalConversion.conversionRate}%)</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 예상매출 */}
+                  <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '1px solid #e5e7eb' }}>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '16px' }}>예상매출</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                      <DonutChart percent={totalExpectedRev.totalExpected > 0 ? Math.min(100, Math.round(totalExpectedRev.contractedRevenue / totalExpectedRev.totalExpected * 100)) : 0} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', cursor: 'help' }} title={`[계약확정 ${totalExpectedRev.contractedCount}건 — 계약/수주 단계]\n${pipeTip(pipeContract, true)}`}>
+                          <span style={{ fontSize: '13px', color: '#8b5cf6' }}>계약확정</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#111827' }}>{(totalExpectedRev.contractedRevenue / 100000000).toFixed(1)}억 ({totalExpectedRev.contractedCount}건)</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6', cursor: 'help' }} title={`[고확률 ${totalExpectedRev.highProbCount}건 — 경쟁/입찰/공사임박 단계]\n${pipeTip(pipeCompeteOnly, true)}`}>
+                          <span style={{ fontSize: '13px', color: '#f59e0b' }}>고확률</span>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#111827' }}>{(totalExpectedRev.highProbRevenue / 100000000).toFixed(1)}억 ({totalExpectedRev.highProbCount}건)</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', cursor: 'help' }} title={`[예상합계 산출식]\n계약확정: ${(totalExpectedRev.contractedRevenue / 100000000).toFixed(2)}억\n+ 고확률×50%: ${(totalExpectedRev.highProbRevenue * 0.5 / 100000000).toFixed(2)}억\n= 합계: ${(totalExpectedRev.totalExpected / 100000000).toFixed(2)}억`}>
+                          <span style={{ fontSize: '13px', color: '#10b981' }}>예상합계</span>
+                          <span style={{ fontSize: '14px', fontWeight: '700', color: '#10b981' }}>{(totalExpectedRev.totalExpected / 100000000).toFixed(1)}억</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 팀별 현황 - 모든 사용자에게 표시 */}
+                <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '1px solid #e5e7eb' }}>
+                    <div style={{ marginBottom: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                        <span style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>팀별 현황</span>
+                        <span style={{ fontSize: '11px', color: '#9ca3af' }}>파이프라인 데이터 기반 (Relate.so)</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                        {['전체', '석민이앤씨', 'POUR솔루션', '아파트스퀘어'].map(filter => (
+                          <button key={filter} onClick={() => setSalesFilter(filter)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', fontSize: '12px', fontWeight: '500', cursor: 'pointer', background: salesFilter === filter ? '#374151' : '#f3f4f6', color: salesFilter === filter ? 'white' : '#6b7280' }}>
+                            {filter}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '800px' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+                            <th rowSpan="2" style={{ padding: '8px', textAlign: 'left', color: '#374151', fontWeight: '600', verticalAlign: 'middle' }}>팀</th>
+                            <th colSpan="4" style={{ padding: '8px', textAlign: 'center', color: '#374151', fontWeight: '600', borderBottom: '1px solid #e5e7eb', background: '#fef2f2' }}>영업</th>
+                            <th colSpan="2" style={{ padding: '8px', textAlign: 'center', color: '#374151', fontWeight: '600', borderBottom: '1px solid #e5e7eb', background: '#f0fdf4' }}>수의계약</th>
+                            <th colSpan="4" style={{ padding: '8px', textAlign: 'center', color: '#374151', fontWeight: '600', borderBottom: '1px solid #e5e7eb', background: '#eff6ff' }}>PT</th>
+                          </tr>
+                          <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                            <th style={{ padding: '6px', textAlign: 'center', color: '#6b7280', fontWeight: '500', background: '#fef2f2' }}>건수</th>
+                            <th style={{ padding: '6px', textAlign: 'center', color: '#6b7280', fontWeight: '500', background: '#fef2f2' }}>매출</th>
+                            <th style={{ padding: '6px', textAlign: 'center', color: '#6b7280', fontWeight: '500', background: '#fef2f2' }}>진행률</th>
+                            <th style={{ padding: '6px', textAlign: 'center', color: '#6b7280', fontWeight: '500', background: '#fef2f2' }}>승/패</th>
+                            <th style={{ padding: '6px', textAlign: 'center', color: '#6b7280', fontWeight: '500', background: '#f0fdf4' }}>건수</th>
+                            <th style={{ padding: '6px', textAlign: 'center', color: '#6b7280', fontWeight: '500', background: '#f0fdf4' }}>매출</th>
+                            <th style={{ padding: '6px', textAlign: 'center', color: '#6b7280', fontWeight: '500', background: '#eff6ff' }}>건수</th>
+                            <th style={{ padding: '6px', textAlign: 'center', color: '#6b7280', fontWeight: '500', background: '#eff6ff' }}>승</th>
+                            <th style={{ padding: '6px', textAlign: 'center', color: '#6b7280', fontWeight: '500', background: '#eff6ff' }}>패</th>
+                            <th style={{ padding: '6px', textAlign: 'center', color: '#6b7280', fontWeight: '500', background: '#eff6ff' }}>무</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[
+                            { name: '영업1팀', members: team1, stats: team1Stats },
+                            { name: '영업2팀', members: team2, stats: team2Stats },
+                            { name: '영업3팀', members: team3, stats: team3Stats }
+                          ].map((team, idx) => {
+                            const tp = filterPipelineByAssignee(yearFilteredPipeline, team.members);
+                            const tpContract = tp.filter(i => { const gk = getStageGroupKey(i.stage); return gk === 'contract' || gk === 'won'; });
+                            const tpWon = tp.filter(i => i.stageType === 'won');
+                            const tpLost = tp.filter(i => i.stageType === 'lost');
+                            const tPt = filterByAssignee(yearFilteredPt, team.members);
+                            return (
+                            <tr key={team.name} style={{ borderBottom: idx < 2 ? '1px solid #f3f4f6' : 'none' }}>
+                              <td style={{ padding: '10px 8px' }}>
+                                <div style={{ fontWeight: '600', color: '#111827' }}>{team.name}</div>
+                                <div style={{ fontSize: '10px', color: '#9ca3af' }}>{team.members.join(', ')}</div>
+                              </td>
+                              <td style={{ padding: '10px 4px', textAlign: 'center', color: '#111827', cursor: 'help' }} title={`[${team.name} 영업 ${tp.length}건]\n${pipeTip(tp)}`}>{team.stats.sales.total}</td>
+                              <td style={{ padding: '10px 4px', textAlign: 'center', color: '#111827', cursor: 'help' }} title={`[${team.name} 매출 — 계약/수주 ${tpContract.length}건]\n${pipeTip(tpContract, true)}`}>{(team.stats.sales.revenue / 100000000).toFixed(1)}억</td>
+                              <td style={{ padding: '10px 4px', textAlign: 'center', color: '#111827', cursor: 'help' }} title={`계약·수주 ${tpContract.length}건 / 전체 ${tp.length}건`}>{team.stats.sales.progressRate}%</td>
+                              <td style={{ padding: '10px 4px', textAlign: 'center', color: '#111827', cursor: 'help' }} title={`[승 ${tpWon.length}건]\n${pipeTip(tpWon, true)}\n\n[패 ${tpLost.length}건]\n${pipeTip(tpLost, true)}`}><span style={{ color: '#3b82f6' }}>{team.stats.sales.winRate}%</span>/<span style={{ color: '#ef4444' }}>{team.stats.sales.lossRate}%</span></td>
+                              <td style={{ padding: '10px 4px', textAlign: 'center', color: '#111827', cursor: 'help' }} title={`[${team.name} 수의계약 ${tpContract.length}건]\n${pipeTip(tpContract)}`}>{team.stats.sui}</td>
+                              <td style={{ padding: '10px 4px', textAlign: 'center', color: '#111827', cursor: 'help' }} title={`[${team.name} 수의계약 매출]\n${pipeTip(tpContract, true)}`}>{(team.stats.suiRev / 100000000).toFixed(1)}억</td>
+                              <td style={{ padding: '10px 4px', textAlign: 'center', color: '#111827', cursor: 'help' }} title={`[${team.name} PT ${tPt.length}건]\n${ptTip(tPt, null)}`}>{team.stats.pt}</td>
+                              <td style={{ padding: '10px 4px', textAlign: 'center', color: '#3b82f6', fontWeight: '600', cursor: 'help' }} title={`[${team.name} PT승 ${team.stats.wins}건]\n${ptTip(tPt, '승')}`}>{team.stats.wins}</td>
+                              <td style={{ padding: '10px 4px', textAlign: 'center', color: '#ef4444', fontWeight: '600', cursor: 'help' }} title={`[${team.name} PT패 ${team.stats.loss}건]\n${ptTip(tPt, '패')}`}>{team.stats.loss}</td>
+                              <td style={{ padding: '10px 4px', textAlign: 'center', color: '#f59e0b', fontWeight: '600', cursor: 'help' }} title={`[${team.name} PT무 ${team.stats.draw}건]\n${ptTip(tPt, '무')}`}>{team.stats.draw}</td>
+                            </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                
+                {/* 개인별 현황 - 모든 사용자에게 표시 */}
+                {(() => {
+                  // 전체/개인 영업 통계 (파이프라인 데이터 기반)
+                  const getFilteredPersonalStats = (name) => {
+                    let pipeData = yearFilteredPipeline;
+                    if (name) pipeData = filterPipelineByAssignee(pipeData, [name]);
+                    if (salesFilter !== '전체') {
+                      pipeData = pipeData.filter(i => (i.brandList || '').trim() === salesFilter);
+                    }
+                    return getPipelineSalesStats(pipeData);
+                  };
+
+                  const currentStats = getFilteredPersonalStats(selectedPerson);
+                  // 개인별 파이프라인 항목 (툴팁용)
+                  const personalPipe = (() => {
+                    let d = yearFilteredPipeline;
+                    if (selectedPerson) d = filterPipelineByAssignee(d, [selectedPerson]);
+                    if (salesFilter !== '전체') d = d.filter(i => (i.brandList || '').trim() === salesFilter);
+                    return d;
+                  })();
+                  const personalPipeContract = personalPipe.filter(i => { const gk = getStageGroupKey(i.stage); return gk === 'contract' || gk === 'won'; });
+                  const personalPipeWon = personalPipe.filter(i => i.stageType === 'won');
+                  const personalPipeLost = personalPipe.filter(i => i.stageType === 'lost');
+                  const currentSuiStats = (() => {
+                    let pipeData = yearFilteredPipeline;
+                    if (selectedPerson) pipeData = filterPipelineByAssignee(pipeData, [selectedPerson]);
+                    return getPipelineSuiStats(pipeData);
+                  })();
+                  const personalSuiPipe = (() => {
+                    let d = yearFilteredPipeline;
+                    if (selectedPerson) d = filterPipelineByAssignee(d, [selectedPerson]);
+                    return d.filter(i => { const gk = getStageGroupKey(i.stage); return gk === 'contract' || gk === 'won'; });
+                  })();
+                  const currentPt = selectedPerson ? filterByAssignee(yearFilteredPt, [selectedPerson]) : yearFilteredPt;
+                  const ptWins = currentPt.filter(s => s.results && Object.values(s.results).some(r => r === '승')).length;
+                  const ptLoss = currentPt.filter(s => s.results && Object.values(s.results).some(r => r === '패')).length;
+                  const ptDraw = currentPt.filter(s => s.results && Object.values(s.results).some(r => r === '무')).length;
+                  const ptWithResult = currentPt.filter(s => s.results && Object.values(s.results).some(r => r === '승' || r === '패' || r === '무')).length;
+                  
+                  return (
+                    <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '1px solid #e5e7eb' }}>
+                      {/* 헤더: 제목 + 담당자 선택 */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>개인별 현황</span>
+                          <select value={selectedPerson || ''} onChange={(e) => setSelectedPerson(e.target.value || null)} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '13px', color: '#374151', background: 'white' }}>
+                            <option value="">전체</option>
+                            {allMembers.map(name => <option key={name} value={name}>{name}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                      
+                      {/* 2열 그리드 */}
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '16px' }}>
+                        
+                        {/* 영업 카드 */}
+                        <div style={{ background: 'white', borderRadius: '12px', padding: '16px', border: '1px solid #e5e7eb' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
+                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }}></div>
+                            <span style={{ fontSize: '13px', fontWeight: '600', color: '#374151' }}>영업</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            {/* 도넛 차트 */}
+                            <div style={{ position: 'relative', width: '70px', height: '70px' }}>
+                              <svg width="70" height="70" style={{ transform: 'rotate(-90deg)' }}>
+                                <circle cx="35" cy="35" r="28" fill="none" stroke="#e5e7eb" strokeWidth="7" />
+                                <circle cx="35" cy="35" r="28" fill="none" stroke="#3b82f6" strokeWidth="7" strokeDasharray={2 * Math.PI * 28} strokeDashoffset={2 * Math.PI * 28 * (1 - currentStats.progressRate / 100)} strokeLinecap="round" />
+                              </svg>
+                              <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}>
+                                <div style={{ fontSize: '14px', fontWeight: '700', color: '#111827' }}>{currentStats.progressRate}%</div>
+                              </div>
+                            </div>
+                            {/* 통계 */}
+                            <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                              <div style={{ cursor: 'help' }} title={`[영업 전체 ${personalPipe.length}건]\n${pipeTip(personalPipe)}`}><div style={{ fontSize: '11px', color: '#9ca3af' }}>건수</div><div style={{ fontSize: '15px', fontWeight: '700', color: '#111827' }}>{currentStats.total}건</div></div>
+                              <div style={{ cursor: 'help' }} title={`[매출 — 계약/수주 ${personalPipeContract.length}건]\n${pipeTip(personalPipeContract, true)}`}><div style={{ fontSize: '11px', color: '#9ca3af' }}>매출</div><div style={{ fontSize: '15px', fontWeight: '700', color: '#111827' }}>{(currentStats.revenue / 100000000).toFixed(1)}억</div></div>
+                              <div style={{ cursor: 'help' }} title={`계약·수주 ${personalPipeContract.length}건 / 전체 ${personalPipe.length}건`}><div style={{ fontSize: '11px', color: '#9ca3af' }}>진행률</div><div style={{ fontSize: '15px', fontWeight: '700', color: '#111827' }}>{currentStats.progressRate}%</div></div>
+                              <div style={{ cursor: 'help' }} title={`[승 ${personalPipeWon.length}건]\n${pipeTip(personalPipeWon, true)}\n\n[패 ${personalPipeLost.length}건]\n${pipeTip(personalPipeLost, true)}`}><div style={{ fontSize: '11px', color: '#9ca3af' }}>승/패</div><div style={{ fontSize: '15px', fontWeight: '700' }}><span style={{ color: '#3b82f6' }}>{currentStats.winRate}%</span>/<span style={{ color: '#ef4444' }}>{currentStats.lossRate}%</span></div></div>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* 수의계약 카드 */}
+                        <div style={{ background: 'white', borderRadius: '12px', padding: '16px', border: '1px solid #e5e7eb' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
+                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }}></div>
+                            <span style={{ fontSize: '13px', fontWeight: '600', color: '#374151' }}>수의계약</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            <div style={{ position: 'relative', width: '70px', height: '70px' }}>
+                              <svg width="70" height="70" style={{ transform: 'rotate(-90deg)' }}>
+                                <circle cx="35" cy="35" r="28" fill="none" stroke="#e5e7eb" strokeWidth="7" />
+                                <circle cx="35" cy="35" r="28" fill="none" stroke="#10b981" strokeWidth="7" strokeDasharray={2 * Math.PI * 28} strokeDashoffset={0} strokeLinecap="round" />
+                              </svg>
+                              <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}>
+                                <div style={{ fontSize: '14px', fontWeight: '700', color: '#111827' }}>{currentSuiStats.count}건</div>
+                              </div>
+                            </div>
+                            <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                              <div style={{ cursor: 'help' }} title={`[수의계약 ${personalSuiPipe.length}건]\n${pipeTip(personalSuiPipe)}`}><div style={{ fontSize: '11px', color: '#9ca3af' }}>건수</div><div style={{ fontSize: '15px', fontWeight: '700', color: '#111827' }}>{currentSuiStats.count}건</div></div>
+                              <div style={{ cursor: 'help' }} title={`[수의계약 매출 상세]\n${pipeTip(personalSuiPipe, true)}`}><div style={{ fontSize: '11px', color: '#9ca3af' }}>매출</div><div style={{ fontSize: '15px', fontWeight: '700', color: '#111827' }}>{(currentSuiStats.revenue / 100000000).toFixed(1)}억</div></div>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* PT 카드 */}
+                        <div onClick={() => { const target = selectedPerson || 'all'; setSelectedAssignee(target); setShowDashboard(false); setShowPerformance(true); setShowMyPage(false); setShowMeetingView(false); setShowSalesView(false); setSettlementFilter('all'); }} style={{ background: 'white', borderRadius: '12px', padding: '16px', border: '1px solid #e5e7eb', gridColumn: isMobile ? '1' : '1 / -1', cursor: 'pointer', transition: 'all 0.15s' }} onMouseOver={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.borderColor = '#3b82f6'; }} onMouseOut={e => { e.currentTarget.style.background = 'white'; e.currentTarget.style.borderColor = '#e5e7eb'; }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}></div>
+                              <span style={{ fontSize: '13px', fontWeight: '600', color: '#374151' }}>PT</span>
+                            </div>
+                            <span style={{ fontSize: '12px', color: '#9ca3af' }}>{selectedPerson || '전체'} 실적보기 ›</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            <div style={{ position: 'relative', width: '70px', height: '70px' }}>
+                              <svg width="70" height="70" style={{ transform: 'rotate(-90deg)' }}>
+                                <circle cx="35" cy="35" r="28" fill="none" stroke="#e5e7eb" strokeWidth="7" />
+                                <circle cx="35" cy="35" r="28" fill="none" stroke="#3b82f6" strokeWidth="7" strokeDasharray={2 * Math.PI * 28} strokeDashoffset={2 * Math.PI * 28 * (1 - (ptWithResult > 0 ? ptWins / ptWithResult : 0))} strokeLinecap="round" />
+                              </svg>
+                              <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}>
+                                <div style={{ fontSize: '14px', fontWeight: '700', color: '#111827' }}>{ptWithResult > 0 ? Math.round(ptWins / ptWithResult * 100) : 0}%</div>
+                              </div>
+                            </div>
+                            <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+                              <div style={{ cursor: 'help' }} title={`[PT 전체 ${currentPt.length}건]\n${ptTip(currentPt, null)}`}><div style={{ fontSize: '11px', color: '#9ca3af' }}>건수</div><div style={{ fontSize: '15px', fontWeight: '700', color: '#111827' }}>{currentPt.length}건</div></div>
+                              <div style={{ cursor: 'help' }} title={`[PT 승 ${ptWins}건]\n${ptTip(currentPt, '승')}`}><div style={{ fontSize: '11px', color: '#9ca3af' }}>승</div><div style={{ fontSize: '15px', fontWeight: '700', color: '#3b82f6' }}>{ptWins}건</div></div>
+                              <div style={{ cursor: 'help' }} title={`[PT 패 ${ptLoss}건]\n${ptTip(currentPt, '패')}`}><div style={{ fontSize: '11px', color: '#9ca3af' }}>패</div><div style={{ fontSize: '15px', fontWeight: '700', color: '#ef4444' }}>{ptLoss}건</div></div>
+                              <div style={{ cursor: 'help' }} title={`[PT 무 ${ptDraw}건]\n${ptTip(currentPt, '무')}`}><div style={{ fontSize: '11px', color: '#9ca3af' }}>무</div><div style={{ fontSize: '15px', fontWeight: '700', color: '#f59e0b' }}>{ptDraw}건</div></div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+                
+                {/* 하단: 오늘 일정 + 최근 영업일지 */}
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '16px' }}>
+                  
+                  {/* 오늘 일정 */}
+                  <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '1px solid #e5e7eb' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>오늘 일정</span>
+                      <button onClick={() => setShowDashboard(false)} style={{ fontSize: '12px', color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer' }}>전체보기</button>
+                    </div>
+                    {(() => {
+                      const today = new Date().toISOString().split('T')[0];
+                      const todayList = [...ptSchedules, ...briefingSchedules, ...personalSchedules].filter(s => s.date === today);
+                      if (todayList.length === 0) return <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af', fontSize: '13px' }}>오늘 일정이 없습니다</div>;
+                      return todayList.slice(0, 5).map((s, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: i < Math.min(todayList.length, 5) - 1 ? '1px solid #f3f4f6' : 'none' }}>
+                          <span style={{ fontSize: '13px', color: '#111827' }}>{s.siteName || s.title}</span>
+                          <span style={{ fontSize: '12px', color: '#9ca3af' }}>{s.time || '-'}</span>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                  
+                  {/* 최근 영업일지 */}
+                  <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: '1px solid #e5e7eb' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>최근 영업일지</span>
+                      <button onClick={() => { setShowDashboard(false); setShowSalesView(true); }} style={{ fontSize: '12px', color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer' }}>전체보기</button>
+                    </div>
+                    {salesSchedules.length === 0 ? <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af', fontSize: '13px' }}>영업일지가 없습니다</div> : (
+                      salesSchedules.sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 5).map((s, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: i < Math.min(salesSchedules.length, 5) - 1 ? '1px solid #f3f4f6' : 'none' }}>
+                          <span style={{ fontSize: '13px', color: '#111827' }}>{s.company}</span>
+                          <span style={{ fontSize: '12px', color: '#9ca3af' }}>{s.date}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 파이프라인 */}
+          {!showDashboard && showSalesView && (() => {
+            // 칸반 단계 그룹 정의
+            const kanbanGroups = [
+              { key: 'early', label: '초기단계', color: '#6b7280', bgColor: '#f9fafb', stages: ['대기고객', '유대관계 강화', '컨설팅 자료 발송완료', '침묵 관리 단계'] },
+              { key: 'consulting', label: '컨설팅', color: '#3b82f6', bgColor: '#eff6ff', stages: ['컨설팅 설계단계', '2차 미팅', '견적서 발송'] },
+              { key: 'compete', label: '경쟁/PT', color: '#f59e0b', bgColor: '#fffbeb', stages: ['경쟁 단계', '입찰단계', '공사 임박 단계'] },
+              { key: 'contract', label: '계약/시공', color: '#8b5cf6', bgColor: '#f5f3ff', stages: ['계약단계', '시공단계', '공사 진행', '준공단계', '인계'] },
+              { key: 'won', label: '수주 성공', color: '#10b981', bgColor: '#ecfdf5', stages: ['수주 성공', '공사완료'] },
+              { key: 'lost', label: '수주 실패', color: '#ef4444', bgColor: '#fef2f2', stages: ['수주 실패'] }
+            ];
+
+            // 필터링
+            const filtered = pipelineData.filter(item => {
+              if (pipelineYearFilter !== 'all') {
+                const itemYear = String(item['공사계획년도'] || '').trim();
+                if (!itemYear && pipelineYearFilter !== 'all') return false;
+                if (itemYear !== pipelineYearFilter) return false;
+              }
+              if (pipelineBrandFilter !== 'all' && item.brandList !== pipelineBrandFilter) return false;
+              if (pipelineAssigneeFilter !== 'all' && item.assigneeName !== pipelineAssigneeFilter) return false;
+              if (pipelineStageTypeFilter !== 'all' && item.stageType !== pipelineStageTypeFilter) return false;
+              if (pipelineSearchTerm) {
+                const q = pipelineSearchTerm.toLowerCase();
+                return (item.orgName || '').toLowerCase().includes(q) || (item.assigneeName || '').toLowerCase().includes(q) || (item.stage || '').toLowerCase().includes(q);
+              }
+              return true;
+            });
+
+            // 정렬 (리스트 뷰용)
+            const sorted = [...filtered].sort((a, b) => {
+              let va = a[pipelineSortField] || '';
+              let vb = b[pipelineSortField] || '';
+              if (pipelineSortField === 'dealValue') { va = Number(va) || 0; vb = Number(vb) || 0; }
+              else { va = String(va).toLowerCase(); vb = String(vb).toLowerCase(); }
+              if (va < vb) return pipelineSortDir === 'asc' ? -1 : 1;
+              if (va > vb) return pipelineSortDir === 'asc' ? 1 : -1;
+              return 0;
+            });
+
+            // 통계
+            const totalCount = filtered.length;
+            const totalValue = filtered.reduce((s, i) => s + (Number(i.dealValue) || 0), 0);
+            const activeCount = filtered.filter(i => i.stageType === 'active').length;
+            const wonCount = filtered.filter(i => i.stageType === 'won').length;
+            const lostCount = filtered.filter(i => i.stageType === 'lost').length;
+
+            // 고유값 목록
+            const brands = [...new Set(pipelineData.map(i => i.brandList).filter(Boolean))];
+            const assignees = [...new Set(pipelineData.map(i => i.assigneeName).filter(Boolean))].sort();
+
+            const formatValue = (v) => {
+              if (v >= 100000000) return (v / 100000000).toFixed(1) + '억';
+              if (v >= 10000) return (v / 10000).toFixed(0) + '만';
+              return v.toLocaleString();
+            };
+
+            const handleSort = (field) => {
+              if (pipelineSortField === field) setPipelineSortDir(d => d === 'asc' ? 'desc' : 'asc');
+              else { setPipelineSortField(field); setPipelineSortDir('asc'); }
+            };
+
+            const daysAgo = (dateStr) => {
+              if (!dateStr) return '-';
+              const d = new Date(dateStr);
+              const diff = Math.floor((new Date() - d) / 86400000);
+              if (diff === 0) return '오늘';
+              if (diff === 1) return '어제';
+              if (diff < 30) return diff + '일 전';
+              return Math.floor(diff / 30) + '개월 전';
+            };
+
+            const stageTypeLabel = { active: '진행', won: '수주', lost: '실패' };
+            const stageTypeColor = { active: '#3b82f6', won: '#10b981', lost: '#ef4444' };
+
+            // 칸반 그룹에 없는 stage 찾기 (기타)
+            const allMappedStages = kanbanGroups.flatMap(g => g.stages);
+            const getGroupForStage = (stage) => {
+              for (const g of kanbanGroups) {
+                if (g.stages.some(s => (stage || '').includes(s) || s.includes(stage || ''))) return g;
+              }
+              return kanbanGroups[0]; // 기본: 초기단계
+            };
+
+            return (
+              <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
+                {/* 헤더 */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <h2 style={{ fontSize: '22px', fontWeight: '800', color: '#111827', margin: 0, letterSpacing: '-0.5px' }}>
+                      {pipelineAssigneeFilter !== 'all' ? `${pipelineAssigneeFilter} 파이프라인` : '전체 파이프라인'}
+                    </h2>
+                    {pipelineAssigneeFilter !== 'all' && (
+                      <button onClick={() => { setPipelineAssigneeFilter('all'); setPipelineSource('global'); }} style={{ padding: '4px 12px', borderRadius: '16px', border: '1px solid #d1d5db', fontSize: '12px', fontWeight: '600', cursor: 'pointer', color: '#6b7280', background: '#f9fafb', display: 'inline-flex', alignItems: 'center', gap: '4px', transition: 'all 0.2s' }}>
+                        전체 보기 ✕
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    {/* 뷰 모드 토글 */}
+                    <div style={{ display: 'flex', background: '#f3f4f6', borderRadius: '10px', padding: '3px' }}>
+                      {[{ key: 'kanban', label: '칸반' }, { key: 'list', label: '리스트' }].map(v => (
+                        <button key={v.key} onClick={() => setPipelineViewMode(v.key)} style={{ padding: '7px 16px', borderRadius: '8px', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: pipelineViewMode === v.key ? 'white' : 'transparent', color: pipelineViewMode === v.key ? '#111827' : '#9ca3af', boxShadow: pipelineViewMode === v.key ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', transition: 'all 0.2s' }}>{v.label}</button>
+                      ))}
+                    </div>
+                    {/* 릴레잇 바로가기 */}
+                    <a href="https://app.relate.so" target="_blank" rel="noopener noreferrer" style={{ padding: '7px 14px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '13px', fontWeight: '600', cursor: 'pointer', color: '#3b82f6', background: 'white', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      🔗 릴레잇
+                    </a>
+                    {/* JSON 업로드 */}
+                    <label style={{ padding: '7px 14px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '13px', fontWeight: '600', cursor: 'pointer', color: '#6b7280', background: 'white' }}>
+                      📤 업로드
+                      <input type="file" accept=".json" onChange={handlePipelineJsonUpload} style={{ display: 'none' }} />
+                    </label>
+                  </div>
+                </div>
+
+                {/* 년도 필터 */}
+                <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', flexWrap: 'wrap', overflowX: 'auto', paddingBottom: '4px' }}>
+                  {['all', '2023', '2024', '2025', '2026', '2027', '2028'].map(y => (
+                    <button key={y} onClick={() => setPipelineYearFilter(y)} style={{ padding: '7px 16px', borderRadius: '20px', border: pipelineYearFilter === y ? 'none' : '1px solid #e5e7eb', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: pipelineYearFilter === y ? '#111827' : 'white', color: pipelineYearFilter === y ? 'white' : '#6b7280', whiteSpace: 'nowrap', transition: 'all 0.2s', flexShrink: 0 }}>{y === 'all' ? '전체' : y}</button>
+                  ))}
+                </div>
+
+                {/* 필터 바 */}
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div style={{ position: 'relative', flex: isMobile ? '1 1 100%' : '0 0 200px' }}>
+                    <input type="text" placeholder="현장명, 담당자 검색..." value={pipelineSearchTerm} onChange={e => setPipelineSearchTerm(e.target.value)} style={{ width: '100%', padding: '9px 12px 9px 34px', borderRadius: '10px', border: '1px solid #e5e7eb', fontSize: '13px', outline: 'none', background: '#fafafa' }} />
+                    <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', fontSize: '14px', color: '#9ca3af' }}>🔍</span>
+                  </div>
+                  <select value={pipelineBrandFilter} onChange={e => setPipelineBrandFilter(e.target.value)} style={{ padding: '9px 12px', borderRadius: '10px', border: '1px solid #e5e7eb', fontSize: '13px', background: 'white', color: '#374151' }}>
+                    <option value="all">전체 브랜드</option>
+                    {brands.map(b => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                  <select value={pipelineAssigneeFilter} onChange={e => setPipelineAssigneeFilter(e.target.value)} style={{ padding: '9px 12px', borderRadius: '10px', border: '1px solid #e5e7eb', fontSize: '13px', background: 'white', color: '#374151' }}>
+                    <option value="all">전체 담당자</option>
+                    {assignees.map(a => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                  <select value={pipelineStageTypeFilter} onChange={e => setPipelineStageTypeFilter(e.target.value)} style={{ padding: '9px 12px', borderRadius: '10px', border: '1px solid #e5e7eb', fontSize: '13px', background: 'white', color: '#374151' }}>
+                    <option value="all">전체 상태</option>
+                    <option value="active">진행중</option>
+                    <option value="won">수주 성공</option>
+                    <option value="lost">수주 실패</option>
+                  </select>
+                </div>
+
+                {/* 요약 카드 */}
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
+                  {[
+                    { label: '전체', value: totalCount + '건', color: '#6b7280', bg: '#f9fafb' },
+                    { label: '총 금액', value: formatValue(totalValue), color: '#3b82f6', bg: '#eff6ff' },
+                    { label: '진행중', value: activeCount + '건', color: '#f59e0b', bg: '#fffbeb' },
+                    { label: '수주/실패', value: wonCount + '/' + lostCount, color: '#10b981', bg: '#ecfdf5' }
+                  ].map((card, i) => (
+                    <div key={i} style={{ background: 'white', borderRadius: '14px', padding: '16px 18px', border: '1px solid #f0f0f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                      <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '6px', fontWeight: '500' }}>{card.label}</div>
+                      <div style={{ fontSize: '20px', fontWeight: '800', color: card.color, letterSpacing: '-0.5px' }}>{card.value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* 칸반 뷰 */}
+                {pipelineViewMode === 'kanban' && (
+                  <div style={{ overflowX: 'auto', paddingBottom: '16px' }}>
+                    <div style={{ display: 'flex', gap: '12px', minWidth: isMobile ? '1200px' : 'auto' }}>
+                      {kanbanGroups.map(group => {
+                        const groupItems = filtered.filter(item => getGroupForStage(item.stage) === group);
+                        const groupValue = groupItems.reduce((s, i) => s + (Number(i.dealValue) || 0), 0);
+                        return (
+                          <div key={group.key} style={{ flex: 1, minWidth: '200px', background: group.bgColor, borderRadius: '14px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                            {/* 컬럼 헤더 */}
+                            <div style={{ padding: '14px 14px 10px', borderBottom: '2px solid ' + group.color + '33' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                                <span style={{ fontSize: '13px', fontWeight: '700', color: group.color }}>{group.label}</span>
+                                <span style={{ fontSize: '11px', fontWeight: '600', color: 'white', background: group.color, borderRadius: '10px', padding: '2px 8px' }}>{groupItems.length}</span>
+                              </div>
+                              <div style={{ fontSize: '12px', color: '#9ca3af', fontWeight: '500' }}>{formatValue(groupValue)}</div>
+                            </div>
+                            {/* 카드 리스트 */}
+                            <div style={{ padding: '8px', maxHeight: '600px', overflowY: 'auto' }}>
+                              {groupItems.length === 0 && (
+                                <div style={{ padding: '20px', textAlign: 'center', color: '#d1d5db', fontSize: '12px' }}>데이터 없음</div>
+                              )}
+                              {groupItems.map(item => (
+                                <div key={item.id} onClick={() => setSelectedPipelineItem(item)} style={{ background: 'white', borderRadius: '10px', padding: '12px', marginBottom: '8px', cursor: 'pointer', border: '1px solid #f0f0f0', boxShadow: '0 1px 2px rgba(0,0,0,0.04)', transition: 'all 0.15s' }}
+                                  onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                                  onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,0.04)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
+                                  <div style={{ fontSize: '13px', fontWeight: '700', color: '#111827', marginBottom: '6px', lineHeight: '1.3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.orgName}</div>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                                    <span style={{ fontSize: '11px', color: '#6b7280' }}>{item.assigneeName || '-'}</span>
+                                    <span style={{ fontSize: '12px', fontWeight: '700', color: '#111827' }}>{item.dealValue ? formatValue(item.dealValue) : '-'}</span>
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                    <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '6px', background: item.brandList === '석민이앤씨' ? '#e0f2fe' : item.brandList === 'POUR솔루션' ? '#fce7f3' : '#f0fdf4', color: item.brandList === '석민이앤씨' ? '#0369a1' : item.brandList === 'POUR솔루션' ? '#be185d' : '#15803d', fontWeight: '600' }}>{item.brandList || '-'}</span>
+                                    {item.stage && <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '6px', background: '#f3f4f6', color: '#6b7280' }}>{item.stage}</span>}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* 리스트 뷰 */}
+                {pipelineViewMode === 'list' && (
+                  <>
+                    {!isMobile ? (
+                      <div style={{ background: 'white', borderRadius: '14px', border: '1px solid #e5e7eb', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ background: '#fafafa' }}>
+                              {[
+                                { field: 'orgName', label: '현장명', width: '25%' },
+                                { field: 'stage', label: '단계', width: '13%' },
+                                { field: 'assigneeName', label: '담당자', width: '10%' },
+                                { field: 'brandList', label: '브랜드', width: '12%' },
+                                { field: '공종대분류', label: '공종', width: '12%' },
+                                { field: 'dealValue', label: '금액', width: '13%' },
+                                { field: 'lastActivityDate', label: '최근활동', width: '15%' }
+                              ].map(col => (
+                                <th key={col.field} onClick={() => handleSort(col.field)} style={{ padding: '12px 14px', textAlign: col.field === 'dealValue' ? 'right' : 'left', fontSize: '12px', fontWeight: '600', color: '#6b7280', cursor: 'pointer', userSelect: 'none', width: col.width, borderBottom: '1px solid #e5e7eb' }}>
+                                  {col.label} {pipelineSortField === col.field ? (pipelineSortDir === 'asc' ? '▲' : '▼') : ''}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sorted.map((item, idx) => (
+                              <tr key={item.id || idx} onClick={() => setSelectedPipelineItem(item)} style={{ cursor: 'pointer', borderBottom: '1px solid #f3f4f6', transition: 'background 0.15s' }}
+                                onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
+                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                                <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: '600', color: '#111827', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.orgName}</td>
+                                <td style={{ padding: '12px 14px' }}>
+                                  <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '6px', background: (stageTypeColor[item.stageType] || '#6b7280') + '15', color: stageTypeColor[item.stageType] || '#6b7280', fontWeight: '600' }}>{item.stage || '-'}</span>
+                                </td>
+                                <td style={{ padding: '12px 14px', fontSize: '13px', color: '#374151' }}>{item.assigneeName || '-'}</td>
+                                <td style={{ padding: '12px 14px' }}>
+                                  <span style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '6px', background: item.brandList === '석민이앤씨' ? '#e0f2fe' : item.brandList === 'POUR솔루션' ? '#fce7f3' : '#f0fdf4', color: item.brandList === '석민이앤씨' ? '#0369a1' : item.brandList === 'POUR솔루션' ? '#be185d' : '#15803d', fontWeight: '600' }}>{item.brandList || '-'}</span>
+                                </td>
+                                <td style={{ padding: '12px 14px', fontSize: '12px', color: '#6b7280' }}>{item['공종대분류'] || '-'}</td>
+                                <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: '700', color: '#111827', textAlign: 'right' }}>{item.dealValue ? formatValue(item.dealValue) : '-'}</td>
+                                <td style={{ padding: '12px 14px', fontSize: '12px', color: '#9ca3af' }}>{daysAgo(item.lastActivityDate)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {sorted.length === 0 && (
+                          <div style={{ padding: '40px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>데이터가 없습니다</div>
+                        )}
+                      </div>
+                    ) : (
+                      /* 모바일 카드 리스트 */
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {sorted.map((item, idx) => (
+                          <div key={item.id || idx} onClick={() => setSelectedPipelineItem(item)} style={{ background: 'white', borderRadius: '14px', padding: '14px 16px', border: '1px solid #f0f0f0', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                            <div style={{ fontSize: '14px', fontWeight: '700', color: '#111827', marginBottom: '8px' }}>{item.orgName}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                <span style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '6px', background: (stageTypeColor[item.stageType] || '#6b7280') + '15', color: stageTypeColor[item.stageType] || '#6b7280', fontWeight: '600' }}>{item.stage || '-'}</span>
+                                <span style={{ fontSize: '12px', color: '#6b7280' }}>{item.assigneeName || '-'}</span>
+                              </div>
+                              <span style={{ fontSize: '14px', fontWeight: '700', color: '#111827' }}>{item.dealValue ? formatValue(item.dealValue) : '-'}</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '6px', background: item.brandList === '석민이앤씨' ? '#e0f2fe' : item.brandList === 'POUR솔루션' ? '#fce7f3' : '#f0fdf4', color: item.brandList === '석민이앤씨' ? '#0369a1' : item.brandList === 'POUR솔루션' ? '#be185d' : '#15803d', fontWeight: '600' }}>{item.brandList || '-'}</span>
+                              <span style={{ fontSize: '11px', color: '#9ca3af' }}>{daysAgo(item.lastActivityDate)}</span>
+                            </div>
+                          </div>
+                        ))}
+                        {sorted.length === 0 && (
+                          <div style={{ padding: '40px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>데이터가 없습니다</div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+
+              </div>
+            );
+          })()}
+
+          {/* 파이프라인 상세 모달 - 글로벌 (파이프라인, 마이페이지 모두에서 사용) */}
+          {selectedPipelineItem && (() => {
+            const formatValue = (v) => {
+              if (v >= 100000000) return (v / 100000000).toFixed(1) + '억';
+              if (v >= 10000) return (v / 10000).toFixed(0) + '만';
+              return v.toLocaleString();
+            };
+            const stageTypeLabel = { active: '진행', won: '수주', lost: '실패' };
+            const allStageSteps = [
+              { group: '초기단계', color: '#6b7280', stages: ['대기고객', '유대관계 강화', '컨설팅 자료 발송완료', '침묵 관리 단계'] },
+              { group: '컨설팅', color: '#3b82f6', stages: ['컨설팅 설계단계', '2차 미팅', '견적서 발송'] },
+              { group: '경쟁/PT', color: '#f59e0b', stages: ['경쟁 단계', '입찰단계', '공사 임박 단계'] },
+              { group: '계약/시공', color: '#8b5cf6', stages: ['계약단계', '시공단계', '공사 진행', '준공단계', '인계'] },
+              { group: '수주 성공', color: '#10b981', stages: ['수주 성공', '공사완료'] },
+              { group: '수주 실패', color: '#ef4444', stages: ['수주 실패'] },
+            ];
+            const currentStage = selectedPipelineItem.stage || '';
+            let currentGroupIdx = -1;
+            allStageSteps.forEach((g, gi) => {
+              if (g.stages.some(s => currentStage.includes(s) || s.includes(currentStage))) currentGroupIdx = gi;
+            });
+            if (currentGroupIdx === -1) currentGroupIdx = 0;
+            const isWon = selectedPipelineItem.stageType === 'won';
+            const isLost = selectedPipelineItem.stageType === 'lost';
+
+            return (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '20px' }} onClick={() => setSelectedPipelineItem(null)}>
+                <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '20px', width: '100%', maxWidth: '500px', maxHeight: '85vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                  {/* 모달 헤더 - 다크 */}
+                  <div style={{ padding: '24px 24px 20px', background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)', borderRadius: '20px 20px 0 0', position: 'sticky', top: 0, zIndex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '12px' }}>
+                      <div style={{ flex: 1 }}>
+                        <h3 style={{ fontSize: '17px', fontWeight: '800', color: 'white', margin: '0 0 8px', letterSpacing: '-0.5px', lineHeight: '1.3' }}>{selectedPipelineItem.orgName}</h3>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '6px', background: isWon ? 'rgba(16,185,129,0.2)' : isLost ? 'rgba(239,68,68,0.2)' : 'rgba(59,130,246,0.2)', color: isWon ? '#6ee7b7' : isLost ? '#fca5a5' : '#93c5fd', fontWeight: '700' }}>{stageTypeLabel[selectedPipelineItem.stageType] || selectedPipelineItem.stageType}</span>
+                          <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '6px', background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)', fontWeight: '600' }}>{selectedPipelineItem.stage}</span>
+                        </div>
+                      </div>
+                      <button onClick={() => setSelectedPipelineItem(null)} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '10px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '16px', color: 'rgba(255,255,255,0.6)' }}>✕</button>
+                    </div>
+                    {selectedPipelineItem.dealValue > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                        <span style={{ fontSize: '28px', fontWeight: '800', color: 'white', letterSpacing: '-1px' }}>{formatValue(selectedPipelineItem.dealValue)}</span>
+                        <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)' }}>{selectedPipelineItem.assigneeName} · {selectedPipelineItem.brandList}</span>
+                      </div>
+                    )}
+                    {(() => {
+                      // 릴레잇 딥링크 - deal ID로 직접 이동
+                      const dealId = selectedPipelineItem.relateDealId || selectedPipelineItem.id || '';
+                      const relateUrl = dealId
+                        ? `https://app.relate.so/relate/a85zgg/lists/ryUZbe/${dealId}`
+                        : `https://app.relate.so`;
+                      return (
+                        <a href={relateUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', marginTop: '12px', padding: '8px 16px', background: 'rgba(59,130,246,0.2)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '10px', color: '#93c5fd', fontSize: '13px', fontWeight: '600', textDecoration: 'none', cursor: 'pointer', transition: 'all 0.2s' }}
+                          onMouseOver={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.35)'; }}
+                          onMouseOut={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.2)'; }}>
+                          🔗 릴레잇에서 보기
+                        </a>
+                      );
+                    })()}
+                  </div>
+
+                  {/* 스테퍼 - 단계 과정 */}
+                  <div style={{ padding: '20px 24px', borderBottom: '1px solid #f3f4f6' }}>
+                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#111827', marginBottom: '16px' }}>진행 과정</div>
+                    <div style={{ position: 'relative' }}>
+                      {allStageSteps.map((step, gi) => {
+                        const isPassed = gi < currentGroupIdx;
+                        const isCurrent = gi === currentGroupIdx;
+                        const isFuture = gi > currentGroupIdx;
+                        const isLostStep = isLost && gi === 5;
+                        const isWonStep = isWon && gi === 4;
+                        const actualPassed = isLost ? (gi < 5 && gi <= currentGroupIdx) : isWon ? (gi <= 4) : isPassed;
+                        const actualCurrent = isLost ? isLostStep : isWon ? isWonStep : isCurrent;
+                        const dotColor = actualCurrent ? step.color : actualPassed ? step.color : '#e5e7eb';
+                        const lineColor = actualPassed ? step.color : '#e5e7eb';
+                        const isLastGroup = gi === allStageSteps.length - 1;
+
+                        return (
+                          <div key={step.group} style={{ display: 'flex', gap: '14px', position: 'relative', paddingBottom: isLastGroup ? '0' : '20px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '24px', flexShrink: 0 }}>
+                              <div style={{ width: actualCurrent ? '24px' : '16px', height: actualCurrent ? '24px' : '16px', borderRadius: '50%', background: actualCurrent ? dotColor : actualPassed ? dotColor : 'white', border: `2.5px solid ${dotColor}`, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, transition: 'all 0.3s', boxShadow: actualCurrent ? `0 0 0 4px ${dotColor}22` : 'none' }}>
+                                {actualPassed && !actualCurrent && <span style={{ color: 'white', fontSize: '10px', fontWeight: '800' }}>✓</span>}
+                                {actualCurrent && <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'white' }} />}
+                              </div>
+                              {!isLastGroup && (
+                                <div style={{ width: '2px', flex: 1, background: actualPassed ? lineColor : '#e5e7eb', marginTop: '4px', transition: 'all 0.3s' }} />
+                              )}
+                            </div>
+                            <div style={{ flex: 1, paddingTop: actualCurrent ? '0px' : '0px' }}>
+                              <div style={{ fontSize: '13px', fontWeight: actualCurrent ? '700' : '500', color: actualCurrent ? step.color : actualPassed ? '#374151' : '#d1d5db', letterSpacing: '-0.2px' }}>{step.group}</div>
+                              {actualCurrent && (
+                                <div style={{ marginTop: '6px', padding: '10px 12px', background: step.color + '0a', borderRadius: '8px', border: `1px solid ${step.color}20` }}>
+                                  <div style={{ fontSize: '12px', fontWeight: '600', color: step.color }}>{currentStage}</div>
+                                  {selectedPipelineItem.stageEnteredAt && (
+                                    <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '3px' }}>
+                                      {new Date(selectedPipelineItem.stageEnteredAt).toLocaleDateString('ko-KR')} 진입
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 상세 정보 */}
+                  <div style={{ padding: '16px 24px 24px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#111827', marginBottom: '12px' }}>상세 정보</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+                      {[
+                        { label: '담당자', value: selectedPipelineItem.assigneeName },
+                        { label: '브랜드', value: selectedPipelineItem.brandList },
+                        { label: '공종(대)', value: selectedPipelineItem['공종대분류'] },
+                        { label: '공종(소)', value: selectedPipelineItem['공종소분류'] },
+                        { label: '공사범위', value: selectedPipelineItem['공사범위'] },
+                        { label: '공사계획년도', value: selectedPipelineItem['공사계획년도'] },
+                        { label: '유입경로', value: selectedPipelineItem['유입경로'] },
+                        { label: '건물유형', value: selectedPipelineItem['건물유형'] },
+                        { label: '계약유형', value: selectedPipelineItem.contractType },
+                        { label: '예정공사일정', value: selectedPipelineItem['예정공사일정'] },
+                        { label: '생성일', value: selectedPipelineItem.createdAt ? new Date(selectedPipelineItem.createdAt).toLocaleDateString('ko-KR') : null },
+                        { label: '최근활동', value: selectedPipelineItem.lastActivityDate ? new Date(selectedPipelineItem.lastActivityDate).toLocaleDateString('ko-KR') : null },
+                      ].filter(f => f.value).map((field, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f3f4f6' }}>
+                          <span style={{ fontSize: '13px', color: '#9ca3af', fontWeight: '500' }}>{field.label}</span>
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: '#111827', textAlign: 'right', maxWidth: '60%' }}>{field.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 일정관리 */}
+          {!showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage && (
+            <>
+              {/* 1줄: 검색창 */}
+              <div style={{ marginBottom: '10px' }}>
+                <div style={{ position: 'relative' }}>
+                  <input 
+                    type="text" 
+                    value={searchQuery} 
+                    onChange={(e) => setSearchQuery(e.target.value)} 
+                    placeholder="현장명, 담당자 검색..." 
+                    style={{ 
+                      padding: '10px 36px 10px 14px', 
+                      borderRadius: '10px', 
+                      border: searchQuery ? '2px solid #3b82f6' : '1px solid #e2e8f0', 
+                      fontSize: '13px', 
+                      width: '100%', 
+                      background: searchQuery ? '#eff6ff' : 'white', 
+                      outline: 'none',
+                      boxSizing: 'border-box'
+                    }} 
+                  />
+                  {searchQuery && (
+                    <button 
+                      onClick={() => setSearchQuery('')} 
+                      style={{ 
+                        position: 'absolute', 
+                        right: '12px', 
+                        top: '50%', 
+                        transform: 'translateY(-50%)', 
+                        background: 'none', 
+                        border: 'none', 
+                        cursor: 'pointer', 
+                        fontSize: '16px', 
+                        color: '#94a3b8' 
+                      }}
+                    >✕</button>
+                  )}
+                </div>
+              </div>
+              
+              {/* 2줄: 전체/영업/PT/현설/세미나/아스퀘/개인/회의 */}
+              <div style={{ marginBottom: '10px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                {[
+                  { key: 'all', label: '전체', color: '#1e293b', textColor: 'white' }, 
+                  { key: 'sales', label: isMobile ? '영업' : `영업 (${salesSchedules.length})`, color: '#FFF0B3', textColor: '#1e293b' }, 
+                  { key: 'pt', label: isMobile ? 'PT' : `PT (${ptSchedules.length})`, color: '#A7D8F0', textColor: '#1e293b' }, 
+                  { key: 'briefing', label: isMobile ? '현설' : `현설 (${briefingSchedules.length})`, color: '#A8E6CF', textColor: '#1e293b' }, 
+                  { key: 'seminar', label: isMobile ? '세미나' : `세미나 (${seminarSchedules.length})`, color: '#E8D0F5', textColor: '#1e293b' }, 
+                  { key: 'asq', label: isMobile ? '아스퀘' : `아스퀘 (${asqSchedules.length})`, color: '#BDE0FE', textColor: '#1e293b' }, 
+                  { key: 'personal', label: isMobile ? '개인' : `개인 (${personalSchedules.length})`, color: '#FFD4B8', textColor: '#1e293b' }, 
+                  { key: 'vacation', label: isMobile ? '휴가' : `휴가 (${vacationSchedules.length + hiworksVacations.length})`, color: '#C1E8C1', textColor: '#1e293b' }, 
+                  { key: 'meeting', label: isMobile ? '회의' : `회의 (${meetingSchedules.length})`, color: '#F0C0E8', textColor: '#1e293b' }
+                ].map(t => (
+                  <button key={t.key} onClick={() => setScheduleType(t.key)} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', fontSize: '12px', fontWeight: '600', cursor: 'pointer', background: scheduleType === t.key ? t.color : '#e2e8f0', color: scheduleType === t.key ? (t.textColor || '#1e293b') : '#64748b' }}>{t.label}</button>
+                ))}
+              </div>
+              
+              {/* 3줄: 캘린더/리스트 탭 + 공종 필터 */}
+              <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid #e2e8f0', paddingBottom: '0' }}>
+                <div style={{ display: 'flex' }}>
+                  <button onClick={() => setViewMode('calendar')} style={{ padding: isMobile ? '10px 14px' : '12px 20px', border: 'none', background: 'transparent', fontSize: isMobile ? '12px' : '14px', fontWeight: '600', cursor: 'pointer', color: viewMode === 'calendar' ? '#2563eb' : '#64748b', borderBottom: viewMode === 'calendar' ? '3px solid #2563eb' : 'none', marginBottom: '-2px' }}>캘린더</button>
+                  <button onClick={() => setViewMode('list')} style={{ padding: isMobile ? '10px 14px' : '12px 20px', border: 'none', background: 'transparent', fontSize: isMobile ? '12px' : '14px', fontWeight: '600', cursor: 'pointer', color: viewMode === 'list' ? '#2563eb' : '#64748b', borderBottom: viewMode === 'list' ? '3px solid #2563eb' : 'none', marginBottom: '-2px' }}>리스트</button>
+                  {scheduleType === 'briefing' && <button onClick={() => setViewMode('briefingStats')} style={{ padding: isMobile ? '10px 14px' : '12px 20px', border: 'none', background: 'transparent', fontSize: isMobile ? '12px' : '14px', fontWeight: '600', cursor: 'pointer', color: viewMode === 'briefingStats' ? '#7c3aed' : '#64748b', borderBottom: viewMode === 'briefingStats' ? '3px solid #7c3aed' : 'none', marginBottom: '-2px' }}>통계</button>}
+                  {scheduleType === 'briefing' && (currentUser?.isAdmin || currentUser?.name === '황윤선' || currentUser?.name === '이승우') && <button onClick={() => setViewMode('briefingSettle')} style={{ padding: isMobile ? '10px 14px' : '12px 20px', border: 'none', background: 'transparent', fontSize: isMobile ? '12px' : '14px', fontWeight: '600', cursor: 'pointer', color: viewMode === 'briefingSettle' ? '#16a34a' : '#64748b', borderBottom: viewMode === 'briefingSettle' ? '3px solid #16a34a' : 'none', marginBottom: '-2px' }}>정산</button>}
+                  <a href="https://peaceful-chimera-1dced9.netlify.app/" target="_blank" rel="noopener noreferrer" style={{ padding: isMobile ? '10px 14px' : '12px 16px', border: 'none', background: 'transparent', fontSize: isMobile ? '11px' : '13px', fontWeight: '600', cursor: 'pointer', color: '#8b5cf6', textDecoration: 'none', marginBottom: '-2px', display: 'flex', alignItems: 'center', gap: '4px' }}>📅 팀캘린더</a>
+                </div>
+
+                {/* 공종 필터 버튼 - 데스크탑만 */}
+                {!isMobile && (
+                <div style={{ position: 'relative' }}>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); setShowWorkTypeFilter(!showWorkTypeFilter); }} 
+                    style={{ 
+                      padding: '8px 14px', 
+                      borderRadius: '8px', 
+                      border: selectedWorkTypes.length > 0 ? '2px solid #f59e0b' : '1px solid #e2e8f0', 
+                      fontSize: '12px', 
+                      fontWeight: '600', 
+                      cursor: 'pointer', 
+                      background: selectedWorkTypes.length > 0 ? '#fef3c7' : 'white', 
+                      color: selectedWorkTypes.length > 0 ? '#92400e' : '#64748b',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    공종 {selectedWorkTypes.length > 0 && `(${selectedWorkTypes.length})`} ▼
+                  </button>
+                  
+                  {/* 공종 필터 드롭다운 */}
+                  {showWorkTypeFilter && (
+                    <div onClick={e => e.stopPropagation()} style={{ 
+                      position: 'absolute', 
+                      top: '100%', 
+                      right: 0, 
+                      marginTop: '4px',
+                      background: 'white', 
+                      borderRadius: '12px', 
+                      boxShadow: '0 4px 20px rgba(0,0,0,0.15)', 
+                      padding: '12px', 
+                      zIndex: 100,
+                      minWidth: '280px',
+                      maxWidth: '400px',
+                      maxHeight: '320px',
+                      overflowY: 'auto'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', paddingBottom: '8px', borderBottom: '1px solid #e2e8f0' }}>
+                        <span style={{ fontSize: '13px', fontWeight: '700', color: '#1e293b' }}>공종 선택</span>
+                        <button 
+                          onClick={() => setSelectedWorkTypes([])} 
+                          style={{ fontSize: '11px', color: '#64748b', background: 'none', border: 'none', cursor: 'pointer' }}
+                        >
+                          초기화
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {allWorkTypes.map(wt => (
+                          <label 
+                            key={wt} 
+                            style={{ 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              gap: '6px', 
+                              padding: '6px 12px', 
+                              borderRadius: '6px', 
+                              cursor: 'pointer', 
+                              background: selectedWorkTypes.includes(wt) ? '#dbeafe' : '#f8fafc', 
+                              border: selectedWorkTypes.includes(wt) ? '2px solid #2563eb' : '1px solid #e2e8f0',
+                              fontSize: '12px',
+                              fontWeight: selectedWorkTypes.includes(wt) ? '600' : '400',
+                              color: selectedWorkTypes.includes(wt) ? '#1d4ed8' : '#64748b'
+                            }}
+                          >
+                            <input 
+                              type="checkbox" 
+                              checked={selectedWorkTypes.includes(wt)} 
+                              onChange={e => {
+                                if (e.target.checked) {
+                                  setSelectedWorkTypes([...selectedWorkTypes, wt]);
+                                } else {
+                                  setSelectedWorkTypes(selectedWorkTypes.filter(x => x !== wt));
+                                }
+                              }} 
+                              style={{ display: 'none' }} 
+                            />
+                            {wt}
+                          </label>
+                        ))}
+                      </div>
+                      <button 
+                        onClick={() => setShowWorkTypeFilter(false)} 
+                        style={{ 
+                          width: '100%', 
+                          marginTop: '12px', 
+                          padding: '8px', 
+                          borderRadius: '6px', 
+                          border: 'none', 
+                          background: '#2563eb', 
+                          color: 'white', 
+                          fontSize: '12px', 
+                          fontWeight: '600', 
+                          cursor: 'pointer' 
+                        }}
+                      >
+                        적용하기
+                      </button>
+                    </div>
+                  )}
+                </div>
+                )}
+                
+                {/* 선택된 공종 태그 표시 - 데스크탑만 */}
+                {!isMobile && selectedWorkTypes.length > 0 && (
+                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginLeft: '8px' }}>
+                    {selectedWorkTypes.map(wt => (
+                      <span 
+                        key={wt} 
+                        onClick={() => setSelectedWorkTypes(selectedWorkTypes.filter(x => x !== wt))}
+                        style={{ 
+                          padding: '4px 10px', 
+                          borderRadius: '12px', 
+                          background: '#fef3c7', 
+                          color: '#92400e', 
+                          fontSize: '11px', 
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        {wt} ✕
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 캘린더 뷰 */}
+              {viewMode === 'calendar' && (
+                <>
+                  {/* 모바일 캘린더 */}
+                  {isMobile ? (
+                    <div style={{ background: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                        <button onClick={() => setCurrentDate(new Date(year, month - 1, 1))} style={{ background: '#f1f5f9', border: '1px solid #e2e8f0', width: '36px', height: '36px', borderRadius: '8px', cursor: 'pointer', fontSize: '16px' }}>←</button>
+                        <h2 style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b', margin: 0 }}>{year}년 {month + 1}월</h2>
+                        <button onClick={() => setCurrentDate(new Date(year, month + 1, 1))} style={{ background: '#f1f5f9', border: '1px solid #e2e8f0', width: '36px', height: '36px', borderRadius: '8px', cursor: 'pointer', fontSize: '16px' }}>→</button>
+                      </div>
+                      
+                      {/* 요일 헤더 */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', marginBottom: '4px' }}>
+                        {['일', '월', '화', '수', '목', '금', '토'].map((d, i) => (
+                          <div key={d} style={{ textAlign: 'center', padding: '8px 0', fontSize: '12px', fontWeight: '700', color: i === 0 ? '#ef4444' : i === 6 ? '#3b82f6' : '#64748b' }}>{d}</div>
+                        ))}
+                      </div>
+                      
+                      {/* 날짜 그리드 */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: '2px' }}>
+                        {days.map((day, idx) => {
+                          const schedules = getSchedulesForDate(day);
+                          const isToday = day === new Date().getDate() && month === new Date().getMonth() && year === new Date().getFullYear();
+                          const isSelected = selectedDate && selectedDate.day === day && selectedDate.month === month;
+                          const hasUnassigned = schedules.some(isUnassigned);
+                          return (
+                            <div 
+                              key={idx} 
+                              onClick={() => day && setSelectedDate(prev => prev && prev.day === day && prev.month === month ? null : { year, month, day })} 
+                              style={{ 
+                                aspectRatio: '1', 
+                                display: 'flex', 
+                                flexDirection: 'column', 
+                                alignItems: 'center', 
+                                justifyContent: 'center',
+                                background: isSelected ? '#2563eb' : day ? 'white' : 'transparent', 
+                                borderRadius: '8px', 
+                                cursor: day ? 'pointer' : 'default', 
+                                border: hasUnassigned && !isSelected ? '2px solid #f59e0b' : isToday && !isSelected ? '2px solid #2563eb' : '1px solid #f1f5f9',
+                                position: 'relative'
+                              }}
+                            >
+                              {day && (() => {
+                                const holidayName = isHoliday(day);
+                                return (
+                                <>
+                                  <div style={{ 
+                                    fontSize: '14px', 
+                                    fontWeight: isToday || isSelected ? '700' : '500', 
+                                    color: isSelected ? 'white' : isToday ? '#2563eb' : (idx % 7 === 0 || holidayName) ? '#ef4444' : idx % 7 === 6 ? '#3b82f6' : '#374151'
+                                  }}>{day}</div>
+                                  {holidayName && !isSelected && (
+                                    <div style={{ fontSize: '8px', color: '#ef4444', fontWeight: '500', marginTop: '1px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{holidayName}</div>
+                                  )}
+                                  {schedules.length > 0 && (
+                                    <div style={{ 
+                                      fontSize: '10px', 
+                                      padding: '1px 5px', 
+                                      borderRadius: '10px', 
+                                      background: isSelected ? 'rgba(255,255,255,0.3)' : hasUnassigned ? '#fef3c7' : '#e0e7ff', 
+                                      color: isSelected ? 'white' : hasUnassigned ? '#92400e' : '#3730a3',
+                                      fontWeight: '600',
+                                      marginTop: '2px'
+                                    }}>{schedules.length}건</div>
+                                  )}
+                                </>
+                                );
+                              })()}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* 선택된 날짜 일정 목록 (캘린더 아래에 표시) */}
+                      {selectedDate && selectedDate.month === month && (() => {
+                        const selectedDateStr = `${selectedDate.year}-${String(selectedDate.month + 1).padStart(2, '0')}-${String(selectedDate.day).padStart(2, '0')}`;
+                        const selectedHoliday = getHolidayByDateStr(selectedDateStr);
+                        return (
+                        <div style={{ marginTop: '16px', borderTop: '2px solid #e2e8f0', paddingTop: '16px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                            <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', margin: 0 }}>
+                              일정 {selectedDate.month + 1}월 {selectedDate.day}일({getDayOfWeek(selectedDate.year, selectedDate.month, selectedDate.day)}) 
+                              {selectedHoliday && <span style={{ color: '#ef4444', fontWeight: '600', marginLeft: '8px' }}>{selectedHoliday}</span>}
+                              <span style={{ fontWeight: '500', color: '#64748b', marginLeft: '8px' }}>({selectedSchedules.length}건)</span>
+                            </h3>
+                            <button 
+                              onClick={() => { setAddTypeModalDate(`${selectedDate.year}-${String(selectedDate.month + 1).padStart(2, '0')}-${String(selectedDate.day).padStart(2, '0')}`); setShowAddTypeModal(true); }} 
+                              style={{ padding: '6px 10px', background: '#4b5563', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}
+                            >+</button>
+                          </div>
+                          
+                          {selectedSchedules.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '24px', color: '#94a3b8', background: '#f8fafc', borderRadius: '8px' }}>
+                              {selectedHoliday && <p style={{ fontSize: '14px', color: '#ef4444', fontWeight: '600', margin: '0 0 8px 0' }}>{selectedHoliday}</p>}
+                              <p style={{ fontSize: '13px', margin: 0 }}>일정이 없습니다</p>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              {currentUser && (currentUser.isAdmin || currentUser.id === 'hjy') && (() => {
+                                const dayMembers = ['조재연', '한준엽', '이필선', '정정훈', '김성민', '한인규', '황윤선'];
+                                const assignedSet = new Set();
+                                selectedSchedules.forEach(s => {
+                                  if (s.type === 'pt') {
+                                    (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a).forEach(a => assignedSet.add(a));
+                                  } else if (s.type === 'briefing') {
+                                    if (s.assignee) s.assignee.split(/[\/,+&]/).map(a => a.trim()).filter(a => a).forEach(a => assignedSet.add(a));
+                                  } else if (s.type === 'sales') {
+                                    if (s.assignee) s.assignee.split(/[\/,+&]/).map(a => a.trim()).filter(a => a).forEach(a => assignedSet.add(a));
+                                  } else if ((s.type === 'personal' || s.type === 'seminar' || s.type === 'vacation' || s.type === 'asq' || s.type === 'meeting') && s.assignees?.length > 0) {
+                                    s.assignees.forEach(a => assignedSet.add(a));
+                                  }
+                                });
+                                const dayNotAssigned = dayMembers.filter(m => !assignedSet.has(m));
+                                return dayNotAssigned.length > 0 ? (
+                                  <div style={{ fontSize: '11px', color: '#ef4444', background: '#fef2f2', padding: '6px 10px', borderRadius: '8px', border: '1px solid #fecaca', marginBottom: '2px' }}>
+                                    <span style={{ fontWeight: '700' }}>미배정 인원</span> : {dayNotAssigned.join(', ')}
+                                  </div>
+                                ) : null;
+                              })()}
+                              {(() => {
+                                const renderMobileCard = (s) => {
+                                  const ts = getTypeStyle(s.type);
+                                  const assigneeName = (s.type === 'personal' || s.type === 'seminar' || s.type === 'vacation' || s.type === 'asq') && s.assignees?.length > 0 ? s.assignees.join(', ') : (s.ptAssignee || s.assignee || '미배정');
+                                  return (
+                                    <div
+                                      key={s.id}
+                                      onClick={() => handleEditClick(s)}
+                                      style={{
+                                        padding: '10px',
+                                        background: s.type === 'vacation' ? '#E8F5E8' : '#f8fafc',
+                                        borderRadius: '10px',
+                                        border: isUnassigned(s) ? '2px solid #fbbf24' : s.type === 'vacation' ? '1px solid #C1E8C1' : '1px solid #e2e8f0',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
+                                        <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', background: ts.bg, color: ts.color }}>{ts.label}</span>
+                                        <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '600', background: getStatusStyle(getDisplayStatus(s)).bg, color: getStatusStyle(getDisplayStatus(s)).color }}>{getDisplayStatus(s)}</span>
+                                        <span style={{ marginLeft: 'auto', fontSize: '11px', color: '#64748b' }}>{formatTimeWithAmPm(s.time)}</span>
+                                      </div>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                        <span style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b' }}>{s.siteName || s.title}</span>
+                                        <span style={{ fontSize: '11px', color: '#9ca3af' }}></span>
+                                        <span style={{ fontSize: '11px', color: '#3b82f6' }}>담당: {assigneeName}</span>
+                                      </div>
+                                      {s.requester && (() => { const chk = checkPourAgreement(s.requester); return (
+                                        <div style={{ fontSize: '10px', marginTop: '3px', color: '#64748b' }}>
+                                          요청: {s.requester}
+                                          {!chk.isAgreement && <span style={{ marginLeft: '3px', padding: '1px 3px', borderRadius: '2px', fontSize: '9px', fontWeight: '700', background: '#fef2f2', color: '#ef4444' }}>비협약</span>}
+                                          {chk.grade && <span style={{ marginLeft: '3px', padding: '1px 3px', borderRadius: '2px', fontSize: '9px', fontWeight: '700', background: '#eff6ff', color: '#2563eb' }}>{chk.grade}</span>}
+                                        </div>
+                                      ); })()}
+                                    </div>
+                                  );
+                                };
+                                const sectionHeader = (label, count, color) => (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px', marginBottom: '2px', paddingBottom: '4px', borderBottom: `1px solid ${color}33` }}>
+                                    <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '700', background: color, color: 'white' }}>{label}</span>
+                                    <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '600' }}>{count}건</span>
+                                  </div>
+                                );
+                                const { am, pm, none } = groupSchedulesByAmPm(selectedSchedules);
+                                return (
+                                  <>
+                                    {am.length > 0 && sectionHeader('오전', am.length, '#f59e0b')}
+                                    {am.map(renderMobileCard)}
+                                    {pm.length > 0 && sectionHeader('오후', pm.length, '#3b82f6')}
+                                    {pm.map(renderMobileCard)}
+                                    {none.length > 0 && sectionHeader('시간미정', none.length, '#94a3b8')}
+                                    {none.map(renderMobileCard)}
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          )}
+                        </div>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    /* 데스크탑 캘린더 */
+                    <div style={{ display: 'flex', gap: '20px' }}>
+                      <div style={{ flex: 1, background: 'white', borderRadius: '12px', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                          <button onClick={() => setCurrentDate(new Date(year, month - 1, 1))} style={{ background: '#f1f5f9', border: '1px solid #e2e8f0', width: '40px', height: '40px', borderRadius: '8px', cursor: 'pointer', fontSize: '16px' }}>←</button>
+                          <h2 style={{ fontSize: '20px', fontWeight: '700', color: '#1e293b', margin: 0 }}>{year}년 {month + 1}월</h2>
+                          <button onClick={() => setCurrentDate(new Date(year, month + 1, 1))} style={{ background: '#f1f5f9', border: '1px solid #e2e8f0', width: '40px', height: '40px', borderRadius: '8px', cursor: 'pointer', fontSize: '16px' }}>→</button>
+                        </div>
+                        
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: '4px', marginBottom: '8px' }}>
+                          {['일', '월', '화', '수', '목', '금', '토'].map((d, i) => (
+                            <div key={d} style={{ textAlign: 'center', padding: '12px', fontSize: '14px', fontWeight: '700', color: i === 0 ? '#ef4444' : i === 6 ? '#3b82f6' : '#64748b' }}>{d}</div>
+                          ))}
+                        </div>
+                        
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: '4px' }}>
+                          {days.map((day, idx) => {
+                            const schedules = getSchedulesForDate(day);
+                            const isToday = day === new Date().getDate() && month === new Date().getMonth() && year === new Date().getFullYear();
+                            const isSelected = selectedDate && selectedDate.day === day;
+                            const hasUnassigned = schedules.some(isUnassigned);
+                            return (
+                              <div key={idx} onClick={() => day && setSelectedDate(prev => prev && prev.day === day && prev.month === month ? null : { year, month, day })} style={{ height: '130px', background: isSelected ? '#eff6ff' : day ? 'white' : 'transparent', borderRadius: '8px', padding: '8px', cursor: day ? 'pointer' : 'default', border: isSelected ? '2px solid #2563eb' : hasUnassigned ? '2px solid #f59e0b' : isToday ? '2px solid #64748b' : '1px solid #f1f5f9', overflow: 'hidden' }}>
+                                {day && (() => {
+                                  const holidayName = isHoliday(day);
+                                  return (
+                                  <>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                                      <span style={{ fontSize: '14px', fontWeight: isToday ? '700' : '500', color: isToday ? '#2563eb' : (idx % 7 === 0 || holidayName) ? '#ef4444' : idx % 7 === 6 ? '#3b82f6' : '#374151' }}>{day}</span>
+                                      {holidayName && <span style={{ fontSize: '10px', color: '#ef4444', fontWeight: '500' }}>{holidayName}</span>}
+                                    </div>
+                                    {schedules.slice(0, 3).map(s => {
+                                      const typeLabel = s.type === 'pt' ? 'PT' : s.type === 'briefing' ? '현설' : s.type === 'personal' ? '개인' : s.type === 'meeting' ? '회의' : s.type === 'seminar' ? '세미나' : s.type === 'vacation' ? '휴가' : s.type === 'asq' ? '아스퀘' : s.type === 'sales' ? '영업' : '';
+                                      const labelBg = s.type === 'pt' ? '#A7D8F0' : s.type === 'briefing' ? '#A8E6CF' : s.type === 'personal' ? '#FFD4B8' : s.type === 'meeting' ? '#F0C0E8' : s.type === 'seminar' ? '#E8D0F5' : s.type === 'vacation' ? '#C1E8C1' : s.type === 'asq' ? '#BDE0FE' : s.type === 'sales' ? '#FFF0B3' : '#f1f5f9';
+                                      return <div key={s.id} style={{ fontSize: '11px', padding: '3px 6px', borderRadius: '4px', marginBottom: '2px', background: '#f8fafc', color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: '4px', maxWidth: '100%' }}>{typeLabel && <span style={{ background: labelBg, color: '#1e293b', fontWeight: '600', padding: '1px 4px', borderRadius: '3px', fontSize: '10px', flexShrink: 0 }}>{typeLabel}</span>}<span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{s.siteName || s.title}</span></div>;
+                                    })}
+                                    {schedules.length > 3 && <div style={{ fontSize: '10px', color: '#3b82f6', paddingLeft: '4px', fontWeight: '600', marginTop: '1px', cursor: 'pointer' }}>+{schedules.length - 3}건 더보기</div>}
+                                  </>
+                                  );
+                                })()}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* 데스크탑 선택 날짜 상세 */}
+                      <div style={{ width: '340px', flexShrink: 0, alignSelf: 'flex-start', background: 'white', borderRadius: '12px', padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+                        {(() => {
+                          const selectedDateStr = selectedDate ? `${selectedDate.year}-${String(selectedDate.month + 1).padStart(2, '0')}-${String(selectedDate.day).padStart(2, '0')}` : '';
+                          const selectedHoliday = selectedDateStr ? getHolidayByDateStr(selectedDateStr) : null;
+                          return (
+                          <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid #e2e8f0' }}>
+                          <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b', margin: 0 }}>
+                            일정 {selectedDate ? `${selectedDate.month + 1}월 ${selectedDate.day}일(${getDayOfWeek(selectedDate.year, selectedDate.month, selectedDate.day)})` : ''} 
+                            {selectedHoliday && <span style={{ color: '#ef4444', fontWeight: '600', marginLeft: '6px', fontSize: '13px' }}>{selectedHoliday}</span>}
+                            <span style={{ fontSize: '14px', fontWeight: '500', color: '#64748b', marginLeft: '6px' }}>({selectedSchedules.length}건)</span>
+                          </h3>
+                          {selectedDate && (
+                            <button 
+                              onClick={() => { setAddTypeModalDate(`${selectedDate.year}-${String(selectedDate.month + 1).padStart(2, '0')}-${String(selectedDate.day).padStart(2, '0')}`); setShowAddTypeModal(true); }} 
+                              style={{ padding: '4px 10px', background: '#4b5563', color: 'white', border: 'none', borderRadius: '4px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}
+                            >+일정추가</button>
+                          )}
+                        </div>
+                        
+                        {selectedSchedules.length === 0 ? (
+                          <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94a3b8' }}>
+                            {selectedHoliday && <div style={{ fontSize: '16px', color: '#ef4444', fontWeight: '600', marginBottom: '12px' }}>{selectedHoliday}</div>}
+                                                        <p style={{ fontSize: '14px' }}>선택한 날짜에 일정이 없습니다</p>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {currentUser && (currentUser.isAdmin || currentUser.id === 'hjy') && (() => {
+                              const dayMembers = ['조재연', '한준엽', '이필선', '정정훈', '김성민', '한인규', '황윤선'];
+                              const assignedSet = new Set();
+                              selectedSchedules.forEach(s => {
+                                if (s.type === 'pt') {
+                                  (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a).forEach(a => assignedSet.add(a));
+                                } else if (s.type === 'briefing') {
+                                  if (s.assignee) s.assignee.split(/[\/,+&]/).map(a => a.trim()).filter(a => a).forEach(a => assignedSet.add(a));
+                                } else if (s.type === 'sales') {
+                                  if (s.assignee) s.assignee.split(/[\/,+&]/).map(a => a.trim()).filter(a => a).forEach(a => assignedSet.add(a));
+                                } else if ((s.type === 'personal' || s.type === 'seminar' || s.type === 'vacation' || s.type === 'asq' || s.type === 'meeting') && s.assignees?.length > 0) {
+                                  s.assignees.forEach(a => assignedSet.add(a));
+                                }
+                              });
+                              const dayNotAssigned = dayMembers.filter(m => !assignedSet.has(m));
+                              return dayNotAssigned.length > 0 ? (
+                                <div style={{ fontSize: '11px', color: '#ef4444', background: '#fef2f2', padding: '6px 10px', borderRadius: '8px', border: '1px solid #fecaca', marginBottom: '2px' }}>
+                                  <span style={{ fontWeight: '700' }}>미배정 인원</span> : {dayNotAssigned.join(', ')}
+                                </div>
+                              ) : null;
+                            })()}
+                            {(() => {
+                              const renderDesktopCard = (s) => {
+                                const ts = getTypeStyle(s.type);
+                                const workTypes = s.workType ? s.workType.split(/[\/,+\(\)]/).map(w => w.trim()).filter(w => w).slice(0, 3) : [];
+                                const assigneeName = (s.type === 'personal' || s.type === 'seminar' || s.type === 'vacation' || s.type === 'asq' || s.type === 'sales') && s.assignees?.length > 0 ? s.assignees.join(', ') : (s.ptAssignee || s.assignee || '미배정');
+                                const bgColor = s.type === 'vacation' ? '#E8F5E8' : '#fafafa';
+                                const borderColor = s.type === 'vacation' ? '#C1E8C1' : '#e5e7eb';
+                                return (
+                                  <div key={s.id} onClick={() => handleEditClick(s)} style={{ padding: '8px 10px', background: bgColor, borderRadius: '8px', border: isUnassigned(s) ? '2px solid #fbbf24' : `1px solid ${borderColor}`, cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.background = s.type === 'vacation' ? '#D8F0D8' : '#f3f4f6'} onMouseOut={e => e.currentTarget.style.background = bgColor}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
+                                      <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', background: ts.bg, color: ts.color }}>{ts.label}</span>
+                                      <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '600', background: getStatusStyle(getDisplayStatus(s)).bg, color: getStatusStyle(getDisplayStatus(s)).color }}>{getDisplayStatus(s)}</span>
+                                      <span style={{ marginLeft: 'auto', fontSize: '10px', color: '#9ca3af' }}></span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                      <span style={{ fontSize: '14px', fontWeight: '700', color: '#1f2937' }}>{s.siteName || s.title}</span>
+                                      <span style={{ fontSize: '11px', color: '#6b7280' }}>{formatTimeWithAmPm(s.time)}</span>
+                                      <span style={{ fontSize: '11px', color: '#3b82f6' }}>담당: {assigneeName}</span>
+                                    </div>
+                                    {workTypes.length > 0 && (
+                                      <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap', marginTop: '4px' }}>
+                                        {workTypes.map((wt, i) => <span key={i} style={{ padding: '1px 5px', borderRadius: '4px', fontSize: '10px', background: '#fef3c7', color: '#92400e' }}>{wt}</span>)}
+                                      </div>
+                                    )}
+                                    {s.requester && (() => { const chk = checkPourAgreement(s.requester); return (
+                                      <div style={{ fontSize: '10px', marginTop: '4px', color: '#64748b' }}>
+                                        요청: {s.requester}
+                                        {!chk.isAgreement && <span style={{ marginLeft: '4px', padding: '1px 4px', borderRadius: '3px', fontSize: '9px', fontWeight: '700', background: '#fef2f2', color: '#ef4444' }}>비협약</span>}
+                                        {chk.grade && <span style={{ marginLeft: '4px', padding: '1px 4px', borderRadius: '3px', fontSize: '9px', fontWeight: '700', background: '#eff6ff', color: '#2563eb' }}>{chk.grade}</span>}
+                                      </div>
+                                    ); })()}
+                                  </div>
+                                );
+                              };
+                              const sectionHeader = (label, count, color) => (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', marginBottom: '4px', paddingBottom: '4px', borderBottom: `1px solid ${color}33` }}>
+                                  <span style={{ padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: '700', background: color, color: 'white' }}>{label}</span>
+                                  <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '600' }}>{count}건</span>
+                                </div>
+                              );
+                              const { am, pm, none } = groupSchedulesByAmPm(selectedSchedules);
+                              return (
+                                <>
+                                  {am.length > 0 && sectionHeader('오전', am.length, '#f59e0b')}
+                                  {am.map(renderDesktopCard)}
+                                  {pm.length > 0 && sectionHeader('오후', pm.length, '#3b82f6')}
+                                  {pm.map(renderDesktopCard)}
+                                  {none.length > 0 && sectionHeader('시간미정', none.length, '#94a3b8')}
+                                  {none.map(renderDesktopCard)}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
+                          </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* 리스트 뷰 */}
+              {viewMode === 'list' && (
+                <div style={{ background: 'white', borderRadius: '12px', padding: isMobile ? '12px' : '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+                  {/* 필터 버튼들 */}
+                  <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button onClick={() => setListFilter('future')} style={{ padding: isMobile ? '8px 12px' : '10px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer', background: listFilter === 'future' ? '#dc2626' : '#f1f5f9', color: listFilter === 'future' ? 'white' : '#64748b' }}>앞으로 ({filteredFuture.length})</button>
+                    {listFilter === 'future' && !isMobile && (
+                      <button onClick={() => {
+                        const element = document.getElementById('future-list');
+                        if (!element) return;
+                        html2canvas(element, { 
+                          backgroundColor: '#ffffff',
+                          scale: 2,
+                          useCORS: true
+                        }).then(canvas => {
+                          const link = document.createElement('a');
+                          link.download = `일정_앞으로_${todayStr}.png`;
+                          link.href = canvas.toDataURL('image/png');
+                          link.click();
+                        });
+                      }} style={{ padding: '10px 16px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: 'white', color: '#64748b' }}>스크린샷</button>
+                    )}
+                    <button onClick={() => setListFilter('all')} style={{ padding: isMobile ? '8px 12px' : '10px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer', background: listFilter === 'all' ? '#374151' : '#f3f4f6', color: listFilter === 'all' ? 'white' : '#6b7280' }}>전체 ({filteredUpcoming.length + filteredPast.length + ((listYear === 'all' && listMonthOnly === 'all') ? filteredPendingSchedules.length : 0)})</button>
+                    <button onClick={() => setListFilter('upcoming')} style={{ padding: isMobile ? '8px 12px' : '10px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer', background: listFilter === 'upcoming' ? '#374151' : '#f3f4f6', color: listFilter === 'upcoming' ? 'white' : '#6b7280' }}>예정 ({filteredUpcoming.length})</button>
+                    <button onClick={() => setListFilter('pending')} style={{ padding: isMobile ? '8px 12px' : '10px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer', background: listFilter === 'pending' ? '#374151' : '#f3f4f6', color: listFilter === 'pending' ? 'white' : '#6b7280', display: (listYear === 'all' && listMonthOnly === 'all') ? 'block' : 'none' }}>미확정 ({filteredPendingSchedules.length})</button>
+                    <button onClick={() => setListFilter('past')} style={{ padding: isMobile ? '8px 12px' : '10px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer', background: listFilter === 'past' ? '#374151' : '#f3f4f6', color: listFilter === 'past' ? 'white' : '#6b7280' }}>지난 ({filteredPast.length})</button>
+                    
+                    {duplicateSchedules.length > 0 && !isMobile && (
+                      <button onClick={() => setShowDuplicateModal(true)} style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: '#7c3aed', color: 'white' }}>중복 ({duplicateSchedules.length})</button>
+                    )}
+                  </div>
+                  
+                  {/* 년도/월 필터 */}
+                  <div style={{ display: 'flex', gap: '6px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <select 
+                      value={listYear} 
+                      onChange={(e) => setListYear(e.target.value)}
+                      style={{ 
+                        padding: isMobile ? '8px 10px' : '10px 12px', 
+                        borderRadius: '8px', 
+                        border: listYear !== 'all' ? '2px solid #3b82f6' : '1px solid #e2e8f0', 
+                        fontSize: isMobile ? '12px' : '13px', 
+                        fontWeight: '600', 
+                        cursor: 'pointer', 
+                        background: listYear !== 'all' ? '#eff6ff' : 'white', 
+                        color: listYear !== 'all' ? '#3b82f6' : '#64748b'
+                      }}
+                    >
+                      <option value="all">전체년도</option>
+                      {availableYears.map(y => (
+                        <option key={y} value={y}>{y}년</option>
+                      ))}
+                    </select>
+                    
+                    <select 
+                      value={listMonthOnly} 
+                      onChange={(e) => setListMonthOnly(e.target.value)}
+                      style={{ 
+                        padding: isMobile ? '8px 10px' : '10px 12px', 
+                        borderRadius: '8px', 
+                        border: listMonthOnly !== 'all' ? '2px solid #3b82f6' : '1px solid #e2e8f0', 
+                        fontSize: isMobile ? '12px' : '13px', 
+                        fontWeight: '600', 
+                        cursor: 'pointer', 
+                        background: listMonthOnly !== 'all' ? '#eff6ff' : 'white', 
+                        color: listMonthOnly !== 'all' ? '#3b82f6' : '#64748b'
+                      }}
+                    >
+                      <option value="all">전체월</option>
+                      {[...Array(12)].map((_, i) => (
+                        <option key={i+1} value={String(i+1).padStart(2, '0')}>{i+1}월</option>
+                      ))}
+                    </select>
+                    
+                    {(listYear !== 'all' || listMonthOnly !== 'all') && (
+                      <button 
+                        onClick={() => { setListYear('all'); setListMonthOnly('all'); }}
+                        style={{ padding: '6px 10px', borderRadius: '6px', border: 'none', background: '#fee2e2', color: '#dc2626', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}
+                      >초기화</button>
+                    )}
+                    
+                    {/* 공종 필터 */}
+                    <div style={{ position: 'relative', marginLeft: isMobile ? '0' : 'auto' }}>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setShowWorkTypeFilter(!showWorkTypeFilter); }} 
+                        style={{ 
+                          padding: isMobile ? '8px 12px' : '10px 20px', 
+                          borderRadius: '8px', 
+                          border: selectedWorkTypes.length > 0 ? '2px solid #f59e0b' : '1px solid #e2e8f0', 
+                          fontSize: isMobile ? '12px' : '13px', 
+                          fontWeight: '600', 
+                          cursor: 'pointer', 
+                          background: selectedWorkTypes.length > 0 ? '#fef3c7' : 'white', 
+                          color: selectedWorkTypes.length > 0 ? '#92400e' : '#64748b'
+                        }}
+                      >
+                        공종 {selectedWorkTypes.length > 0 && `(${selectedWorkTypes.length})`} ▼
+                      </button>
+                      
+                      {showWorkTypeFilter && !isMobile && (
+                        <div onClick={e => e.stopPropagation()} style={{ 
+                          position: 'absolute', 
+                          top: '100%', 
+                          right: 0, 
+                          marginTop: '4px',
+                          background: 'white', 
+                          borderRadius: '12px', 
+                          boxShadow: '0 4px 20px rgba(0,0,0,0.15)', 
+                          padding: '12px', 
+                          zIndex: 100,
+                          minWidth: '280px',
+                          maxHeight: '320px',
+                          overflowY: 'auto'
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', paddingBottom: '8px', borderBottom: '1px solid #e2e8f0' }}>
+                            <span style={{ fontSize: '13px', fontWeight: '700', color: '#1e293b' }}>공종 선택 (복수 가능)</span>
+                            <button onClick={() => setSelectedWorkTypes([])} style={{ fontSize: '11px', color: '#64748b', background: 'none', border: 'none', cursor: 'pointer' }}>초기화</button>
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            {allWorkTypes.map(wt => (
+                              <label key={wt} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', background: selectedWorkTypes.includes(wt) ? '#dbeafe' : '#f8fafc', border: selectedWorkTypes.includes(wt) ? '2px solid #2563eb' : '1px solid #e2e8f0', fontSize: '12px', fontWeight: selectedWorkTypes.includes(wt) ? '600' : '400', color: selectedWorkTypes.includes(wt) ? '#1d4ed8' : '#64748b' }}>
+                                <input type="checkbox" checked={selectedWorkTypes.includes(wt)} onChange={e => { if (e.target.checked) { setSelectedWorkTypes([...selectedWorkTypes, wt]); } else { setSelectedWorkTypes(selectedWorkTypes.filter(x => x !== wt)); } }} style={{ display: 'none' }} />
+                                {wt}
+                              </label>
+                            ))}
+                          </div>
+                          <button onClick={() => setShowWorkTypeFilter(false)} style={{ width: '100%', marginTop: '12px', padding: '8px', borderRadius: '6px', border: 'none', background: '#2563eb', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>적용하기</button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* 모바일 공종 필터 모달 */}
+                  {showWorkTypeFilter && isMobile && (
+                    <div onClick={() => setShowWorkTypeFilter(false)} style={{
+                      position: 'fixed',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      background: 'rgba(0,0,0,0.5)',
+                      zIndex: 1000,
+                      display: 'flex',
+                      alignItems: 'flex-end',
+                      justifyContent: 'center'
+                    }}>
+                      <div onClick={e => e.stopPropagation()} style={{
+                        background: 'white',
+                        borderRadius: '16px 16px 0 0',
+                        padding: '20px',
+                        width: '100%',
+                        maxHeight: '70vh',
+                        overflowY: 'auto'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid #e2e8f0' }}>
+                          <span style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b' }}>공종 선택 (복수 가능)</span>
+                          <button onClick={() => setSelectedWorkTypes([])} style={{ fontSize: '13px', color: '#64748b', background: 'none', border: 'none', cursor: 'pointer' }}>초기화</button>
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '20px' }}>
+                          {allWorkTypes.map(wt => (
+                            <label key={wt} style={{ 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              padding: '10px 16px', 
+                              borderRadius: '8px', 
+                              cursor: 'pointer', 
+                              background: selectedWorkTypes.includes(wt) ? '#dbeafe' : '#f8fafc', 
+                              border: selectedWorkTypes.includes(wt) ? '2px solid #2563eb' : '1px solid #e2e8f0', 
+                              fontSize: '14px', 
+                              fontWeight: selectedWorkTypes.includes(wt) ? '600' : '400', 
+                              color: selectedWorkTypes.includes(wt) ? '#1d4ed8' : '#64748b' 
+                            }}>
+                              <input type="checkbox" checked={selectedWorkTypes.includes(wt)} onChange={e => { if (e.target.checked) { setSelectedWorkTypes([...selectedWorkTypes, wt]); } else { setSelectedWorkTypes(selectedWorkTypes.filter(x => x !== wt)); } }} style={{ display: 'none' }} />
+                              {wt}
+                            </label>
+                          ))}
+                        </div>
+                        <button onClick={() => setShowWorkTypeFilter(false)} style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', background: '#2563eb', color: 'white', fontSize: '15px', fontWeight: '600', cursor: 'pointer' }}>적용하기</button>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* 선택된 공종 태그 */}
+                  {selectedWorkTypes.length > 0 && (
+                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                      <span style={{ fontSize: '12px', color: '#64748b', marginRight: '4px' }}>필터:</span>
+                      {selectedWorkTypes.map(wt => (
+                        <span key={wt} onClick={() => setSelectedWorkTypes(selectedWorkTypes.filter(x => x !== wt))} style={{ padding: '4px 10px', borderRadius: '12px', background: '#fef3c7', color: '#92400e', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>{wt} ✕</span>
+                      ))}
+                    </div>
+                  )}
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {/* 지난 일정 - 날짜별 그룹화 */}
+                    {listFilter === 'past' && (() => {
+                      // 날짜별 그룹화
+                      const groupedByDate = {};
+                      filteredPast.forEach(s => {
+                        const dateKey = s.date || '날짜미정';
+                        if (!groupedByDate[dateKey]) groupedByDate[dateKey] = [];
+                        groupedByDate[dateKey].push(s);
+                      });
+                      const sortedDates = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
+                      
+                      return sortedDates.map(dateKey => (
+                        <div key={dateKey} style={{ marginBottom: isMobile ? '12px' : '16px' }}>
+                          {/* 날짜 헤더 */}
+                          <div style={{ 
+                            padding: isMobile ? '8px 12px' : '10px 16px', 
+                            background: 'linear-gradient(135deg, #64748b 0%, #94a3b8 100%)', 
+                            borderRadius: '8px', 
+                            marginBottom: '8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between'
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontSize: isMobile ? '13px' : '14px', fontWeight: '700', color: 'white' }}>
+                                일정 {dateKey} ({['일', '월', '화', '수', '목', '금', '토'][new Date(dateKey).getDay()]})
+                              </span>
+                            </div>
+                            <span style={{ 
+                              padding: '3px 8px', 
+                              background: 'rgba(255,255,255,0.25)', 
+                              borderRadius: '10px', 
+                              fontSize: '11px', 
+                              fontWeight: '600', 
+                              color: 'white' 
+                            }}>
+                              {groupedByDate[dateKey].length}건
+                            </span>
+                          </div>
+                          
+                          {/* 해당 날짜의 일정들 */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {groupedByDate[dateKey].map(s => {
+                              const ts = getTypeStyle(s.type);
+                              return (
+                                <div key={s.id} onClick={() => handleEditClick(s)} style={{ padding: isMobile ? '10px 12px' : '14px 16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0', cursor: 'pointer' }}>
+                                  {isMobile ? (
+                                    /* 모바일 레이아웃 */
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                      <div style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', background: ts.bg, color: ts.color }}>{ts.label}</div>
+                                      <div style={{ fontSize: '12px', fontWeight: '600', color: '#64748b' }}>{s.time || '-'}</div>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: '13px', fontWeight: '600', color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.siteName || s.title}</div>
+                                      </div>
+                                      <div style={{ fontSize: '12px', fontWeight: '600', color: '#2563eb' }}>{s.ptAssignee || s.assignee || '-'}</div>
+                                      <div style={{ fontSize: '12px', color: '#94a3b8' }}></div>
+                                    </div>
+                                  ) : (
+                                    /* 데스크탑 레이아웃 */
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
+                                      <div style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', background: ts.bg, color: ts.color, flexShrink: 0 }}>{ts.label}</div>
+                                      <div style={{ minWidth: '50px', fontSize: '13px', fontWeight: '600', color: '#64748b', flexShrink: 0 }}>{s.time || '-'}</div>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.siteName || s.title}</div>
+                                        <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.workType || s.location || ''}</div>
+                                      </div>
+                                      {s.status && <div style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', background: getStatusStyle(getDisplayStatus(s)).bg, color: getStatusStyle(getDisplayStatus(s)).color, flexShrink: 0 }}>{getDisplayStatus(s)}</div>}
+                                      <div style={{ minWidth: '60px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: '#2563eb', flexShrink: 0 }}>{s.ptAssignee || s.assignee || '-'}</div>
+                                      <div style={{ fontSize: '14px', color: '#94a3b8', flexShrink: 0 }}></div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ));
+                    })()}
+                    
+                    {/* 예정/미확정 일정 - 기존 방식 */}
+                    {listFilter === 'pending' && (
+                      <div style={{ marginBottom: '16px', padding: '10px 16px', background: '#f8fafc', borderRadius: '8px', display: 'flex', gap: '20px', alignItems: 'center', fontSize: '12px', color: '#64748b' }}>
+                        <span style={{ fontWeight: '600' }}>미확정 = 담당자 미배정</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ width: '16px', height: '16px', borderRadius: '4px', background: '#e5e7eb', border: '1px solid #d1d5db' }}></span>
+                          날짜O
+                        </span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ width: '16px', height: '16px', borderRadius: '4px', background: 'white', border: '1px solid #e5e7eb' }}></span>
+                          날짜X
+                        </span>
+                      </div>
+                    )}
+                    {/* 앞으로 탭 - 오늘 이후 + 미정/예정 모두 */}
+                    {listFilter === 'future' && (
+                      <div id="future-list" style={{ display: 'flex', flexDirection: 'column', gap: simpleViewMode ? '3px' : (isMobile ? '8px' : '10px'), background: 'white', padding: isMobile ? '6px' : '8px', borderRadius: '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', padding: '8px 0', borderBottom: '2px solid #e2e8f0' }}>
+                          <span style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: '700', color: '#1e293b' }}>앞으로 일정 ({filteredFuture.length}건) - {todayStr} 기준</span>
+                          <button 
+                            onClick={() => setSimpleViewMode(!simpleViewMode)}
+                            style={{ 
+                              padding: '6px 12px', 
+                              borderRadius: '6px', 
+                              border: 'none', 
+                              fontSize: '11px', 
+                              fontWeight: '600', 
+                              cursor: 'pointer', 
+                              background: simpleViewMode ? '#dbeafe' : '#f1f5f9', 
+                              color: simpleViewMode ? '#2563eb' : '#64748b' 
+                            }}
+                          >
+                            {simpleViewMode ? '간단' : '상세'}
+                          </button>
+                        </div>
+                        {filteredFuture.map(s => {
+                          const ts = getTypeStyle(s.type);
+                          const isUnconfirmed = s.dateType !== 'confirmed' || isUnassigned(s);
+                          const hasDetails = s.requester || s.participants || s.competitor || s.note || s.address;
+                          const assigneeText = (s.type === 'personal' || s.type === 'seminar' || s.type === 'vacation' || s.type === 'asq') && s.assignees?.length > 0 
+                            ? (s.assignees.length > 2 ? `${s.assignees.slice(0,2).join(', ')} 외` : s.assignees.join(', ')) 
+                            : (s.ptAssignee || s.assignee || '미배정');
+                          
+                          // 간단 모드
+                          if (simpleViewMode) {
+                            // 모바일: 카드형 세로 스택
+                            if (isMobile) {
+                              return (
+                                <div key={s.id} onClick={() => handleEditClick(s)} style={{
+                                  padding: '8px 10px',
+                                  background: isUnconfirmed ? '#fef2f2' : '#f8fafc',
+                                  borderRadius: '6px',
+                                  border: isUnconfirmed ? '2px solid #fecaca' : '1px solid #e2e8f0',
+                                  cursor: 'pointer'
+                                }}>
+                                  {/* 1줄: 날짜/시간 + 담당자 */}
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '700', minWidth: 0 }}>
+                                      {s.dateType === 'confirmed' ? (
+                                        <>
+                                          <span style={{ color: s.date === todayStr ? '#dc2626' : '#1e293b' }}>{s.date?.slice(5).replace('-', '/')}{s.date === todayStr && ' 오늘'}</span>
+                                          <span style={{ color: '#2563eb', fontSize: '11px' }}>{formatTimeWithAmPm(s.time)}</span>
+                                        </>
+                                      ) : (
+                                        <span style={{ color: '#dc2626' }}>{s.dateType === 'monthOnly' ? getExpectedMonthLabel(s.expectedMonth) : s.dateNote || '미정'}</span>
+                                      )}
+                                    </div>
+                                    <span style={{ fontSize: '11px', fontWeight: '700', color: (s.ptAssignee || s.assignee || s.assignees?.length > 0) ? '#1e293b' : '#dc2626', flexShrink: 0, marginLeft: '8px' }}>{assigneeText}</span>
+                                  </div>
+                                  {/* 2줄: 아파트명(인원) */}
+                                  <div style={{ fontSize: '13px', fontWeight: '700', color: '#1e293b', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                                    {s.siteName || s.title} <span style={{ fontSize: '10px', color: '#64748b', fontWeight: '500' }}>({s.participants || '-'})</span>
+                                  </div>
+                                  {/* 3줄: 요청/공종/경쟁 요약 */}
+                                  <div style={{ display: 'flex', gap: '8px', fontSize: '10px', color: '#64748b', marginTop: '2px', overflow: 'hidden' }}>
+                                    {s.requester && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.requester}{!checkPourAgreement(s.requester).isAgreement && <span style={{ color: '#ef4444', fontWeight: '700' }}> !</span>}</span>}
+                                    {s.workType && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.workType}</span>}
+                                    {s.competitor && <span style={{ color: '#dc2626', fontWeight: '600', flexShrink: 0 }}>{s.competitor}</span>}
+                                  </div>
+                                  {/* 4줄: 주소/기타 (있을 때만) */}
+                                  {(s.address || s.note) && (
+                                    <div style={{ fontSize: '10px', color: '#6b7280', marginTop: '2px', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                                      {s.address}{s.address && s.note && ' · '}{s.note}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }
+                            // 데스크탑: grid (fr 비율로 빈 공간 없음)
+                            return (
+                              <div key={s.id} onClick={() => handleEditClick(s)} style={{
+                                display: 'grid',
+                                gridTemplateColumns: '160px minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr) 140px',
+                                gridTemplateRows: 'auto auto',
+                                alignItems: 'center',
+                                padding: '10px 16px',
+                                background: isUnconfirmed ? '#fef2f2' : '#f8fafc',
+                                borderRadius: '6px',
+                                border: isUnconfirmed ? '2px solid #fecaca' : '1px solid #e2e8f0',
+                                cursor: 'pointer',
+                                gap: '6px 16px'
+                              }}>
+                                {/* 1행: 날짜/시간 */}
+                                <div style={{ gridRow: 1, fontSize: '14px', fontWeight: '700', minWidth: 0 }}>
+                                  {s.dateType === 'confirmed' ? (
+                                    <>
+                                      <div style={{ color: s.date === todayStr ? '#dc2626' : '#1e293b', whiteSpace: 'nowrap' }}>
+                                        {formatDateWithDay(s.date)}{s.date === todayStr && ' 오늘'}
+                                      </div>
+                                      <div style={{ color: '#2563eb', fontSize: '13px', whiteSpace: 'nowrap' }}>{formatTimeWithAmPm(s.time)}</div>
+                                    </>
+                                  ) : (
+                                    <div style={{ color: '#dc2626' }}>
+                                      {s.dateType === 'monthOnly' ? getExpectedMonthLabel(s.expectedMonth) : s.dateNote || '미정'}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* 1행: 아파트명(인원수) */}
+                                <div style={{ gridRow: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', minWidth: 0 }}>
+                                  <span style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b' }}>{s.siteName || s.title}</span>
+                                  <span style={{ color: '#64748b', fontWeight: '500', fontSize: '12px', marginLeft: '2px' }}>({s.participants || '-'})</span>
+                                </div>
+
+                                {/* 1행: 요청 */}
+                                <div style={{ gridRow: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: '13px', minWidth: 0 }}>
+                                  <span style={{ color: '#6b7280' }}>요청:</span>
+                                  <span style={{ color: '#1e293b', fontWeight: '600', marginLeft: '4px' }}>{s.requester || '-'}</span>
+                                  {s.requester && !checkPourAgreement(s.requester).isAgreement && <span style={{ marginLeft: '4px', padding: '1px 4px', borderRadius: '3px', fontSize: '9px', fontWeight: '700', background: '#fef2f2', color: '#ef4444', border: '1px solid #fecaca' }}>비협약</span>}
+                                  {s.requester && checkPourAgreement(s.requester).grade && <span style={{ marginLeft: '4px', padding: '1px 4px', borderRadius: '3px', fontSize: '9px', fontWeight: '700', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}>{checkPourAgreement(s.requester).grade}</span>}
+                                </div>
+
+                                {/* 1행: 공종 */}
+                                <div style={{ gridRow: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: '13px', minWidth: 0 }}>
+                                  <span style={{ color: '#6b7280' }}>공종:</span>
+                                  <span style={{ color: '#1e293b', fontWeight: '600', marginLeft: '4px' }}>{s.workType || '-'}</span>
+                                </div>
+
+                                {/* 1행: 경쟁 */}
+                                <div style={{ gridRow: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: '13px', minWidth: 0 }}>
+                                  <span style={{ color: '#6b7280' }}>경쟁:</span>
+                                  <span style={{ color: s.competitor ? '#dc2626' : '#9ca3af', fontWeight: s.competitor ? '700' : '400', marginLeft: '4px' }}>{s.competitor || '-'}</span>
+                                </div>
+
+                                {/* 1행: 담당자 */}
+                                <div style={{
+                                  gridRow: 1,
+                                  whiteSpace: 'nowrap',
+                                  fontSize: '14px',
+                                  fontWeight: '700',
+                                  color: (s.ptAssignee || s.assignee || s.assignees?.length > 0) ? '#1e293b' : '#dc2626',
+                                  textAlign: 'right',
+                                  minWidth: 0
+                                }}>
+                                  {assigneeText}
+                                </div>
+
+                                {/* 2행: 주소 + 기타 */}
+                                {(s.address || s.note) && (
+                                  <>
+                                    <div style={{
+                                      gridRow: 2,
+                                      gridColumn: '2 / 3',
+                                      overflow: 'hidden',
+                                      whiteSpace: 'nowrap',
+                                      textOverflow: 'ellipsis',
+                                      fontSize: '13px',
+                                      color: '#1e293b',
+                                      minWidth: 0
+                                    }}>
+                                      {s.address || ''}
+                                    </div>
+                                    <div
+                                      style={{
+                                        gridRow: 2,
+                                        gridColumn: '3 / 7',
+                                        overflow: 'hidden',
+                                        whiteSpace: 'nowrap',
+                                        textOverflow: 'ellipsis',
+                                        fontSize: '12px',
+                                        color: '#64748b',
+                                        minWidth: 0
+                                      }}
+                                      title={s.note || ''}
+                                    >
+                                      {s.note && <><span style={{ color: '#9ca3af' }}>기타:</span><span style={{ marginLeft: '4px' }}>{s.note}</span></>}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          }
+                          
+                          // 상세 모드 (기존)
+                          return (
+                            <div key={s.id} onClick={() => handleEditClick(s)} style={{ padding: isMobile ? '10px 12px' : '14px 16px', background: isUnconfirmed ? '#fef2f2' : '#f8fafc', borderRadius: '10px', border: isUnconfirmed ? '2px solid #fecaca' : '1px solid #e2e8f0', cursor: 'pointer' }}>
+                              {/* 모바일 레이아웃 */}
+                              {isMobile ? (
+                                <>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                    <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', background: ts.bg, color: ts.color }}>{ts.label}</span>
+                                    {s.dateType === 'confirmed' ? (
+                                      <span style={{ fontSize: '12px', fontWeight: '600', color: s.date === todayStr ? '#dc2626' : '#1e293b' }}>{formatDateWithDay(s.date)}{s.date === todayStr && ' 오늘'}</span>
+                                    ) : (
+                                      <span style={{ fontSize: '12px', fontWeight: '700', color: '#dc2626' }}>{s.dateType === 'monthOnly' ? getExpectedMonthLabel(s.expectedMonth) : s.dateNote || '미정'}</span>
+                                    )}
+                                    <span style={{ fontSize: '11px', color: '#64748b' }}>{formatTimeWithAmPm(s.time)}</span>
+                                    <span style={{ marginLeft: 'auto', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '600', background: getStatusStyle(getDisplayStatus(s)).bg, color: getStatusStyle(getDisplayStatus(s)).color }}>{getDisplayStatus(s)}</span>
+                                  </div>
+                                  <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '2px' }}>{s.siteName || s.title}</div>
+                                  {s.address && <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '2px' }}>{s.address}</div>}
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <span style={{ fontSize: '11px', color: '#64748b' }}>{s.workType || s.location || ''}</span>
+                                    <span style={{ fontSize: '12px', fontWeight: '600', color: (s.ptAssignee || s.assignee || s.assignees?.length > 0) ? '#2563eb' : '#dc2626' }}>{assigneeText}</span>
+                                  </div>
+                                  {hasDetails && (
+                                    <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed #e2e8f0', fontSize: '10px', color: '#64748b' }}>
+                                      {s.requester && <span style={{ marginRight: '8px' }}>요청: {s.requester}{!checkPourAgreement(s.requester).isAgreement && <span style={{ marginLeft: '2px', padding: '0 3px', borderRadius: '2px', fontSize: '9px', fontWeight: '700', background: '#fef2f2', color: '#ef4444' }}>비협약</span>}{checkPourAgreement(s.requester).grade && <span style={{ marginLeft: '2px', padding: '0 3px', borderRadius: '2px', fontSize: '9px', fontWeight: '700', background: '#eff6ff', color: '#2563eb' }}>{checkPourAgreement(s.requester).grade}</span>}</span>}
+                                      {s.participants && <span style={{ marginRight: '8px' }}>참여: {s.participants}</span>}
+                                      {s.competitor && <span style={{ color: '#ea580c' }}>경쟁: {s.competitor}</span>}
+                                      {s.note && <div style={{ marginTop: '2px' }}>비고: {s.note}</div>}
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                /* 데스크탑 레이아웃 */
+                                <>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                                    <div style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', background: ts.bg, color: ts.color, minWidth: '36px', textAlign: 'center' }}>{ts.label}</div>
+                                    <div style={{ minWidth: '130px' }}>
+                                      {s.dateType === 'confirmed' ? (
+                                        <>
+                                          <div style={{ fontSize: '13px', fontWeight: '600', color: s.date === todayStr ? '#dc2626' : '#1e293b' }}>{formatDateWithDay(s.date)}{s.date === todayStr && ' 오늘'}</div>
+                                          <div style={{ fontSize: '11px', color: '#64748b' }}>{formatTimeWithAmPm(s.time)}</div>
+                                        </>
+                                      ) : (
+                                        <div style={{ fontSize: '13px', fontWeight: '700', color: '#dc2626' }}>{s.dateType === 'monthOnly' ? getExpectedMonthLabel(s.expectedMonth) : s.dateNote || '미정'}</div>
+                                      )}
+                                    </div>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b', marginBottom: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.siteName || s.title}</div>
+                                      {s.address && <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '2px' }}>{s.address}</div>}
+                                      <div style={{ fontSize: '12px', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.workType || s.location || ''}</div>
+                                    </div>
+                                    <div style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: '600', background: getStatusStyle(getDisplayStatus(s)).bg, color: getStatusStyle(getDisplayStatus(s)).color }}>{getDisplayStatus(s)}</div>
+                                    <div style={{ minWidth: '60px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: (s.ptAssignee || s.assignee || s.assignees?.length > 0) ? '#2563eb' : '#dc2626' }}>{assigneeText}</div>
+                                  </div>
+                                  {hasDetails && (
+                                    <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #e2e8f0', display: 'flex', flexWrap: 'wrap', gap: '8px 16px', fontSize: '11px' }}>
+                                      {s.requester && <span style={{ color: '#64748b' }}>요청: <span style={{ color: '#1e293b', fontWeight: '500' }}>{s.requester}</span>{!checkPourAgreement(s.requester).isAgreement && <span style={{ marginLeft: '4px', padding: '1px 4px', borderRadius: '3px', fontSize: '10px', fontWeight: '700', background: '#fef2f2', color: '#ef4444', border: '1px solid #fecaca' }}>비협약</span>}{checkPourAgreement(s.requester).grade && <span style={{ marginLeft: '4px', padding: '1px 4px', borderRadius: '3px', fontSize: '10px', fontWeight: '700', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}>{checkPourAgreement(s.requester).grade}</span>}</span>}
+                                      {s.participants && <span style={{ color: '#64748b' }}>참여: <span style={{ color: '#1e293b', fontWeight: '500' }}>{s.participants}</span></span>}
+                                      {s.competitor && <span style={{ color: '#64748b' }}>경쟁: <span style={{ color: '#ea580c', fontWeight: '500' }}>{s.competitor}</span></span>}
+                                      {s.note && <span style={{ color: '#64748b' }}>비고: <span style={{ color: '#1e293b', fontWeight: '500' }}>{s.note}</span></span>}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {/* 전체 탭 - 모든 일정 표시 */}
+                    {listFilter === 'all' && [...filteredUpcoming, ...filteredPast, ...((listYear === 'all' && listMonthOnly === 'all') ? filteredPendingSchedules : [])].sort((a, b) => {
+                      // 정렬용 날짜 키 생성 (내림차순: 미정 > 예정월 > 확정날짜)
+                      const getDateKey = (s) => {
+                        if (s.dateType === 'pending' || (!s.date && !s.expectedMonth)) return '9999-99-99'; // 미정은 맨 위
+                        if (s.dateType === 'monthOnly' && s.expectedMonth) return s.expectedMonth + '-01'; // 해당 월 처음에
+                        if (s.dateType === 'confirmed' && s.date) return s.date;
+                        return '9999-99-99';
+                      };
+                      return getDateKey(b).localeCompare(getDateKey(a));
+                    }).map(s => {
+                      const ts = getTypeStyle(s.type);
+                      const isPendingItem = isPending(s);
+                      // 예정/미정/미확정(담당자 미배정) 여부 확인
+                      const isUnconfirmed = s.dateType !== 'confirmed' || isUnassigned(s);
+                      return (
+                        <div key={s.id} onClick={() => handleEditClick(s)} style={{ padding: isMobile ? '10px 12px' : '16px', background: isUnconfirmed ? '#fef2f2' : '#f8fafc', borderRadius: '10px', border: isUnconfirmed ? '2px solid #fecaca' : '1px solid #e2e8f0', cursor: 'pointer', marginBottom: isMobile ? '6px' : '8px' }}>
+                          {isMobile ? (
+                            /* 모바일 레이아웃 */
+                            <>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', background: ts.bg, color: ts.color }}>{ts.label}</span>
+                                {s.dateType === 'confirmed' ? (
+                                  <span style={{ fontSize: '12px', fontWeight: '600', color: '#1e293b' }}>{formatDateWithDay(s.date)}</span>
+                                ) : (
+                                  <span style={{ fontSize: '12px', fontWeight: '700', color: '#dc2626' }}>{s.dateType === 'monthOnly' ? getExpectedMonthLabel(s.expectedMonth) : s.dateNote || '미정'}</span>
+                                )}
+                                <span style={{ fontSize: '11px', color: '#64748b' }}>{formatTimeWithAmPm(s.time)}</span>
+                                <span style={{ marginLeft: 'auto', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '600', background: getStatusStyle(getDisplayStatus(s)).bg, color: getStatusStyle(getDisplayStatus(s)).color }}>{getDisplayStatus(s)}</span>
+                              </div>
+                              <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '2px' }}>{s.siteName || s.title} <span style={{ fontSize: '10px', color: '#9ca3af' }}></span></div>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <span style={{ fontSize: '11px', color: '#64748b' }}>{s.workType || s.location || ''}</span>
+                                <span style={{ fontSize: '12px', fontWeight: '600', color: (s.ptAssignee || s.assignee || s.assignees?.length > 0) ? '#2563eb' : '#dc2626' }}>{(s.type === 'personal' || s.type === 'seminar' || s.type === 'vacation' || s.type === 'asq') && s.assignees?.length > 0 ? s.assignees.slice(0,2).join(', ') : (s.ptAssignee || s.assignee || '미배정')}</span>
+                              </div>
+                            </>
+                          ) : (
+                            /* 데스크탑 레이아웃 */
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
+                              <div style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: '700', background: ts.bg, color: ts.color, minWidth: '40px', textAlign: 'center', flexShrink: 0 }}>{ts.label}</div>
+                              <div style={{ minWidth: '140px', flexShrink: 0 }}>
+                                {s.dateType === 'confirmed' ? (
+                                  <>
+                                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b' }}>{formatDateWithDay(s.date)}</div>
+                                    <div style={{ fontSize: '12px', color: '#64748b' }}>{formatTimeWithAmPm(s.time)}</div>
+                                  </>
+                                ) : (
+                                  <div style={{ fontSize: '14px', fontWeight: '700', color: '#dc2626' }}>{s.dateType === 'monthOnly' ? getExpectedMonthLabel(s.expectedMonth) : s.dateNote || '미정'}</div>
+                                )}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: '15px', fontWeight: '600', color: '#1e293b', marginBottom: '4px', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.siteName || s.title}</div>
+                                <div style={{ fontSize: '13px', color: '#64748b', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.workType || s.location || ''}</div>
+                              </div>
+                              {isPendingItem && <span style={{ padding: '4px 8px', borderRadius: '4px', background: '#fef3c7', color: '#92400e', fontSize: '11px', fontWeight: '600', flexShrink: 0 }}>미확정</span>}
+                              <div style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', background: getStatusStyle(getDisplayStatus(s)).bg, color: getStatusStyle(getDisplayStatus(s)).color, flexShrink: 0 }}>{getDisplayStatus(s)}</div>
+                              <div style={{ minWidth: '70px', textAlign: 'right', fontSize: '13px', fontWeight: '600', color: (s.ptAssignee || s.assignee || s.assignees?.length > 0) ? '#2563eb' : '#94a3b8', flexShrink: 0 }}>{(s.type === 'personal' || s.type === 'seminar' || s.type === 'vacation' || s.type === 'asq') && s.assignees?.length > 0 ? (s.assignees.length > 2 ? `${s.assignees.slice(0,2).join(', ')} 외 ${s.assignees.length - 2}명` : s.assignees.join(', ')) : (s.ptAssignee || s.assignee || '-')}</div>
+                              <div style={{ fontSize: '16px', color: '#94a3b8', flexShrink: 0 }}></div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {listFilter !== 'past' && listFilter !== 'all' && listFilter !== 'future' && (listFilter === 'pending' ? filteredPendingSchedules : filteredUpcoming).sort((a, b) => {
+                      // 오름차순: 확정날짜 < 예정월 < 미정
+                      const getDateKey = (s) => {
+                        if (s.dateType === 'confirmed' && s.date) return s.date;
+                        if (s.dateType === 'monthOnly' && s.expectedMonth) return s.expectedMonth + '-01';
+                        return '9999-99-99'; // 미정은 맨 마지막
+                      };
+                      return getDateKey(a).localeCompare(getDateKey(b));
+                    }).map(s => {
+                      const ts = getTypeStyle(s.type);
+                      const pendingStatus = listFilter === 'pending' ? getPendingStatus(s) : null;
+                      const pendingStyle = pendingStatus ? getPendingStyle(pendingStatus) : null;
+                      return (
+                        <div key={s.id} onClick={() => handleEditClick(s)} style={{ padding: isMobile ? '10px 12px' : '16px', background: listFilter === 'pending' ? pendingStyle.bg : '#f8fafc', borderRadius: '10px', border: listFilter === 'pending' ? pendingStyle.border : '1px solid #e2e8f0', cursor: 'pointer', marginBottom: isMobile ? '6px' : '8px' }}>
+                          {isMobile ? (
+                            /* 모바일 레이아웃 */
+                            <>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', background: ts.bg, color: ts.color }}>{ts.label}</span>
+                                {s.dateType === 'confirmed' ? (
+                                  <span style={{ fontSize: '12px', fontWeight: '600', color: '#1e293b' }}>{formatDateWithDay(s.date)}</span>
+                                ) : (
+                                  <span style={{ fontSize: '12px', fontWeight: '700', color: '#f59e0b' }}>{s.dateType === 'monthOnly' ? getExpectedMonthLabel(s.expectedMonth) : s.dateNote || '미정'}</span>
+                                )}
+                                <span style={{ fontSize: '11px', color: '#64748b' }}>{formatTimeWithAmPm(s.time)}</span>
+                                <span style={{ marginLeft: 'auto', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '600', background: getStatusStyle(getDisplayStatus(s)).bg, color: getStatusStyle(getDisplayStatus(s)).color }}>{getDisplayStatus(s)}</span>
+                              </div>
+                              <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '2px' }}>{s.siteName || s.title} <span style={{ fontSize: '10px', color: '#9ca3af' }}></span></div>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <span style={{ fontSize: '11px', color: '#64748b' }}>{s.workType || s.location || ''}</span>
+                                <span style={{ fontSize: '12px', fontWeight: '600', color: (s.ptAssignee || s.assignee || s.assignees?.length > 0) ? '#2563eb' : '#dc2626' }}>{(s.type === 'personal' || s.type === 'seminar' || s.type === 'vacation' || s.type === 'asq') && s.assignees?.length > 0 ? s.assignees.slice(0,2).join(', ') : (s.ptAssignee || s.assignee || '미배정')}</span>
+                              </div>
+                              {listFilter === 'pending' && s.note && <div style={{ fontSize: '10px', color: '#92400e', marginTop: '4px' }}> {s.note}</div>}
+                            </>
+                          ) : (
+                            /* 데스크탑 레이아웃 */
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
+                              <div style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: '700', background: ts.bg, color: ts.color, minWidth: '40px', textAlign: 'center', flexShrink: 0 }}>{ts.label}</div>
+                              <div style={{ minWidth: '140px', flexShrink: 0 }}>
+                                {s.dateType === 'confirmed' ? (
+                                  <>
+                                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b' }}>{formatDateWithDay(s.date)}</div>
+                                    <div style={{ fontSize: '12px', color: '#64748b' }}>{formatTimeWithAmPm(s.time)}</div>
+                                  </>
+                                ) : (
+                                  <div style={{ fontSize: '14px', fontWeight: '700', color: '#f59e0b' }}>{s.dateType === 'monthOnly' ? getExpectedMonthLabel(s.expectedMonth) : s.dateNote || '미정'}</div>
+                                )}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: '15px', fontWeight: '600', color: '#1e293b', marginBottom: '4px', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.siteName || s.title}</div>
+                                <div style={{ fontSize: '13px', color: '#64748b', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.workType || s.location || ''}</div>
+                                {listFilter === 'pending' && s.note && <div style={{ fontSize: '12px', color: '#92400e', marginTop: '4px', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}> {s.note}</div>}
+                              </div>
+                              <div style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', background: getStatusStyle(getDisplayStatus(s)).bg, color: getStatusStyle(getDisplayStatus(s)).color, flexShrink: 0 }}>{getDisplayStatus(s)}</div>
+                              <div style={{ minWidth: '70px', textAlign: 'right', fontSize: '13px', fontWeight: '600', color: (s.ptAssignee || s.assignee || s.assignees?.length > 0) ? '#2563eb' : '#94a3b8', flexShrink: 0 }}>{(s.type === 'personal' || s.type === 'seminar' || s.type === 'vacation' || s.type === 'asq') && s.assignees?.length > 0 ? (s.assignees.length > 2 ? `${s.assignees.slice(0,2).join(', ')} 외 ${s.assignees.length - 2}명` : s.assignees.join(', ')) : (s.ptAssignee || s.assignee || '-')}</div>
+                              <div style={{ fontSize: '16px', color: '#94a3b8', flexShrink: 0 }}></div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {((listFilter === 'future' && filteredFuture.length === 0) || (listFilter === 'all' && filteredUpcoming.length + filteredPast.length + ((listYear === 'all' && listMonthOnly === 'all') ? filteredPendingSchedules.length : 0) === 0) || (listFilter === 'pending' && filteredPendingSchedules.length === 0) || (listFilter === 'upcoming' && filteredUpcoming.length === 0) || (listFilter === 'past' && filteredPast.length === 0)) && (
+                      <div style={{ textAlign: 'center', padding: isMobile ? '40px' : '60px', color: '#94a3b8' }}><p style={{ fontSize: '14px' }}>{searchQuery ? `"${searchQuery}" 검색 결과가 없습니다` : '해당 일정이 없습니다'}</p></div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+            </>
+          )}
+
+          {/* 실적관리 */}
+          {showPerformance && (
+            <>
+              {/* 비로그인 상태 - 로그인 요청 화면 */}
+              {!isLoggedIn ? (
+                <div style={{ background: 'white', borderRadius: '12px', padding: '60px 40px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', textAlign: 'center' }}>
+                                    <h2 style={{ fontSize: '20px', fontWeight: '700', color: '#1e293b', marginBottom: '12px' }}>로그인이 필요합니다</h2>
+                  <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '24px' }}>실적관리는 로그인 후 이용 가능합니다.</p>
+                  <button onClick={() => setShowLoginModal(true)} style={{ padding: '14px 32px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', fontSize: '15px', fontWeight: '600', cursor: 'pointer' }}>로그인하기</button>
+                </div>
+              ) : (
+              <>
+              {/* 로그인 상태 바 */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', padding: isMobile ? '10px 12px' : '12px 16px', background: '#dcfce7', borderRadius: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                <span style={{ fontSize: isMobile ? '12px' : '13px', color: '#166534' }}>
+                  로그인: <strong>{currentUser.name}</strong>님
+                </span>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {('Notification' in window) && (/Android/i.test(navigator.userAgent) || window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches) && (
+                    <button onClick={() => pushEnabled ? disablePushNotification() : initPushNotification()} style={{ padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: '6px', border: 'none', background: pushEnabled ? '#dcfce7' : '#dbeafe', color: pushEnabled ? '#166534' : '#1d4ed8', fontSize: isMobile ? '11px' : '12px', fontWeight: '600', cursor: 'pointer' }}>{pushEnabled ? '알림 ON' : '알림 OFF'}</button>
+                  )}
+                  <button onClick={() => setShowMyPasswordModal(true)} style={{ padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: '6px', border: 'none', background: '#fef3c7', color: '#92400e', fontSize: isMobile ? '11px' : '12px', fontWeight: '600', cursor: 'pointer' }}>비밀번호</button>
+                  <button onClick={handleLogout} style={{ padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: '6px', border: 'none', background: '#f1f5f9', color: '#64748b', fontSize: isMobile ? '11px' : '12px', fontWeight: '600', cursor: 'pointer' }}>로그아웃</button>
+                </div>
+              </div>
+
+              {/* 필터 바 */}
+              <div style={{ display: 'flex', gap: isMobile ? '6px' : '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '16px', padding: isMobile ? '10px' : '14px', background: 'white', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                {/* 현장명 검색 */}
+                <div style={{ position: 'relative', flex: isMobile ? '1 1 100%' : '0 0 auto' }}>
+                  <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="현장명 검색" style={{ padding: '9px 32px 9px 12px', borderRadius: '8px', border: searchQuery ? '2px solid #6366f1' : '1px solid #e2e8f0', fontSize: '13px', width: isMobile ? '100%' : '140px', background: searchQuery ? '#eef2ff' : 'white', outline: 'none', fontWeight: '500' }} />
+                  {searchQuery && <button onClick={() => setSearchQuery('')} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: '#94a3b8' }}>✕</button>}
+                </div>
+                {/* 담당자 */}
+                <select value={selectedAssignee} onChange={(e) => { setSelectedAssignee(e.target.value); setDashboardView('overview'); setShowWorkTypeAnalysis(false); setShowLossReasonAnalysis(false); }} style={{ padding: '9px 28px 9px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: selectedAssignee === 'all' ? 'white' : '#eef2ff', color: selectedAssignee === 'all' ? '#64748b' : '#4f46e5', outline: 'none', appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center', backgroundSize: '16px', minWidth: '90px' }}>
+                  {(() => { return (<><option value="all">전체</option>{assigneeList.map(a => <option key={a} value={a}>{a}</option>)}</>); })()}
+                </select>
+                {/* 연도 */}
+                <select value={exportYear} onChange={(e) => setExportYear(e.target.value)} style={{ padding: '9px 28px 9px 12px', borderRadius: '8px', border: exportYear === 'all' ? '2px solid #6366f1' : '1px solid #e2e8f0', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: exportYear === 'all' ? '#eef2ff' : 'white', color: exportYear === 'all' ? '#4f46e5' : '#1e293b', outline: 'none', appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center', backgroundSize: '16px', minWidth: '85px' }}>
+                  <option value="all">전체</option><option value="2025">2025년</option><option value="2026">2026년</option><option value="2027">2027년</option>
+                </select>
+                {/* 분기 탭 버튼 */}
+                <div style={{ display: 'flex', gap: '2px', background: '#f1f5f9', borderRadius: '8px', padding: '2px' }}>
+                  {[{ key: 'all', label: '전체' }, { key: '1분기', label: '1Q' }, { key: '2분기', label: '2Q' }, { key: '3분기', label: '3Q' }, { key: '4분기', label: '4Q' }].map(q => (
+                    <button key={q.key} onClick={() => setExportQuarter(q.key)} style={{ padding: '6px 10px', borderRadius: '6px', border: 'none', fontSize: '12px', fontWeight: '600', cursor: 'pointer', background: exportQuarter === q.key ? '#6366f1' : 'transparent', color: exportQuarter === q.key ? 'white' : '#64748b', transition: 'all 0.2s' }}>{q.label}</button>
+                  ))}
+                </div>
+                {!isMobile && <div style={{ width: '1px', height: '28px', background: '#e2e8f0' }} />}
+                {/* 내보내기 */}
+                {(() => {
+                  // 분기별 정산 확인 상태 검증
+                  const allAssignees = ['한준엽', '조재연', '정정훈', '김성민', '이필선', '조현식', '한인규'];
+                  const expYear = exportYear === 'all' ? new Date().getFullYear() : parseInt(exportYear);
+                  const qNumMap = { '1분기': 1, '2분기': 2, '3분기': 3, '4분기': 4 };
+                  const selectedQNum = qNumMap[exportQuarter];
+                  let quarterNotConfirmed = [];
+                  if (selectedQNum) {
+                    const qKey = `${expYear}-Q${selectedQNum}`;
+                    quarterNotConfirmed = allAssignees.filter(name => !quarterConfirmations[qKey]?.[name]?.confirmed);
+                  }
+                  const hasUnconfirmed = selectedQNum && quarterNotConfirmed.length > 0;
+
+                  return (
+                    <div style={{ display: 'flex', gap: '4px', marginLeft: isMobile ? '0' : 'auto', alignItems: 'center' }}>
+                      <button onClick={() => exportQuarterlyExcel(expYear, exportQuarter, 'all')} style={{ padding: '7px 12px', borderRadius: '6px', border: '1px solid #16a34a', fontSize: '11px', fontWeight: '600', cursor: 'pointer', background: '#f0fdf4', color: '#16a34a' }}>Excel</button>
+                      <button onClick={() => exportToPDF(expYear, exportQuarter)} style={{ padding: '7px 12px', borderRadius: '6px', border: '1px solid #dc2626', fontSize: '11px', fontWeight: '600', cursor: 'pointer', background: '#fef2f2', color: '#dc2626' }}>PDF</button>
+                      <button onClick={() => exportToPPT(expYear, exportQuarter)} style={{ padding: '7px 12px', borderRadius: '6px', border: '1px solid #2563eb', fontSize: '11px', fontWeight: '600', cursor: 'pointer', background: '#eff6ff', color: '#2563eb' }}>PPT</button>
+                      {hasUnconfirmed && (
+                        <span title={`미확인: ${quarterNotConfirmed.join(', ')}`} style={{ fontSize: 10, fontWeight: 600, color: '#f59e0b', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '3px 8px', cursor: 'help', whiteSpace: 'nowrap' }}>
+                          &#9888; {quarterNotConfirmed.length}명 미확인
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* 수정 중 알림 */}
+              {hasResultChanges && (
+                <div style={{ position: 'sticky', top: '70px', zIndex: 50, marginBottom: '16px', padding: isMobile ? '10px 12px' : '12px 16px', background: '#fef3c7', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
+                  <span style={{ fontSize: isMobile ? '12px' : '13px', color: '#92400e', flex: 1 }}>수정된 실적이 있습니다</span>
+                  <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                    <button onClick={() => { setEditingResults({}); setDirtyScheduleIds(new Set()); setHasResultChanges(false); }} style={{ padding: isMobile ? '8px 14px' : '8px 16px', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
+                    <button onClick={saveResults} style={{ padding: isMobile ? '8px 14px' : '8px 16px', borderRadius: '6px', border: 'none', background: '#16a34a', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>저장</button>
+                  </div>
+                </div>
+              )}
+
+              {/* ===== 대시보드 메인 ===== */}
+              {(() => {
+                const DonutChart = ({ percent, size = 80 }) => {
+                  const strokeWidth = 8;
+                  const radius = (size - strokeWidth) / 2;
+                  const circumference = 2 * Math.PI * radius;
+                  const offset = circumference - (percent / 100) * circumference;
+                  return (
+                    <div style={{ position: 'relative', width: size, height: size }}>
+                      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+                        <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke="#e5e7eb" strokeWidth={strokeWidth} />
+                        <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke="#3b82f6" strokeWidth={strokeWidth} strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round" />
+                      </svg>
+                      <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}>
+                        <div style={{ fontSize: '16px', fontWeight: '700', color: '#111827' }}>{percent}%</div>
+                      </div>
+                    </div>
+                  );
+                };
+
+                const activeAssignee = previewAssignee || selectedAssignee;
+                const teamData = getTeamAnalysis(ptSchedules, exportYear, exportQuarter, previewAssignee);
+                const ts = teamData.teamSummary;
+                const prev = teamData.prevSummary;
+                const kanban = getKanbanData(activeAssignee, ptSchedules, exportYear, exportQuarter);
+                const totalKanban = kanban.inProgress.length + kanban.win.length + kanban.lose.length + kanban.draw.length;
+
+                // 현재 보고 있는 통계 (전체 or 개인) - previewAssignee 우선 적용
+                const currentStats = !previewAssignee && selectedAssignee === 'all' ? ts : (() => {
+                  const target = previewAssignee || selectedAssignee;
+                  if (target === 'all') return ts;
+                  const st = getPerformanceStats(target, exportYear, exportQuarter);
+                  return { totalPT: st.total, win: st.wins, draw: st.draws, lose: st.losses, inProgress: st.pending, winRate: st.winRate, totalCompleted: st.wins + st.draws + st.losses };
+                })();
+
+                // KPI 카드 데이터 - currentStats 기준으로 통일 (개인카드/도넛차트와 일치)
+                const kpiCards = [
+                  { label: 'PT 건수', value: currentStats.totalPT, color: '#6366f1', bg: '#eef2ff', prev: prev.totalPT, unit: '건' },
+                  { label: '승리', value: currentStats.win, color: '#3b82f6', bg: '#eff6ff', prev: prev.win, unit: '건' },
+                  { label: '무승부', value: currentStats.draw, color: '#f59e0b', bg: '#fffbeb', prev: prev.draw, unit: '건' },
+                  { label: '패배', value: currentStats.lose, color: '#ef4444', bg: '#fef2f2', prev: prev.lose, unit: '건', invertTrend: true },
+                  { label: '승률', value: currentStats.winRate, color: '#8b5cf6', bg: '#f5f3ff', prev: prev.winRate, unit: '%', isPercent: true }
+                ];
+
+                // 공종별 통계 (바 차트용)
+                const gongongStats = teamData.GROUP_ORDER.map(g => {
+                  const gs = teamData.groupStats[g] || { wins: 0, draws: 0, losses: 0, total: 0 };
+                  const completed = gs.wins + gs.draws + gs.losses;
+                  const winRate = completed > 0 ? Math.round((gs.wins / completed) * 100) : 0;
+                  return { name: g, total: gs.total, wins: gs.wins, losses: gs.losses, winRate, color: GONGONG_BADGE_COLORS[g] };
+                }).filter(g => g.total > 0);
+                const maxGongongTotal = Math.max(...gongongStats.map(g => g.total), 1);
+
+                // 도넛 차트 데이터
+                const donutData = [
+                  { label: '승리', value: currentStats.win, color: '#3b82f6' },
+                  { label: '무승부', value: currentStats.draw, color: '#f59e0b' },
+                  { label: '패배', value: currentStats.lose, color: '#ef4444' },
+                  { label: '진행중', value: currentStats.inProgress, color: '#94a3b8' }
+                ];
+                const donutTotal = donutData.reduce((s, d) => s + d.value, 0) || 1;
+
+                // 칸반 카드 렌더
+                const renderKanbanCard = (card, type) => {
+                  const borderColor = type === 'win' ? '#3b82f6' : type === 'lose' ? '#ef4444' : type === 'draw' ? '#f59e0b' : type === 'support' ? '#06b6d4' : '#94a3b8';
+                  return (
+                    <div key={card.id + '_' + type} onClick={() => { if (card.manager) setSelectedAssignee(card.manager); }} style={{ background: 'white', borderRadius: '10px', padding: isMobile ? '10px 10px 10px 14px' : '12px 14px 12px 18px', borderLeft: `4px solid ${borderColor}`, boxShadow: '0 1px 3px rgba(0,0,0,0.06)', cursor: 'pointer', transition: 'transform 0.15s, box-shadow 0.15s' }} onMouseOver={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'; }} onMouseOut={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)'; }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                        <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: card.gongongBadgeColor + '18', color: card.gongongBadgeColor }}>{card.gongong}</span>
+                        <span style={{ fontSize: '11px', color: '#94a3b8' }}>{card.date ? card.date.slice(5) : ''}</span>
+                      </div>
+                      <div style={{ fontSize: isMobile ? '13px' : '14px', fontWeight: '700', color: '#1e293b', marginBottom: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{card.siteName}</div>
+                      <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '6px' }}>{card.manager}</div>
+                      {type === 'win' && card.winReason && <div style={{ fontSize: '11px', color: '#1d4ed8', background: '#eff6ff', padding: '4px 8px', borderRadius: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{card.winReason}</div>}
+                      {type === 'lose' && <div style={{ fontSize: '11px', color: '#dc2626', background: '#fef2f2', padding: '4px 8px', borderRadius: '4px' }}>{card.lossTypeLabel}{card.competitor ? ` (${card.competitor})` : ''}{card.lossReason ? ` - ${card.lossReason}` : ''}</div>}
+                      {type === 'inProgress' && card.dDay !== null && <div style={{ fontSize: '11px', fontWeight: '600', color: card.urgency === 'overdue' ? '#dc2626' : card.urgency === 'high' ? '#f59e0b' : '#64748b' }}>{card.dDay <= 0 ? `D${card.dDay} (지남)` : `D-${card.dDay}`}</div>}
+                    </div>
+                  );
+                };
+
+                return (
+                  <>
+                    {/* 도넛 차트 (중앙 배치, 풀폭) */}
+                    <div style={{ background: 'white', borderRadius: '12px', padding: '20px 16px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '24px' }}>
+                        <div style={{ position: 'relative', width: 160, height: 160, flexShrink: 0 }}>
+                          <svg width={160} height={160} style={{ transform: 'rotate(-90deg)' }}>
+                            {(() => {
+                              let cumOffset = 0;
+                              const circumference = 2 * Math.PI * 64;
+                              return donutData.map((d, i) => {
+                                const pct = d.value / donutTotal;
+                                const dashLen = pct * circumference;
+                                const dashOffset = cumOffset;
+                                cumOffset += dashLen;
+                                return <circle key={i} cx={80} cy={80} r={64} fill="none" stroke={d.color} strokeWidth={18} strokeDasharray={`${dashLen} ${circumference - dashLen}`} strokeDashoffset={-dashOffset} />;
+                              });
+                            })()}
+                            <circle cx={80} cy={80} r={54} fill="white" />
+                          </svg>
+                          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}>
+                            <div style={{ fontSize: '28px', fontWeight: '800', color: '#1e293b' }}>{currentStats.winRate}%</div>
+                            <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '600' }}>승률</div>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {donutData.map((d, i) => (
+                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+                              <div style={{ width: 10, height: 10, borderRadius: '50%', background: d.color, flexShrink: 0 }} />
+                              <span style={{ color: '#64748b', minWidth: '40px' }}>{d.label}</span>
+                              <span style={{ fontWeight: '700', color: '#1e293b', fontSize: '16px' }}>{d.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* KPI 숫자 스트립 (풀폭, 가로 5칸) */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px', marginBottom: '12px' }}>
+                      {kpiCards.map((kpi, i) => {
+                        const diff = kpi.value - (kpi.prev || 0);
+                        const showTrend = kpi.prev !== undefined && kpi.prev !== null;
+                        const isPositive = kpi.invertTrend ? diff <= 0 : diff >= 0;
+                        return (
+                          <div key={i} style={{ background: 'white', borderRadius: '10px', padding: '10px 8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', textAlign: 'center', borderTop: `3px solid ${kpi.color}` }}>
+                            <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '600', marginBottom: '4px' }}>{kpi.label}</div>
+                            <div style={{ fontSize: '18px', fontWeight: '800', color: kpi.color }}>{kpi.value}{kpi.isPercent ? '%' : ''}</div>
+                            {showTrend && diff !== 0 && (
+                              <div style={{ fontSize: '10px', fontWeight: '600', color: isPositive ? '#16a34a' : '#dc2626', marginTop: '2px' }}>
+                                {isPositive ? '▲' : '▼'}{Math.abs(diff)}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* 담당자별 카드 (개요/분석 탭 위) */}
+                    <div style={{ marginBottom: '16px' }}>
+                      <div style={{ fontSize: '13px', fontWeight: '700', color: '#64748b', marginBottom: '8px' }}>담당자별</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : `repeat(${(() => { const isTeamLeader = currentUser?.name === '한준엽'; const teamMembers = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민']; const displayList = isTeamLeader ? assigneeList.filter(a => teamMembers.includes(a)) : assigneeList; return Math.min(displayList.length + 1, 10); })()}, 1fr)`, gap: '10px' }}>
+                        {/* 전체 카드 */}
+                        {(() => {
+                          const isActive = previewAssignee === null;
+                          return (
+                            <div onClick={() => { setPreviewAssignee(null); setSiteListTab('all'); }} style={{ background: isActive ? '#eef2ff' : 'white', borderRadius: '10px', padding: '14px', boxShadow: isActive ? '0 2px 8px rgba(99,102,241,0.15)' : '0 1px 3px rgba(0,0,0,0.06)', cursor: 'pointer', border: isActive ? '2px solid #6366f1' : '2px solid transparent', transition: 'all 0.2s', textAlign: 'center' }} onMouseOver={e => { if (!isActive) { e.currentTarget.style.border = '2px solid #94a3b8'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'; } }} onMouseOut={e => { if (!isActive) { e.currentTarget.style.border = '2px solid transparent'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)'; } }}>
+                              <div style={{ fontSize: '14px', fontWeight: '700', color: '#6366f1', marginBottom: '6px' }}>전체</div>
+                              <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', fontSize: '11px', marginBottom: '4px', flexWrap: 'wrap' }}>
+                                <span style={{ color: '#3b82f6', fontWeight: '700' }}>{currentStats.win}승</span>
+                                <span style={{ color: '#f59e0b', fontWeight: '700' }}>{currentStats.draw}무</span>
+                                <span style={{ color: '#ef4444', fontWeight: '700' }}>{currentStats.lose}패</span>
+                                <span style={{ color: '#94a3b8', fontWeight: '600' }}>{currentStats.inProgress}진행</span>
+                              </div>
+                              <div style={{ fontSize: '13px', color: '#6366f1', fontWeight: '800' }}>{currentStats.winRate}%</div>
+                              <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '3px' }}>{currentStats.totalPT}건</div>
+                            </div>
+                          );
+                        })()}
+                        {/* 개별 담당자 카드 */}
+                        {(() => {
+                          const isTeamLeader = currentUser?.name === '한준엽';
+                          const teamMembers = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민'];
+                          const displayList = isTeamLeader ? assigneeList.filter(a => teamMembers.includes(a)) : assigneeList;
+                          return displayList.map(a => {
+                            const st = getPerformanceStats(a, exportYear, exportQuarter);
+                            const an = getPtAnalysis(a, ptSchedules);
+                            const mg = an.mainGroup;
+                            const isActive = previewAssignee === a;
+                            return (
+                              <div key={a} onClick={() => { if (previewAssignee === a) { setPreviewAssignee(null); setSiteListTab('all'); } else { setPreviewAssignee(a); setSiteListTab('all'); } }} style={{ background: isActive ? '#f0fdf4' : 'white', borderRadius: '10px', padding: '14px', boxShadow: isActive ? '0 2px 8px rgba(34,197,94,0.15)' : '0 1px 3px rgba(0,0,0,0.06)', cursor: 'pointer', border: isActive ? '2px solid #3b82f6' : '2px solid transparent', transition: 'all 0.2s', textAlign: 'center' }} onMouseOver={e => { if (!isActive) { e.currentTarget.style.border = '2px solid #94a3b8'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'; } }} onMouseOut={e => { if (!isActive) { e.currentTarget.style.border = '2px solid transparent'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)'; } }}>
+                                <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '6px' }}>{a}</div>
+                                <div style={{ display: 'flex', justifyContent: 'center', gap: '5px', fontSize: '11px', marginBottom: '4px', flexWrap: 'wrap' }}>
+                                  <span style={{ color: '#3b82f6', fontWeight: '700' }}>{st.wins}승</span>
+                                  <span style={{ color: '#f59e0b', fontWeight: '700' }}>{st.draws}무</span>
+                                  <span style={{ color: '#ef4444', fontWeight: '700' }}>{st.losses}패</span>
+                                  <span style={{ color: '#94a3b8', fontWeight: '600' }}>{st.pending}진행</span>
+                                </div>
+                                <div style={{ fontSize: '13px', color: '#6366f1', fontWeight: '800' }}>{st.winRate}%</div>
+                                <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '3px' }}>{st.total}건</div>
+                                {mg && mg[0] !== '기타' && <div style={{ fontSize: '10px', color: '#b0b8c4', marginTop: '2px' }}>{mg[0]}</div>}
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* 서브탭: 요약 / 개요 / 분석 */}
+                    <div style={{ display: 'flex', gap: '0', marginBottom: '16px', borderBottom: '2px solid #e2e8f0' }}>
+                      {[{ key: 'overview', label: '개요' }, { key: 'analysis', label: '분석' }, { key: 'summary', label: '요약 보고' }, { key: 'strategy', label: '🎯 전략' }].map(tab => (
+                        <button key={tab.key} onClick={() => setDashboardView(tab.key)} style={{ padding: '10px 20px', border: 'none', background: 'none', fontSize: '14px', fontWeight: '700', cursor: 'pointer', color: dashboardView === tab.key ? '#6366f1' : '#94a3b8', borderBottom: dashboardView === tab.key ? '3px solid #6366f1' : '3px solid transparent', marginBottom: '-2px', transition: 'all 0.2s' }}>{tab.label}</button>
+                      ))}
+                    </div>
+
+                    {/* ===== 요약 보고 탭 (대표님 보고용) ===== */}
+                    {dashboardView === 'summary' && (() => {
+                      const periodLabel = exportYear === 'all' ? '전체' : exportQuarter ? `${exportYear} ${exportQuarter}` : `${exportYear}`;
+                      // 담당자별 실적 테이블
+                      const isTeamLeader = currentUser?.name === '한준엽';
+                      const teamMembers = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민'];
+                      const displayList = isTeamLeader ? assigneeList.filter(a => teamMembers.includes(a)) : assigneeList;
+                      const assigneeStats = displayList.map(a => {
+                        const st = getPerformanceStats(a, exportYear, exportQuarter);
+                        return { name: a, ...st };
+                      }).filter(a => a.total > 0);
+                      // 공종별 요약
+                      const mainCatSummary = MAIN_CATEGORY_ORDER.map(mc => {
+                        const s = teamData.mainCategoryStats[mc] || { total: 0, wins: 0, draws: 0, losses: 0 };
+                        const c = s.wins + s.draws + s.losses;
+                        return { name: mc, ...s, completed: c, winRate: c > 0 ? Math.round((s.wins / c) * 100) : 0, color: MAIN_CATEGORY_MAP[mc].color };
+                      });
+
+                      // 업체별 현황 집계
+                      const selfSalesList = [];
+                      const selfSalesStats = { total: 0, wins: 0, draws: 0, losses: 0, pending: 0 };
+                      const companyStatsMap = {};
+                      const skipYearFilterCompany = !exportYear || exportYear === 'all';
+                      const getDateRangeCompany = (year, quarter) => {
+                        const y = parseInt(year);
+                        if (quarter === '1분기') return { start: `${y}-01-01`, end: `${y}-03-31` };
+                        if (quarter === '2분기') return { start: `${y}-04-01`, end: `${y}-06-30` };
+                        if (quarter === '3분기') return { start: `${y}-07-01`, end: `${y}-09-30` };
+                        if (quarter === '4분기') return { start: `${y}-10-01`, end: `${y}-12-31` };
+                        return { start: `${y}-01-01`, end: `${y}-12-31` };
+                      };
+                      const compRange = skipYearFilterCompany ? null : getDateRangeCompany(exportYear, exportQuarter);
+                      const selfPTStatsMap = {}; // 협약사자체PT 별도 집계
+                      ptSchedules.forEach(s => {
+                        if (!s.date || !s.ptAssignee) return;
+                        if (!skipYearFilterCompany && (s.date < compRange.start || s.date > compRange.end)) return;
+                        if (previewAssignee) {
+                          const aa = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim());
+                          if (!aa.includes(previewAssignee)) return;
+                        }
+                        const requester = (s.requester || '').trim() || '미분류';
+                        const chk = checkPourAgreement(requester);
+                        // 협약사자체PT는 별도 집계 (업체별 현황 탭에서만 표시)
+                        if (s.selfPT) {
+                          let spKey = requester;
+                          if (chk.isAgreement && chk.grade) {
+                            const nameUpper = requester.toUpperCase();
+                            const normalized = normalizeCompanyName(requester);
+                            const nameParts = requester.split(/[\s,+]+/);
+                            for (const [cn] of Object.entries(POUR_AGREEMENT_COMPANIES)) {
+                              const normalizedCn = normalizeCompanyName(cn);
+                              const cnUpper = cn.toUpperCase();
+                              if (normalized === normalizedCn || nameUpper.includes(cnUpper) || cnUpper.includes(nameUpper) || normalized.includes(normalizedCn) || normalizedCn.includes(normalized) || nameParts.some(p => p.length >= 2 && cnUpper.includes(p.toUpperCase()))) {
+                                spKey = cn; break;
+                              }
+                            }
+                          }
+                          if (!selfPTStatsMap[spKey]) {
+                            selfPTStatsMap[spKey] = { name: spKey, grade: chk.grade || '비협약', total: 0, wins: 0, draws: 0, losses: 0, pending: 0, ptList: [] };
+                          }
+                          if (!selfPTStatsMap[spKey].ptList.some(p => p.id === s.id)) {
+                            const asgn = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                            const rStr = asgn.map(a => { const r = s.results?.[a] || (asgn.length === 1 ? s.result : null); return r || '진행중'; }).join('/');
+                            selfPTStatsMap[spKey].ptList.push({ id: s.id, date: s.date, siteName: s.siteName || '', workType: s.workType || '', assignee: s.ptAssignee || '', result: rStr, requester });
+                            selfPTStatsMap[spKey].total++;
+                            const tgtA = previewAssignee ? asgn.filter(a => a === previewAssignee) : asgn;
+                            const rrs = tgtA.map(a => s.results?.[a] || (asgn.length === 1 ? s.result : null)).filter(r => r);
+                            if (rrs.includes('승')) selfPTStatsMap[spKey].wins++;
+                            else if (rrs.includes('무')) selfPTStatsMap[spKey].draws++;
+                            else if (rrs.includes('패')) selfPTStatsMap[spKey].losses++;
+                            else selfPTStatsMap[spKey].pending++;
+                          }
+                          return;
+                        }
+                        // 예외(아파트직접요청/자사직원)도 업체별 현황에 통합
+                        if (chk.isException) {
+                          const isAptRelated = requester.includes('아파트') || requester.includes('관리사무소') || requester.includes('관리소장') || requester.includes('동대표') || requester.includes('입주자대표') || requester.includes('연합회');
+                          const exceptionGrade = isAptRelated ? '직접요청' : '자사';
+                          const companyKey = isAptRelated ? '아파트/관리사무소 직접요청' : '자사직원/자사요청';
+                          if (!companyStatsMap[companyKey]) {
+                            companyStatsMap[companyKey] = { name: companyKey, grade: exceptionGrade, isAgreement: false, total: 0, wins: 0, draws: 0, losses: 0, pending: 0, ptList: [] };
+                          }
+                          if (!companyStatsMap[companyKey].ptList.some(p => p.id === s.id)) {
+                            const assignees0 = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                            const resultStr = assignees0.map(a => {
+                              const r = s.results?.[a] || (assignees0.length === 1 ? s.result : null);
+                              return r || '진행중';
+                            }).join('/');
+                            companyStatsMap[companyKey].ptList.push({ id: s.id, date: s.date, siteName: s.siteName || '', workType: s.workType || '', assignee: s.ptAssignee || '', result: resultStr, requester: s.requester });
+                            // PT 건별 1건으로 집계 (담당자 수 무관)
+                            companyStatsMap[companyKey].total++;
+                            const targetA = previewAssignee ? assignees0.filter(a => a === previewAssignee) : assignees0;
+                            const rs = targetA.map(a => s.results?.[a] || (assignees0.length === 1 ? s.result : null)).filter(r => r);
+                            if (rs.includes('승')) companyStatsMap[companyKey].wins++;
+                            else if (rs.includes('무')) companyStatsMap[companyKey].draws++;
+                            else if (rs.includes('패')) companyStatsMap[companyKey].losses++;
+                            else companyStatsMap[companyKey].pending++;
+                          }
+                          return;
+                        }
+                        // 업체명 추출: 협약업체면 매칭된 등급 사용, 아니면 요청자명 그대로
+                        let companyKey = requester;
+                        // 정규화된 회사명으로 그룹핑 (같은 업체 다른 이름 통합)
+                        if (chk.isAgreement && chk.grade) {
+                          // POUR_AGREEMENT_COMPANIES에서 매칭된 회사명 찾기
+                          const nameUpper = requester.toUpperCase();
+                          const normalized = normalizeCompanyName(requester);
+                          const nameParts = requester.split(/[\s,+]+/);
+                          for (const [cn] of Object.entries(POUR_AGREEMENT_COMPANIES)) {
+                            const normalizedCn = normalizeCompanyName(cn);
+                            const cnUpper = cn.toUpperCase();
+                            if (normalized === normalizedCn || nameUpper.includes(cnUpper) || cnUpper.includes(nameUpper) || normalized.includes(normalizedCn) || normalizedCn.includes(normalized) || nameParts.some(p => p.length >= 2 && cnUpper.includes(p.toUpperCase()))) {
+                              companyKey = cn;
+                              break;
+                            }
+                          }
+                        }
+                        if (!companyStatsMap[companyKey]) {
+                          companyStatsMap[companyKey] = { name: companyKey, grade: chk.grade, isAgreement: chk.isAgreement, total: 0, wins: 0, draws: 0, losses: 0, pending: 0, ptList: [] };
+                        }
+                        // PT 목록에 추가 (중복 방지) + 건별 1건 집계
+                        if (!companyStatsMap[companyKey].ptList.some(p => p.id === s.id)) {
+                          const assignees0 = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                          const resultStr = assignees0.map(a => {
+                            const r = s.results?.[a] || (assignees0.length === 1 ? s.result : null);
+                            return r || '진행중';
+                          }).join('/');
+                          companyStatsMap[companyKey].ptList.push({ id: s.id, date: s.date, siteName: s.siteName || '', workType: s.workType || '', assignee: s.ptAssignee || '', result: resultStr, requester: s.requester });
+                          // PT 건별 1건으로 집계 (담당자 수 무관)
+                          companyStatsMap[companyKey].total++;
+                          const targetA = previewAssignee ? assignees0.filter(a => a === previewAssignee) : assignees0;
+                          const rs = targetA.map(a => s.results?.[a] || (assignees0.length === 1 ? s.result : null)).filter(r => r);
+                          if (rs.includes('승')) companyStatsMap[companyKey].wins++;
+                          else if (rs.includes('무')) companyStatsMap[companyKey].draws++;
+                          else if (rs.includes('패')) companyStatsMap[companyKey].losses++;
+                          else companyStatsMap[companyKey].pending++;
+                        }
+                      });
+                      // 등급 정렬 순서: 직접요청 → 자사 → S → A → B → C → N → F → 비협약
+                      const gradeOrder = ['직접요청', '자사', 'S', 'A', 'B', 'C', 'N', 'F', null];
+                      const getGradeGroup = (grade) => {
+                        if (!grade) return null;
+                        if (grade === '직접요청') return '직접요청';
+                        if (grade === '자사') return '자사';
+                        const primary = grade.replace(/\(.*\)/, '').trim();
+                        if (['S', 'A', 'B', 'C', 'N', 'F'].includes(primary)) return primary;
+                        return null;
+                      };
+                      const getGradeSortKey = (grade) => {
+                        const g = getGradeGroup(grade);
+                        const idx = gradeOrder.indexOf(g);
+                        return idx >= 0 ? idx : gradeOrder.length;
+                      };
+                      const companyStats = Object.values(companyStatsMap).sort((a, b) => {
+                        const ga = getGradeSortKey(a.grade);
+                        const gb = getGradeSortKey(b.grade);
+                        if (ga !== gb) return ga - gb;
+                        return b.total - a.total;
+                      });
+                      // 등급별 소계 계산
+                      const gradeGroupStats = {};
+                      companyStats.forEach(co => {
+                        const g = getGradeGroup(co.grade) || '비협약';
+                        if (!gradeGroupStats[g]) gradeGroupStats[g] = { total: 0, wins: 0, draws: 0, losses: 0, pending: 0, count: 0 };
+                        gradeGroupStats[g].total += co.total;
+                        gradeGroupStats[g].wins += co.wins;
+                        gradeGroupStats[g].draws += co.draws;
+                        gradeGroupStats[g].losses += co.losses;
+                        gradeGroupStats[g].pending += co.pending;
+                        gradeGroupStats[g].count++;
+                      });
+
+                      // 본인영업 집계
+                      ptSchedules.forEach(s => {
+                        if (!s.date) return;
+                        if (s.selfPT) return; // 협약사자체PT 제외
+                        if (!skipYearFilterCompany && (s.date < compRange.start || s.date > compRange.end)) return;
+                        const assignees0 = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                        assignees0.forEach(a => {
+                          if (previewAssignee && a !== previewAssignee) return;
+                          if (s.settlement?.[a]?.selfSales) {
+                            const r = s.results?.[a] || (assignees0.length === 1 ? s.result : null);
+                            const resultStr = r || '진행중';
+                            if (!selfSalesList.some(p => p.id === s.id && p.assigneeName === a)) {
+                              selfSalesList.push({ id: s.id, date: s.date, siteName: s.siteName || '', workType: s.workType || '', assignee: s.ptAssignee || '', assigneeName: a, result: resultStr, requester: s.requester || '' });
+                              selfSalesStats.total++;
+                              if (r === '승') selfSalesStats.wins++;
+                              else if (r === '무') selfSalesStats.draws++;
+                              else if (r === '패') selfSalesStats.losses++;
+                              else selfSalesStats.pending++;
+                            }
+                          }
+                        });
+                      });
+
+                      // 엑셀 다운로드 함수
+                      const downloadSummaryExcel = async () => {
+                        try {
+                          const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs');
+                          const wb = XLSX.utils.book_new();
+
+                          // 시트1: 요약
+                          const summaryRows = [
+                            ['PT 실적 요약 보고'],
+                            [`기간: ${periodLabel}`, `작성일: ${new Date().toLocaleDateString('ko-KR')}`],
+                            [],
+                            ['총 PT', '승리', '무승부', '패배', '진행중', '승률'],
+                            [currentStats.totalPT, currentStats.win, currentStats.draw, currentStats.lose, currentStats.inProgress, `${currentStats.winRate}%`],
+                          ];
+                          const ws1 = XLSX.utils.aoa_to_sheet(summaryRows);
+                          ws1['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }];
+                          XLSX.utils.book_append_sheet(wb, ws1, '요약');
+
+                          // 시트2: 공종별 현황
+                          const catRows = [
+                            ['공종별 현황', '', '', '', '', ''],
+                            ['공종', '총건수', '승', '무', '패', '승률'],
+                            ...mainCatSummary.map(mc => [mc.name, mc.total, mc.wins, mc.draws, mc.losses, mc.completed > 0 ? `${mc.winRate}%` : '-']),
+                          ];
+                          // 서브공종 추가
+                          catRows.push([]);
+                          catRows.push(['공종별 세부 현황 (복합공종 서브공종 중복 집계 포함)']);
+                          MAIN_CATEGORY_ORDER.forEach(mc => {
+                            const config = MAIN_CATEGORY_MAP[mc];
+                            catRows.push([]);
+                            catRows.push([`[${mc}]`, '총건수', '승', '무', '패', '승률']);
+                            config.subs.forEach(sub => {
+                              const subStats = teamData.mainCategoryStats[mc + '_' + sub] || { total: 0, wins: 0, draws: 0, losses: 0 };
+                              const comp = subStats.wins + subStats.draws + subStats.losses;
+                              const wr = comp > 0 ? Math.round((subStats.wins / comp) * 100) : 0;
+                              catRows.push([sub, subStats.total, subStats.wins, subStats.draws, subStats.losses, comp > 0 ? `${wr}%` : '-']);
+                            });
+                          });
+                          const ws2 = XLSX.utils.aoa_to_sheet(catRows);
+                          ws2['!cols'] = [{ wch: 16 }, { wch: 10 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 10 }];
+                          XLSX.utils.book_append_sheet(wb, ws2, '공종별');
+
+                          // 시트3: 전체 PT 상세 목록
+                          const skipYearFilter = !exportYear || exportYear === 'all';
+                          const getDateRangeForExport = (year, quarter) => {
+                            const y = parseInt(year);
+                            if (quarter === '1분기') return { start: `${y}-01-01`, end: `${y}-03-31` };
+                            if (quarter === '2분기') return { start: `${y}-04-01`, end: `${y}-06-30` };
+                            if (quarter === '3분기') return { start: `${y}-07-01`, end: `${y}-09-30` };
+                            if (quarter === '4분기') return { start: `${y}-10-01`, end: `${y}-12-31` };
+                            return { start: `${y}-01-01`, end: `${y}-12-31` };
+                          };
+                          const expRange = skipYearFilter ? null : getDateRangeForExport(exportYear, exportQuarter);
+                          const detailPts = ptSchedules.filter(s => {
+                            if (!s.date || !s.ptAssignee) return false;
+                            if (s.selfPT) return false; // 협약사자체PT 제외
+                            if (!skipYearFilter && (s.date < expRange.start || s.date > expRange.end)) return false;
+                            if (previewAssignee) {
+                              const aa = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim());
+                              if (!aa.includes(previewAssignee)) return false;
+                            }
+                            return true;
+                          }).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+                          const detailRows = [
+                            ['PT 상세 목록'],
+                            ['날짜', '현장명', '공종', '담당자', '결과', '경쟁사', '사유'],
+                            ...detailPts.map(s => {
+                              const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                              const results = assignees.map(a => {
+                                const r = s.results?.[a] || (assignees.length === 1 ? s.result : null);
+                                return r ? `${a}:${r}` : `${a}:진행중`;
+                              }).join(', ');
+                              const reasons = assignees.map(a => {
+                                const rd = s.resultReasons?.[a] || {};
+                                return rd.reason || '';
+                              }).filter(r => r).join(', ');
+                              const competitors = assignees.map(a => {
+                                const rd = s.resultReasons?.[a] || {};
+                                return rd.competitor || '';
+                              }).filter(r => r).join(', ');
+                              return [s.date, s.siteName || '', s.workType || '', s.ptAssignee || '', results, competitors || s.competitor || '', reasons];
+                            })
+                          ];
+                          const ws4 = XLSX.utils.aoa_to_sheet(detailRows);
+                          ws4['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 20 }, { wch: 14 }, { wch: 20 }, { wch: 16 }, { wch: 30 }];
+                          XLSX.utils.book_append_sheet(wb, ws4, 'PT상세');
+
+                          // 시트4: 업체별 현황 (등급별 그룹핑)
+                          if (companyStats.length > 0) {
+                            const compRows = [
+                              ['업체별 PT 요청 현황'],
+                              [],
+                              // 등급별 요약 테이블
+                              ['[ 등급별 통계 요약 ]'],
+                              ['등급', '업체수', '요청건수', '승', '무', '패', '진행', '승률'],
+                            ];
+                            const gradeDisplayOrder = ['직접요청', '자사', 'S', 'A', 'B', 'C', 'N', 'F', '비협약'];
+                            let grandTotal = { total: 0, wins: 0, draws: 0, losses: 0, pending: 0, count: 0 };
+                            gradeDisplayOrder.forEach(g => {
+                              const gs = gradeGroupStats[g];
+                              if (!gs) return;
+                              const comp = gs.wins + gs.draws + gs.losses;
+                              const wr = comp > 0 ? Math.round((gs.wins / comp) * 100) : 0;
+                              compRows.push([g, gs.count, gs.total, gs.wins, gs.draws, gs.losses, gs.pending, comp > 0 ? `${wr}%` : '-']);
+                              grandTotal.total += gs.total;
+                              grandTotal.wins += gs.wins;
+                              grandTotal.draws += gs.draws;
+                              grandTotal.losses += gs.losses;
+                              grandTotal.pending += gs.pending;
+                              grandTotal.count += gs.count;
+                            });
+                            const gtComp = grandTotal.wins + grandTotal.draws + grandTotal.losses;
+                            compRows.push(['합계', grandTotal.count, grandTotal.total, grandTotal.wins, grandTotal.draws, grandTotal.losses, grandTotal.pending, gtComp > 0 ? `${Math.round((grandTotal.wins / gtComp) * 100)}%` : '-']);
+
+                            // 등급별 상세 업체 목록
+                            compRows.push([]);
+                            compRows.push(['[ 등급별 상세 업체 목록 ]']);
+                            let prevGradeGroup = null;
+                            companyStats.forEach(co => {
+                              const currentGroup = getGradeGroup(co.grade) || '비협약';
+                              if (currentGroup !== prevGradeGroup) {
+                                compRows.push([]);
+                                const gs = gradeGroupStats[currentGroup] || { total: 0, wins: 0, draws: 0, losses: 0, pending: 0, count: 0 };
+                                const gComp = gs.wins + gs.draws + gs.losses;
+                                const gWr = gComp > 0 ? Math.round((gs.wins / gComp) * 100) : 0;
+                                compRows.push([`[${currentGroup}] (${gs.count}개사, ${gs.total}건, 승률 ${gComp > 0 ? gWr + '%' : '-'})`]);
+                                compRows.push(['업체명', '등급', '요청건수', '승', '무', '패', '진행', '승률']);
+                                prevGradeGroup = currentGroup;
+                              }
+                              const comp = co.wins + co.draws + co.losses;
+                              const wr = comp > 0 ? Math.round((co.wins / comp) * 100) : 0;
+                              compRows.push([co.name, co.grade || '비협약', co.total, co.wins, co.draws, co.losses, co.pending, comp > 0 ? `${wr}%` : '-']);
+                            });
+                            const ws5 = XLSX.utils.aoa_to_sheet(compRows);
+                            ws5['!cols'] = [{ wch: 24 }, { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 10 }];
+                            XLSX.utils.book_append_sheet(wb, ws5, '업체별');
+                          }
+
+                          const fileName = `PT실적_요약보고_${periodLabel.replace(/\s/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+                          XLSX.writeFile(wb, fileName);
+                        } catch (e) {
+                          console.error('엑셀 내보내기 오류:', e);
+                          alert('엑셀 내보내기 중 오류가 발생했습니다.');
+                        }
+                      };
+
+                      return (
+                        <div style={{ background: 'white', borderRadius: '16px', padding: isMobile ? '16px' : '28px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+                          {/* 헤더 */}
+                          <div style={{ textAlign: 'center', marginBottom: '24px', borderBottom: '2px solid #e2e8f0', paddingBottom: '16px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                              <div style={{ fontSize: '20px', fontWeight: '800', color: '#1e293b' }}>PT 실적 요약 보고</div>
+                              <button onClick={downloadSummaryExcel} style={{ padding: '6px 14px', borderRadius: '6px', border: '1px solid #16a34a', background: '#f0fdf4', color: '#16a34a', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>엑셀 다운로드</button>
+                            </div>
+                            <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '12px' }}>{periodLabel} | {new Date().toLocaleDateString('ko-KR')}</div>
+                            {/* 서브탭: 공종별 / 업체별 */}
+                            <div style={{ display: 'flex', justifyContent: 'center', gap: '8px' }}>
+                              {[{ key: 'byWorkType', label: '공종별 현황' }, { key: 'byCompany', label: '업체별 현황' }].map(st => (
+                                <button key={st.key} onClick={() => setSummarySubTab(st.key)} style={{ padding: '8px 20px', borderRadius: '20px', border: summarySubTab === st.key ? '2px solid #6366f1' : '2px solid #e2e8f0', background: summarySubTab === st.key ? '#6366f1' : '#fff', color: summarySubTab === st.key ? '#fff' : '#64748b', fontSize: '13px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.2s' }}>{st.label}</button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* 핵심 숫자 4개 */}
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '24px' }}>
+                            {[
+                              { label: '총 PT', value: currentStats.totalPT, unit: '건', color: '#6366f1' },
+                              { label: '승리', value: currentStats.win, unit: '건', color: '#3b82f6' },
+                              { label: '패배', value: currentStats.lose, unit: '건', color: '#ef4444' },
+                              { label: '승률', value: currentStats.winRate, unit: '%', color: '#8b5cf6' }
+                            ].map((item, i) => (
+                              <div key={i} style={{ textAlign: 'center', padding: '16px 8px', background: item.color + '08', borderRadius: '12px', border: `1px solid ${item.color}20` }}>
+                                <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '600', marginBottom: '4px' }}>{item.label}</div>
+                                <div style={{ fontSize: '28px', fontWeight: '800', color: item.color }}>{item.value}<span style={{ fontSize: '14px' }}>{item.unit}</span></div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* ===== 공종별 현황 탭 ===== */}
+                          {summarySubTab === 'byWorkType' && (
+                          <>
+                          {/* 공종별 요약 테이블 (세부공종 포함) */}
+                          <div style={{ marginBottom: '24px' }}>
+                            <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '10px' }}>공종별 현황</div>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                              <thead>
+                                <tr style={{ background: '#f8fafc' }}>
+                                  <th style={{ padding: '10px 8px', textAlign: 'left', borderBottom: '2px solid #e2e8f0', color: '#64748b', fontWeight: '600' }}>공종</th>
+                                  <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#64748b', fontWeight: '600' }}>총건수</th>
+                                  <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#3b82f6', fontWeight: '600' }}>승</th>
+                                  <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#f59e0b', fontWeight: '600' }}>무</th>
+                                  <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#ef4444', fontWeight: '600' }}>패</th>
+                                  <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#8b5cf6', fontWeight: '600' }}>승률</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {mainCatSummary.map((mc, i) => {
+                                  const config = MAIN_CATEGORY_MAP[mc.name];
+                                  const subRows = config.subs.map(sub => {
+                                    const subStats = teamData.mainCategoryStats[mc.name + '_' + sub] || { total: 0, wins: 0, draws: 0, losses: 0 };
+                                    const comp = subStats.wins + subStats.draws + subStats.losses;
+                                    return { name: sub, ...subStats, completed: comp, winRate: comp > 0 ? Math.round((subStats.wins / comp) * 100) : 0 };
+                                  }).filter(s => s.total > 0);
+                                  return (
+                                    <React.Fragment key={i}>
+                                      <tr style={{ background: mc.color + '10', borderBottom: '1px solid #e2e8f0' }}>
+                                        <td style={{ padding: '10px 8px', fontWeight: '800', color: mc.color }}>{mc.name}</td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center', fontWeight: '800' }}>{mc.total}</td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center', color: '#3b82f6', fontWeight: '800' }}>{mc.wins}</td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center', color: '#f59e0b', fontWeight: '800' }}>{mc.draws}</td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center', color: '#ef4444', fontWeight: '800' }}>{mc.losses}</td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center', fontWeight: '800', color: mc.winRate >= 60 ? '#3b82f6' : mc.winRate < 40 ? '#ef4444' : '#1e293b' }}>{mc.completed > 0 ? `${mc.winRate}%` : '-'}</td>
+                                      </tr>
+                                      {subRows.map((sub, j) => (
+                                        <tr key={`${i}_${j}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                          <td style={{ padding: '8px 8px 8px 24px', fontWeight: '600', color: '#64748b', fontSize: '12px' }}>ㄴ {sub.name}</td>
+                                          <td style={{ padding: '8px', textAlign: 'center', fontWeight: '600', fontSize: '12px' }}>{sub.total}</td>
+                                          <td style={{ padding: '8px', textAlign: 'center', color: '#3b82f6', fontWeight: '600', fontSize: '12px' }}>{sub.wins}</td>
+                                          <td style={{ padding: '8px', textAlign: 'center', color: '#f59e0b', fontWeight: '600', fontSize: '12px' }}>{sub.draws}</td>
+                                          <td style={{ padding: '8px', textAlign: 'center', color: '#ef4444', fontWeight: '600', fontSize: '12px' }}>{sub.losses}</td>
+                                          <td style={{ padding: '8px', textAlign: 'center', fontWeight: '600', fontSize: '12px', color: sub.winRate >= 60 ? '#3b82f6' : sub.winRate < 40 ? '#ef4444' : '#64748b' }}>{sub.completed > 0 ? `${sub.winRate}%` : '-'}</td>
+                                        </tr>
+                                      ))}
+                                    </React.Fragment>
+                                  );
+                                })}
+                                {/* 총합계 */}
+                                {(() => {
+                                  const grandTotal = mainCatSummary.reduce((s, m) => s + m.total, 0);
+                                  const grandWins = mainCatSummary.reduce((s, m) => s + m.wins, 0);
+                                  const grandDraws = mainCatSummary.reduce((s, m) => s + m.draws, 0);
+                                  const grandLosses = mainCatSummary.reduce((s, m) => s + m.losses, 0);
+                                  const grandComp = grandWins + grandDraws + grandLosses;
+                                  const grandWR = grandComp > 0 ? Math.round((grandWins / grandComp) * 100) : 0;
+                                  return (
+                                    <tr style={{ background: '#1e293b', borderTop: '2px solid #334155' }}>
+                                      <td style={{ padding: '12px 8px', fontWeight: '900', color: '#fff', fontSize: '13px' }}>총합계</td>
+                                      <td style={{ padding: '12px 8px', textAlign: 'center', fontWeight: '900', color: '#fff', fontSize: '13px' }}>{grandTotal}</td>
+                                      <td style={{ padding: '12px 8px', textAlign: 'center', fontWeight: '900', color: '#93c5fd', fontSize: '13px' }}>{grandWins}</td>
+                                      <td style={{ padding: '12px 8px', textAlign: 'center', fontWeight: '900', color: '#fcd34d', fontSize: '13px' }}>{grandDraws}</td>
+                                      <td style={{ padding: '12px 8px', textAlign: 'center', fontWeight: '900', color: '#fca5a5', fontSize: '13px' }}>{grandLosses}</td>
+                                      <td style={{ padding: '12px 8px', textAlign: 'center', fontWeight: '900', color: '#fff', fontSize: '13px' }}>{grandComp > 0 ? `${grandWR}%` : '-'}</td>
+                                    </tr>
+                                  );
+                                })()}
+                              </tbody>
+                            </table>
+                          </div>
+                          </>
+                          )}
+
+                          {/* ===== 업체별 현황 탭 ===== */}
+                          {summarySubTab === 'byCompany' && (
+                          <>
+                          {/* 등급별 통계 요약 */}
+                          {companyStats.length > 0 && (
+                          <div style={{ marginBottom: '24px' }}>
+                            <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '10px' }}>등급별 PT 요청 통계</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: '8px', marginBottom: '16px' }}>
+                              {['직접요청', '자사', 'S', 'A', 'B', 'C', 'N', '비협약'].map(g => {
+                                const gs = gradeGroupStats[g];
+                                if (!gs) return null;
+                                const comp = gs.wins + gs.draws + gs.losses;
+                                const wr = comp > 0 ? Math.round((gs.wins / comp) * 100) : 0;
+                                const gColor = g === '직접요청' ? '#d97706' : g === '자사' ? '#7c3aed' : g === 'S' ? '#dc2626' : g === 'A' ? '#ea580c' : g === 'B' ? '#2563eb' : g === 'C' ? '#16a34a' : g === 'N' ? '#6366f1' : '#94a3b8';
+                                return (
+                                  <div key={g} style={{ padding: '10px', borderRadius: '8px', border: `1px solid ${gColor}30`, background: gColor + '08', textAlign: 'center' }}>
+                                    <div style={{ fontSize: '12px', fontWeight: '700', color: gColor, marginBottom: '4px' }}>{g} ({gs.count}개사)</div>
+                                    <div style={{ fontSize: '18px', fontWeight: '800', color: '#1e293b' }}>{gs.total}<span style={{ fontSize: '10px', color: '#94a3b8' }}>건</span></div>
+                                    <div style={{ fontSize: '10px', color: '#64748b' }}>
+                                      <span style={{ color: '#3b82f6', fontWeight: '700' }}>{gs.wins}승</span>
+                                      <span style={{ margin: '0 2px', color: '#cbd5e1' }}>·</span>
+                                      <span style={{ color: '#f59e0b', fontWeight: '700' }}>{gs.draws}무</span>
+                                      <span style={{ margin: '0 2px', color: '#cbd5e1' }}>·</span>
+                                      <span style={{ color: '#ef4444', fontWeight: '700' }}>{gs.losses}패</span>
+                                    </div>
+                                    <div style={{ fontSize: '13px', fontWeight: '800', color: comp < 1 ? '#94a3b8' : wr >= 60 ? '#3b82f6' : wr < 40 ? '#ef4444' : '#1e293b' }}>{comp > 0 ? `${wr}%` : '-'}</div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          )}
+
+                          {/* 업체별 현황 테이블 */}
+                          {companyStats.length > 0 && (
+                          <div style={{ marginBottom: '24px' }}>
+                            <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '10px' }}>업체별 PT 요청 현황</div>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                              <thead>
+                                <tr style={{ background: '#f8fafc' }}>
+                                  <th style={{ padding: '10px 8px', textAlign: 'left', borderBottom: '2px solid #e2e8f0', color: '#64748b', fontWeight: '600' }}>업체명</th>
+                                  <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#64748b', fontWeight: '600' }}>등급</th>
+                                  <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#64748b', fontWeight: '600' }}>요청</th>
+                                  <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#3b82f6', fontWeight: '600' }}>승</th>
+                                  <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#f59e0b', fontWeight: '600' }}>무</th>
+                                  <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#ef4444', fontWeight: '600' }}>패</th>
+                                  <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#94a3b8', fontWeight: '600' }}>진행</th>
+                                  <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#8b5cf6', fontWeight: '600' }}>승률</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {companyStats.map((co, i) => {
+                                  const currentGroup = getGradeGroup(co.grade) || '비협약';
+                                  const prevGroup = i > 0 ? (getGradeGroup(companyStats[i - 1].grade) || '비협약') : null;
+                                  const showGroupHeader = currentGroup !== prevGroup;
+                                  const gColor = currentGroup === '직접요청' ? '#d97706' : currentGroup === '자사' ? '#7c3aed' : currentGroup === 'S' ? '#dc2626' : currentGroup === 'A' ? '#ea580c' : currentGroup === 'B' ? '#2563eb' : currentGroup === 'C' ? '#16a34a' : currentGroup === 'N' ? '#6366f1' : '#94a3b8';
+                                  const gs = gradeGroupStats[currentGroup] || { total: 0, count: 0 };
+                                  const comp = co.wins + co.draws + co.losses;
+                                  const wr = comp > 0 ? Math.round((co.wins / comp) * 100) : 0;
+                                  const gradeColor = co.grade === 'S' ? '#dc2626' : co.grade === 'A' ? '#ea580c' : co.grade === 'B' ? '#2563eb' : co.grade === 'C' ? '#16a34a' : co.grade === '직접요청' ? '#d97706' : co.grade === '자사' ? '#7c3aed' : '#94a3b8';
+                                  const isExpanded = expandedCompany === co.name;
+                                  return (
+                                    <React.Fragment key={i}>
+                                      {showGroupHeader && (
+                                        <tr style={{ background: gColor + '12', borderBottom: '2px solid ' + gColor + '40' }}>
+                                          <td colSpan={8} style={{ padding: '8px 10px', fontWeight: '800', fontSize: '12px', color: gColor }}>{currentGroup} ({gs.count}개사 · {gs.total}건)</td>
+                                        </tr>
+                                      )}
+                                      <tr style={{ borderBottom: '1px solid #f1f5f9', cursor: 'pointer', background: isExpanded ? '#f0f9ff' : 'transparent', transition: 'background 0.15s' }} onClick={() => setExpandedCompany(isExpanded ? null : co.name)}>
+                                        <td style={{ padding: '10px 8px', fontWeight: '700', color: '#1e293b' }}>
+                                          <span style={{ marginRight: '4px', fontSize: '10px', color: '#94a3b8' }}>{isExpanded ? '▼' : '▶'}</span>
+                                          {co.name}
+                                        </td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                                          {co.grade ? (
+                                            <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', color: 'white', background: gradeColor }}>{co.grade}</span>
+                                          ) : (
+                                            <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '600' }}>비협약</span>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center', fontWeight: '700' }}>{co.total}</td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center', color: '#3b82f6', fontWeight: '700' }}>{co.wins}</td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center', color: '#f59e0b', fontWeight: '700' }}>{co.draws}</td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center', color: '#ef4444', fontWeight: '700' }}>{co.losses}</td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>{co.pending}</td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center', fontWeight: '800', color: wr >= 60 ? '#3b82f6' : wr < 40 ? '#ef4444' : '#1e293b' }}>{comp > 0 ? `${wr}%` : '-'}</td>
+                                      </tr>
+                                      {/* 클릭 시 PT 요청 리스트 펼침 */}
+                                      {isExpanded && co.ptList && co.ptList.length > 0 && (
+                                        <tr>
+                                          <td colSpan={8} style={{ padding: '0' }}>
+                                            <div style={{ background: '#f8fafc', padding: '12px 16px', borderBottom: '2px solid #e2e8f0' }}>
+                                              <div style={{ fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '8px' }}>📋 {co.name} PT 요청 내역 ({co.ptList.length}건)</div>
+                                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                                                <thead>
+                                                  <tr>
+                                                    <th style={{ padding: '6px 8px', textAlign: 'left', borderBottom: '1px solid #e2e8f0', color: '#64748b', fontWeight: '600' }}>날짜</th>
+                                                    <th style={{ padding: '6px 8px', textAlign: 'left', borderBottom: '1px solid #e2e8f0', color: '#64748b', fontWeight: '600' }}>현장명</th>
+                                                    <th style={{ padding: '6px 8px', textAlign: 'left', borderBottom: '1px solid #e2e8f0', color: '#64748b', fontWeight: '600' }}>공종</th>
+                                                    <th style={{ padding: '6px 8px', textAlign: 'center', borderBottom: '1px solid #e2e8f0', color: '#64748b', fontWeight: '600' }}>담당자</th>
+                                                    <th style={{ padding: '6px 8px', textAlign: 'center', borderBottom: '1px solid #e2e8f0', color: '#64748b', fontWeight: '600' }}>결과</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody>
+                                                  {co.ptList.sort((a, b) => (b.date || '').localeCompare(a.date || '')).map((pt, j) => {
+                                                    const rColor = pt.result.includes('승') && !pt.result.includes('패') ? '#3b82f6' : pt.result.includes('패') ? '#ef4444' : pt.result.includes('무') ? '#f59e0b' : '#94a3b8';
+                                                    return (
+                                                      <tr key={j} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                        <td style={{ padding: '6px 8px', color: '#475569' }}>{pt.date?.slice(2)}</td>
+                                                        <td style={{ padding: '6px 8px', color: '#1e293b', fontWeight: '600', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pt.siteName}</td>
+                                                        <td style={{ padding: '6px 8px', color: '#64748b' }}>{pt.workType}</td>
+                                                        <td style={{ padding: '6px 8px', textAlign: 'center', color: '#475569' }}>{pt.assignee}</td>
+                                                        <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: '700', color: rColor }}>{pt.result}</td>
+                                                      </tr>
+                                                    );
+                                                  })}
+                                                </tbody>
+                                              </table>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </React.Fragment>
+                                  );
+                                })}
+                                {/* 합계 행 */}
+                                <tr style={{ background: '#f8fafc', borderTop: '2px solid #e2e8f0' }}>
+                                  <td style={{ padding: '10px 8px', fontWeight: '800', color: '#6366f1' }}>합계 ({companyStats.length}개사)</td>
+                                  <td style={{ padding: '10px 8px' }}></td>
+                                  <td style={{ padding: '10px 8px', textAlign: 'center', fontWeight: '800' }}>{companyStats.reduce((s, c) => s + c.total, 0)}</td>
+                                  <td style={{ padding: '10px 8px', textAlign: 'center', color: '#3b82f6', fontWeight: '800' }}>{companyStats.reduce((s, c) => s + c.wins, 0)}</td>
+                                  <td style={{ padding: '10px 8px', textAlign: 'center', color: '#f59e0b', fontWeight: '800' }}>{companyStats.reduce((s, c) => s + c.draws, 0)}</td>
+                                  <td style={{ padding: '10px 8px', textAlign: 'center', color: '#ef4444', fontWeight: '800' }}>{companyStats.reduce((s, c) => s + c.losses, 0)}</td>
+                                  <td style={{ padding: '10px 8px', textAlign: 'center', color: '#94a3b8', fontWeight: '800' }}>{companyStats.reduce((s, c) => s + c.pending, 0)}</td>
+                                  <td style={{ padding: '10px 8px' }}></td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                          )}
+
+                          {/* 본인영업 현황 */}
+                          {selfSalesList.length > 0 && (
+                          <div style={{ marginBottom: '24px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                              <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b' }}>본인영업 현황 ({selfSalesList.length}건)</div>
+                              <div style={{ display: 'flex', gap: '8px', fontSize: '12px' }}>
+                                <span style={{ color: '#3b82f6', fontWeight: '700' }}>승 {selfSalesStats.wins}</span>
+                                <span style={{ color: '#f59e0b', fontWeight: '700' }}>무 {selfSalesStats.draws}</span>
+                                <span style={{ color: '#ef4444', fontWeight: '700' }}>패 {selfSalesStats.losses}</span>
+                                <span style={{ color: '#94a3b8', fontWeight: '600' }}>진행 {selfSalesStats.pending}</span>
+                              </div>
+                            </div>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                              <thead>
+                                <tr style={{ background: '#f3e8ff' }}>
+                                  <th style={{ padding: '8px 6px', textAlign: 'left', borderBottom: '2px solid #e2e8f0', color: '#7c3aed', fontWeight: '600' }}>날짜</th>
+                                  <th style={{ padding: '8px 6px', textAlign: 'left', borderBottom: '2px solid #e2e8f0', color: '#7c3aed', fontWeight: '600' }}>현장명</th>
+                                  <th style={{ padding: '8px 6px', textAlign: 'left', borderBottom: '2px solid #e2e8f0', color: '#7c3aed', fontWeight: '600' }}>공종</th>
+                                  <th style={{ padding: '8px 6px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#7c3aed', fontWeight: '600' }}>담당</th>
+                                  <th style={{ padding: '8px 6px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#7c3aed', fontWeight: '600' }}>결과</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {selfSalesList.sort((a, b) => (b.date || '').localeCompare(a.date || '')).map((pt, i) => {
+                                  const rColor = pt.result === '승' ? '#3b82f6' : pt.result === '패' ? '#ef4444' : pt.result === '무' ? '#f59e0b' : '#94a3b8';
+                                  return (
+                                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                      <td style={{ padding: '7px 6px', color: '#475569' }}>{pt.date?.slice(2)}</td>
+                                      <td style={{ padding: '7px 6px', color: '#1e293b', fontWeight: '600', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pt.siteName}</td>
+                                      <td style={{ padding: '7px 6px', color: '#64748b' }}>{pt.workType}</td>
+                                      <td style={{ padding: '7px 6px', textAlign: 'center', color: '#475569' }}>{pt.assigneeName}</td>
+                                      <td style={{ padding: '7px 6px', textAlign: 'center', fontWeight: '700', color: rColor }}>{pt.result}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                          )}
+
+                          {/* 협약사자체PT 현황 */}
+                          {(() => {
+                            const selfPTList = Object.values(selfPTStatsMap);
+                            if (selfPTList.length === 0) return null;
+                            const spTotal = selfPTList.reduce((s, c) => s + c.total, 0);
+                            const spWins = selfPTList.reduce((s, c) => s + c.wins, 0);
+                            const spDraws = selfPTList.reduce((s, c) => s + c.draws, 0);
+                            const spLosses = selfPTList.reduce((s, c) => s + c.losses, 0);
+                            const spPending = selfPTList.reduce((s, c) => s + c.pending, 0);
+                            const spComp = spWins + spDraws + spLosses;
+                            const spWR = spComp > 0 ? Math.round((spWins / spComp) * 100) : 0;
+                            return (
+                              <div style={{ marginBottom: '24px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                                  <div style={{ fontSize: '14px', fontWeight: '700', color: '#7c3aed' }}>협약사 자체PT 현황 ({spTotal}건)</div>
+                                  <div style={{ display: 'flex', gap: '8px', fontSize: '12px' }}>
+                                    <span style={{ color: '#3b82f6', fontWeight: '700' }}>승 {spWins}</span>
+                                    <span style={{ color: '#f59e0b', fontWeight: '700' }}>무 {spDraws}</span>
+                                    <span style={{ color: '#ef4444', fontWeight: '700' }}>패 {spLosses}</span>
+                                    <span style={{ color: '#94a3b8', fontWeight: '600' }}>진행 {spPending}</span>
+                                    {spComp > 0 && <span style={{ color: '#8b5cf6', fontWeight: '700' }}>승률 {spWR}%</span>}
+                                  </div>
+                                </div>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                                  <thead>
+                                    <tr style={{ background: '#f5f3ff' }}>
+                                      <th style={{ padding: '8px 6px', textAlign: 'left', borderBottom: '2px solid #e2e8f0', color: '#7c3aed', fontWeight: '600' }}>업체명</th>
+                                      <th style={{ padding: '8px 6px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#7c3aed', fontWeight: '600' }}>등급</th>
+                                      <th style={{ padding: '8px 6px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#64748b', fontWeight: '600' }}>건수</th>
+                                      <th style={{ padding: '8px 6px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#3b82f6', fontWeight: '600' }}>승</th>
+                                      <th style={{ padding: '8px 6px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#f59e0b', fontWeight: '600' }}>무</th>
+                                      <th style={{ padding: '8px 6px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#ef4444', fontWeight: '600' }}>패</th>
+                                      <th style={{ padding: '8px 6px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', color: '#8b5cf6', fontWeight: '600' }}>승률</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {selfPTList.sort((a, b) => b.total - a.total).map((co, i) => {
+                                      const cComp = co.wins + co.draws + co.losses;
+                                      const cWR = cComp > 0 ? Math.round((co.wins / cComp) * 100) : 0;
+                                      return (
+                                        <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                          <td style={{ padding: '7px 6px', color: '#1e293b', fontWeight: '600' }}>{co.name}</td>
+                                          <td style={{ padding: '7px 6px', textAlign: 'center', color: '#7c3aed', fontWeight: '600', fontSize: '11px' }}>{co.grade || '-'}</td>
+                                          <td style={{ padding: '7px 6px', textAlign: 'center', fontWeight: '700' }}>{co.total}</td>
+                                          <td style={{ padding: '7px 6px', textAlign: 'center', color: '#3b82f6', fontWeight: '600' }}>{co.wins}</td>
+                                          <td style={{ padding: '7px 6px', textAlign: 'center', color: '#f59e0b', fontWeight: '600' }}>{co.draws}</td>
+                                          <td style={{ padding: '7px 6px', textAlign: 'center', color: '#ef4444', fontWeight: '600' }}>{co.losses}</td>
+                                          <td style={{ padding: '7px 6px', textAlign: 'center', fontWeight: '700', color: cWR >= 60 ? '#3b82f6' : cWR < 40 ? '#ef4444' : '#1e293b' }}>{cComp > 0 ? `${cWR}%` : '-'}</td>
+                                        </tr>
+                                      );
+                                    })}
+                                    <tr style={{ background: '#f5f3ff', borderTop: '2px solid #7c3aed' }}>
+                                      <td style={{ padding: '8px 6px', fontWeight: '800', color: '#7c3aed' }} colSpan={2}>합계</td>
+                                      <td style={{ padding: '8px 6px', textAlign: 'center', fontWeight: '800' }}>{spTotal}</td>
+                                      <td style={{ padding: '8px 6px', textAlign: 'center', fontWeight: '800', color: '#3b82f6' }}>{spWins}</td>
+                                      <td style={{ padding: '8px 6px', textAlign: 'center', fontWeight: '800', color: '#f59e0b' }}>{spDraws}</td>
+                                      <td style={{ padding: '8px 6px', textAlign: 'center', fontWeight: '800', color: '#ef4444' }}>{spLosses}</td>
+                                      <td style={{ padding: '8px 6px', textAlign: 'center', fontWeight: '800', color: '#8b5cf6' }}>{spComp > 0 ? `${spWR}%` : '-'}</td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              </div>
+                            );
+                          })()}
+                          </>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* ===== 개요 탭: 칸반 뷰 ===== */}
+                    {dashboardView === 'overview' && (
+                      <>
+                        {/* ===== 전체 현장 리스트 섹션 (항상 표시) ===== */}
+                        {(() => {
+                          const listAssignee = previewAssignee || 'all';
+                          const listKanban = getKanbanData(listAssignee, ptSchedules, null, null);
+                          const todayStr = new Date().toISOString().slice(0, 10);
+                          const allRows = [
+                            ...listKanban.win.map(c => ({ ...c, _type: 'win' })),
+                            ...listKanban.draw.map(c => ({ ...c, _type: 'draw' })),
+                            ...listKanban.lose.map(c => ({ ...c, _type: 'lose' })),
+                            ...listKanban.support.map(c => ({ ...c, _type: 'support' })),
+                            ...listKanban.inProgress.map(c => ({ ...c, _type: 'inProgress' }))
+                          ].filter(c => c.date && c.date < todayStr).map(c => {
+                            // editingResults 반영하여 _type 오버라이드
+                            const editKey = `${c.id}_${c.manager}`;
+                            if (editingResults.hasOwnProperty(editKey)) {
+                              const newResult = editingResults[editKey];
+                              if (newResult === '승') return { ...c, _type: 'win' };
+                              if (newResult === '패') return { ...c, _type: 'lose' };
+                              if (newResult === '무') return { ...c, _type: 'draw' };
+                              if (newResult === '지원') return { ...c, _type: 'support' };
+                              if (newResult === null) return { ...c, _type: 'inProgress' };
+                            }
+                            return c;
+                          }).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+                          // 정산 상태별 카운트 계산 (본인영업도 정산완료로 처리, 협약사자체PT 제외)
+                          const settlementCounts = allRows.reduce((acc, c) => {
+                            if (c.rawData?.selfPT) return acc; // 협약사자체PT 정산 제외
+                            const stl = c.rawData?.settlement?.[c.manager] || {};
+                            const result = c._type === 'win' ? '승' : c._type === 'draw' ? '무' : c._type === 'support' ? '지원' : null;
+                            if (result && result !== '패') {
+                              if (stl.completed || stl.selfSales) {
+                                acc.completed++;
+                              } else if (stl.requested) {
+                                acc.requested++;
+                              } else {
+                                acc.pending++;
+                              }
+                            }
+                            return acc;
+                          }, { pending: 0, requested: 0, completed: 0 });
+
+                          // 상태 필터 적용
+                          const statusFiltered = siteListTab === 'all' ? allRows
+                            : siteListTab === 'win' ? allRows.filter(c => c._type === 'win')
+                            : siteListTab === 'draw' ? allRows.filter(c => c._type === 'draw')
+                            : siteListTab === 'lose' ? allRows.filter(c => c._type === 'lose')
+                            : siteListTab === 'support' ? allRows.filter(c => c._type === 'support')
+                            : allRows.filter(c => c._type === 'inProgress');
+
+                          // 정산 필터 적용 (협약사자체PT 제외)
+                          const settlementFiltered = settlementFilter === 'all' ? statusFiltered
+                            : statusFiltered.filter(c => {
+                              if (c.rawData?.selfPT) return false; // 협약사자체PT 정산 제외
+                              const stl = c.rawData?.settlement?.[c.manager] || {};
+                              const result = c._type === 'win' ? '승' : c._type === 'draw' ? '무' : c._type === 'support' ? '지원' : null;
+                              if (settlementFilter === 'pending') return result && result !== '패' && !stl.requested && !stl.completed && !stl.selfSales;
+                              if (settlementFilter === 'requested') return result && result !== '패' && !!stl.requested && !stl.completed && !stl.selfSales;
+                              if (settlementFilter === 'completed') return result && result !== '패' && (!!stl.completed || !!stl.selfSales);
+                              return true;
+                            });
+
+                          // 검색 필터 적용
+                          const filteredRows = !searchQuery.trim() ? settlementFiltered
+                            : settlementFiltered.filter(c => {
+                              const q = searchQuery.toLowerCase().trim();
+                              const searchable = [c.title || '', c.rawData?.siteName || '', c.rawData?.address || '', c.rawData?.workType || '', c.rawData?.requester || '', c.manager || ''].join(' ').toLowerCase();
+                              return searchable.includes(q);
+                            });
+
+                          const statusTabs = [
+                            { key: 'all', label: '전체', count: allRows.length },
+                            { key: 'win', label: '승리', count: listKanban.win.length },
+                            { key: 'draw', label: '무승부', count: listKanban.draw.length },
+                            { key: 'lose', label: '패배', count: listKanban.lose.length },
+                            { key: 'support', label: '지원', count: listKanban.support.length },
+                            { key: 'inProgress', label: '진행중', count: listKanban.inProgress.length }
+                          ];
+                          const getStatusStyle = (type) => {
+                            if (type === 'win') return { border: '#3b82f6', badge: '#dbeafe', text: '#1d4ed8', label: '승' };
+                            if (type === 'draw') return { border: '#f59e0b', badge: '#fef9c3', text: '#a16207', label: '무' };
+                            if (type === 'lose') return { border: '#ef4444', badge: '#fee2e2', text: '#dc2626', label: '패' };
+                            if (type === 'support') return { border: '#06b6d4', badge: '#cffafe', text: '#0e7490', label: '지원' };
+                            return { border: '#94a3b8', badge: '#f1f5f9', text: '#64748b', label: '진행중' };
+                          };
+                          const getReasonText = (card) => {
+                            const t = card._type;
+                            if (t === 'win') return { emoji: '\uD83D\uDD35', text: card.winReason || '-', color: '#1d4ed8' };
+                            if (t === 'lose') return { emoji: '\uD83D\uDD34', text: card.lossReason || '-', color: '#dc2626' };
+                            if (t === 'inProgress') return { emoji: '\u26AA', text: '진행중', color: '#64748b' };
+                            if (t === 'support') return { emoji: '\uD83D\uDD37', text: '지원', color: '#0e7490' };
+                            return { emoji: '\uD83D\uDFE1', text: '무승부', color: '#a16207' };
+                          };
+
+                          return (
+                            <div style={{ marginTop: '16px' }}>
+                              {/* 헤더 */}
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                <div style={{ fontSize: '15px', fontWeight: '700', color: '#1e293b' }}>
+                                  {previewAssignee ? `${previewAssignee}의 현장 목록 (${allRows.length}건)` : `전체 현장 목록 (${allRows.length}건)`}
+                                </div>
+                                {previewAssignee && (
+                                  <button onClick={() => { setPreviewAssignee(null); setSiteListTab('all'); }} style={{ padding: '5px 14px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#64748b', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>× 전체보기</button>
+                                )}
+                              </div>
+
+                              {/* 상태 필터 탭 */}
+                              <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', overflowX: 'auto', paddingBottom: '2px' }}>
+                                {statusTabs.map(tab => (
+                                  <button key={tab.key} onClick={() => setSiteListTab(tab.key)} style={{
+                                    flex: isMobile ? '1' : '0 0 auto', padding: '8px 16px', borderRadius: '8px',
+                                    border: siteListTab === tab.key ? '1px solid #1e293b' : '1px solid #e2e8f0',
+                                    background: siteListTab === tab.key ? '#1e293b' : '#ffffff',
+                                    color: siteListTab === tab.key ? '#ffffff' : '#64748b',
+                                    fontSize: '12px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.2s'
+                                  }}>{tab.label} {tab.count}</button>
+                                ))}
+                              </div>
+
+                              {/* 정산 필터 */}
+                              <div style={{ marginBottom: '16px', padding: isMobile ? '12px' : '16px', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                                  <span style={{ fontSize: '13px', fontWeight: '700', color: '#1e293b' }}>정산 현황</span>
+                                  {settlementFilter !== 'all' && (
+                                    <button onClick={() => setSettlementFilter('all')} style={{ padding: '2px 8px', borderRadius: '4px', border: 'none', background: '#f1f5f9', color: '#64748b', fontSize: '11px', cursor: 'pointer' }}>필터 해제</button>
+                                  )}
+                                </div>
+                                <div style={{ display: 'flex', gap: isMobile ? '6px' : '10px', flexWrap: 'wrap' }}>
+                                  {/* 미정산 */}
+                                  <button onClick={() => setSettlementFilter(settlementFilter === 'pending' ? 'all' : 'pending')} style={{
+                                    flex: isMobile ? '1' : '0 0 auto', padding: isMobile ? '10px 8px' : '10px 16px', borderRadius: '10px',
+                                    border: settlementFilter === 'pending' ? '2px solid #f59e0b' : '1px solid #e2e8f0',
+                                    background: settlementFilter === 'pending' ? '#fffbeb' : '#ffffff',
+                                    cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s', minWidth: isMobile ? '0' : '120px'
+                                  }}>
+                                    <div style={{ fontSize: '11px', color: '#92400e', fontWeight: '600', marginBottom: '4px' }}>미정산</div>
+                                    <div style={{ fontSize: '20px', fontWeight: '800', color: '#f59e0b' }}>{settlementCounts.pending}<span style={{ fontSize: '11px', fontWeight: '600', color: '#a16207' }}>건</span></div>
+                                  </button>
+                                  {/* 정산요청 */}
+                                  <button onClick={() => setSettlementFilter(settlementFilter === 'requested' ? 'all' : 'requested')} style={{
+                                    flex: isMobile ? '1' : '0 0 auto', padding: isMobile ? '10px 8px' : '10px 16px', borderRadius: '10px',
+                                    border: settlementFilter === 'requested' ? '2px solid #3b82f6' : '1px solid #e2e8f0',
+                                    background: settlementFilter === 'requested' ? '#eff6ff' : '#ffffff',
+                                    cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s', minWidth: isMobile ? '0' : '120px'
+                                  }}>
+                                    <div style={{ fontSize: '11px', color: '#1d4ed8', fontWeight: '600', marginBottom: '4px' }}>정산요청</div>
+                                    <div style={{ fontSize: '20px', fontWeight: '800', color: '#3b82f6' }}>{settlementCounts.requested}<span style={{ fontSize: '11px', fontWeight: '600', color: '#2563eb' }}>건</span></div>
+                                  </button>
+                                  {/* 정산완료 */}
+                                  <button onClick={() => setSettlementFilter(settlementFilter === 'completed' ? 'all' : 'completed')} style={{
+                                    flex: isMobile ? '1' : '0 0 auto', padding: isMobile ? '10px 8px' : '10px 16px', borderRadius: '10px',
+                                    border: settlementFilter === 'completed' ? '2px solid #16a34a' : '1px solid #e2e8f0',
+                                    background: settlementFilter === 'completed' ? '#f0fdf4' : '#ffffff',
+                                    cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s', minWidth: isMobile ? '0' : '120px'
+                                  }}>
+                                    <div style={{ fontSize: '11px', color: '#166534', fontWeight: '600', marginBottom: '4px' }}>정산완료</div>
+                                    <div style={{ fontSize: '20px', fontWeight: '800', color: '#16a34a' }}>{settlementCounts.completed}<span style={{ fontSize: '11px', fontWeight: '600', color: '#15803d' }}>건</span></div>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* 일정 카드 리스트 (기존 일정탭 형식) */}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? '8px' : '10px' }}>
+                                {filteredRows.map(card => {
+                                  const s = card.rawData;
+                                  const ss = getStatusStyle(card._type);
+                                  const reason = getReasonText(card);
+                                  const resultLabels = ['승', '무', '패', '지원'];
+                                  const resultColors = { '승': { bg: '#eff6ff', color: '#2563eb', border: '#93c5fd' }, '무': { bg: '#fffbeb', color: '#d97706', border: '#fcd34d' }, '패': { bg: '#fef2f2', color: '#ef4444', border: '#fca5a5' }, '지원': { bg: '#f3e8ff', color: '#7c3aed', border: '#c4b5fd' } };
+                                  const editKey = `${card.id}_${card.manager}`;
+                                  const currentResult = editingResults.hasOwnProperty(editKey) ? editingResults[editKey] : (card._type === 'win' ? '승' : card._type === 'lose' ? '패' : card._type === 'draw' ? '무' : card._type === 'support' ? '지원' : null);
+                                  const hasReason = card._type === 'win' || card._type === 'lose' || card._type === 'draw' || card._type === 'support';
+                                  const settlement = s?.settlement?.[card.manager] || {};
+                                  const isSelfPT = !!s?.selfPT;
+                                  const isSettled = !isSelfPT && (!!settlement.completed || !!settlement.selfSales);
+
+                                  return (
+                                    <div key={card.id + '_ptcard_' + card._type} style={{ padding: isMobile ? '12px' : '16px 20px', background: isSelfPT ? '#faf5ff' : isSettled ? '#f1f5f9' : 'white', borderRadius: '10px', border: `1px solid ${isSelfPT ? '#d8b4fe' : isSettled ? '#cbd5e1' : '#e2e8f0'}`, borderLeft: `4px solid ${isSelfPT ? '#a855f7' : isSettled ? '#94a3b8' : ss.border}`, opacity: isSettled ? 0.7 : 1 }}>
+                                      {/* 1행: 날짜 + 현장명 + 상태배지 */}
+                                      <div style={{ display: 'flex', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? '8px' : '14px', flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
+                                        <div style={{ minWidth: isMobile ? 'auto' : '90px', flexShrink: 0 }}>
+                                          <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b' }}>{card.date || ''}</div>
+                                          {s?.time && <div style={{ fontSize: '12px', color: '#64748b' }}>{s.time}</div>}
+                                        </div>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                                            <span onClick={(e) => { e.stopPropagation(); handleEditClick({ ...card.rawData, type: 'pt' }); }} style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: '700', color: '#1e293b', cursor: 'pointer', textDecoration: 'underline', textDecorationColor: '#cbd5e1', textUnderlineOffset: '2px' }} onMouseOver={e => e.currentTarget.style.color = '#3b82f6'} onMouseOut={e => e.currentTarget.style.color = '#1e293b'}>{card.siteName}</span>
+                                            {currentResult && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: ss.badge, color: ss.text }}>{ss.label}</span>}
+                                            {card._type === 'inProgress' && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: '#dbeafe', color: '#1d4ed8' }}>진행중</span>}
+                                            {/* PT 리스크 뱃지 (진행중 PT 승률 예측 35% 미만) */}
+                                            {card._type === 'inProgress' && (() => {
+                                              const probData = predictWinProbability(card.rawData || s, ptSchedules);
+                                              const prob = typeof probData === 'object' ? probData.rate : probData;
+                                              return prob < 35 ? <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca' }}>⚠️ 리스크 {prob}%</span> : null;
+                                            })()}
+                                            {/* 협약사자체PT 배지 */}
+                                            {isSelfPT && <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#f3e8ff', color: '#7c3aed' }}>협약사자체PT</span>}
+                                            {/* 정산 상태 배지 (본인영업도 정산완료 처리) - 자체PT는 정산 제외 */}
+                                            {!isSelfPT && currentResult && currentResult !== '패' && (
+                                              (settlement.completed || settlement.selfSales) ? <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#dcfce7', color: '#166534' }}>정산완료</span>
+                                              : settlement.requested ? <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#dbeafe', color: '#1e40af' }}>정산요청</span>
+                                              : <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#fef3c7', color: '#92400e' }}>미정산</span>
+                                            )}
+                                            {!isSelfPT && settlement.selfSales && <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#f3e8ff', color: '#7c3aed' }}>본인영업</span>}
+                                          </div>
+                                          {/* 공종/공사설명 */}
+                                          <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '2px' }}>{s?.workType || card.gongong}</div>
+                                          {/* 요청사 / 참여인원 / 비고 */}
+                                          <div style={{ fontSize: '12px', color: '#64748b' }}>
+                                            {s?.requester && <span>요청사 : {s.requester}{!checkPourAgreement(s.requester).isAgreement && <span style={{ marginLeft: '4px', padding: '1px 4px', borderRadius: '3px', fontSize: '9px', fontWeight: '700', background: '#fef2f2', color: '#ef4444' }}>비협약</span>}{checkPourAgreement(s.requester).grade && <span style={{ marginLeft: '4px', padding: '1px 4px', borderRadius: '3px', fontSize: '9px', fontWeight: '700', background: '#eff6ff', color: '#2563eb' }}>{checkPourAgreement(s.requester).grade}</span>}</span>}
+                                            {s?.participants && <span> / 참여인원 : {s.participants}</span>}
+                                            {s?.note && <span> / 비고: {s.note}</span>}
+                                          </div>
+                                          {/* 주소 */}
+                                          {s?.address && <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>주소: {s.address}</div>}
+                                        </div>
+                                      </div>
+
+                                      {/* 2행: 담당자별 결과 버튼 (복수 담당자 각각 표시) */}
+                                      {(() => {
+                                        const allAssignees = (s?.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                                        const assigneesToShow = allAssignees.length > 0 ? allAssignees : [card.manager];
+                                        const selfPTLabels = isSelfPT ? ['승', '무', '패'] : resultLabels;
+                                        return assigneesToShow.map((assigneeName, ai) => {
+                                          const aEditKey = `${card.id}_${assigneeName}`;
+                                          const aResult = editingResults.hasOwnProperty(aEditKey) ? editingResults[aEditKey] : (s?.results?.[assigneeName] || (allAssignees.length === 1 ? s?.result : null) || null);
+                                          const aSettlement = s?.settlement?.[assigneeName] || {};
+                                          return (
+                                            <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: ai === 0 ? '10px' : '6px', paddingTop: ai === 0 ? '10px' : '6px', borderTop: ai === 0 ? '1px solid #f1f5f9' : '1px dashed #f1f5f9', flexWrap: 'wrap' }}>
+                                              <span style={{ fontSize: '13px', fontWeight: '700', color: isSelfPT ? '#7c3aed' : '#2563eb', minWidth: '50px' }}>{assigneeName}</span>
+                                              <div style={{ display: 'flex', gap: '4px' }}>
+                                                {selfPTLabels.map(r => {
+                                                  const rc = resultColors[r];
+                                                  const isActive = aResult === r;
+                                                  return (
+                                                    <span key={r} onClick={() => handleResultClick(card.rawData || ptSchedules.find(p => p.id === card.id), r, assigneeName)} style={{ padding: '4px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: '600', border: `1px solid ${isActive ? rc.border : '#e2e8f0'}`, background: isActive ? rc.bg : '#f8fafc', color: isActive ? rc.color : '#94a3b8', cursor: 'pointer', transition: 'all 0.15s' }}>{r}</span>
+                                                  );
+                                                })}
+                                              </div>
+                                              {/* 정산 체크박스 (승/무/지원만) - 자체PT는 정산 제외 */}
+                                              {!isSelfPT && aResult && aResult !== '패' && (
+                                                <div style={{ display: 'flex', gap: '10px', fontSize: '11px', color: '#64748b', marginLeft: isMobile ? '0' : '8px', alignItems: 'center' }}>
+                                                  <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer' }}>
+                                                    <input type="checkbox" checked={!!aSettlement.requested} onChange={() => {
+                                                      const newVal = !aSettlement.requested;
+                                                      setPtSchedules(prev => prev.map(ps => {
+                                                        if (ps.id !== card.id) return ps;
+                                                        const newSettlement = { ...ps.settlement, [assigneeName]: { ...(ps.settlement?.[assigneeName] || {}), requested: newVal } };
+                                                        return { ...ps, settlement: newSettlement };
+                                                      }));
+                                                      setDirtyScheduleIds(prev => new Set([...prev, card.id]));
+                                                      setHasResultChanges(true);
+                                                    }} style={{ width: '14px', height: '14px', cursor: 'pointer' }} /> 정산요청
+                                                  </label>
+                                                  <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: currentUser?.isAdmin ? 'pointer' : 'not-allowed', opacity: currentUser?.isAdmin ? 1 : 0.6 }} title={currentUser?.isAdmin ? '' : '관리자만 변경 가능'}>
+                                                    <input type="checkbox" checked={!!aSettlement.completed} onChange={() => {
+                                                      if (!currentUser?.isAdmin) return;
+                                                      const newVal = !aSettlement.completed;
+                                                      setPtSchedules(prev => prev.map(ps => {
+                                                        if (ps.id !== card.id) return ps;
+                                                        const newSettlement = { ...ps.settlement, [assigneeName]: { ...(ps.settlement?.[assigneeName] || {}), completed: newVal } };
+                                                        return { ...ps, settlement: newSettlement };
+                                                      }));
+                                                      setDirtyScheduleIds(prev => new Set([...prev, card.id]));
+                                                      setHasResultChanges(true);
+                                                    }} disabled={!currentUser?.isAdmin} style={{ width: '14px', height: '14px', cursor: currentUser?.isAdmin ? 'pointer' : 'not-allowed' }} /> 정산완료
+                                                  </label>
+                                                  <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer' }}>
+                                                    <input type="checkbox" checked={!!aSettlement.selfSales} onChange={() => {
+                                                      const newVal = !aSettlement.selfSales;
+                                                      setPtSchedules(prev => prev.map(ps => {
+                                                        if (ps.id !== card.id) return ps;
+                                                        const newSettlement = { ...ps.settlement, [assigneeName]: { ...(ps.settlement?.[assigneeName] || {}), selfSales: newVal } };
+                                                        return { ...ps, settlement: newSettlement };
+                                                      }));
+                                                      setDirtyScheduleIds(prev => new Set([...prev, card.id]));
+                                                      setHasResultChanges(true);
+                                                    }} style={{ width: '14px', height: '14px', cursor: 'pointer' }} /> 본인영업
+                                                  </label>
+                                                </div>
+                                              )}
+                                            </div>
+                                          );
+                                        });
+                                      })()}
+                                      {/* 협약사자체PT 체크박스 */}
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', paddingTop: '6px', borderTop: '1px solid #f1f5f9' }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontSize: '11px', color: isSelfPT ? '#7c3aed' : '#94a3b8', fontWeight: '600' }}>
+                                          <input type="checkbox" checked={isSelfPT} onChange={() => {
+                                            const newVal = !isSelfPT;
+                                            setPtSchedules(prev => prev.map(ps => {
+                                              if (ps.id !== card.id) return ps;
+                                              return { ...ps, selfPT: newVal };
+                                            }));
+                                            setDirtyScheduleIds(prev => new Set([...prev, card.id]));
+                                            setHasResultChanges(true);
+                                          }} style={{ width: '14px', height: '14px', cursor: 'pointer', accentColor: '#7c3aed' }} /> 협약사자체PT
+                                        </label>
+                                      </div>
+
+                                      {/* 3행: 사유 텍스트 */}
+                                      {hasReason && reason.text && reason.text !== '-' && reason.text !== '무승부' && reason.text !== '지원' && (
+                                        <div style={{ marginTop: '8px', padding: '8px 12px', background: '#f8fafc', borderRadius: '6px', fontSize: '13px', color: reason.color, lineHeight: '1.5' }}>
+                                          {reason.text}
+                                        </div>
+                                      )}
+
+                                      {/* 관리자 크로스체크 메모 */}
+                                      {(() => {
+                                        const cardAssignees = (card.rawData?.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                                        return cardAssignees.map((aName, aIdx) => {
+                                          const rd = card.rawData?.resultReasons?.[aName] || {};
+                                          const aResult = card.rawData?.results?.[aName];
+                                          if (!aResult) return null;
+                                          const noteKey = `${card.id}_${aName}`;
+                                          const hasAdminNote = !!rd.adminNote;
+                                          const isEditingNote = editingAdminNotes.hasOwnProperty(noteKey);
+                                          if (!hasAdminNote && !currentUser?.isAdmin) return null;
+                                          return (
+                                            <div key={'adm_' + aIdx} style={{ marginTop: '6px' }}>
+                                              {hasAdminNote && !isEditingNote && (
+                                                <div style={{ padding: '8px 12px', background: '#fefce8', borderRadius: '6px', fontSize: '12px', color: '#854d0e', border: '1px solid #fef08a', lineHeight: '1.5' }}>
+                                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' }}>
+                                                    <span style={{ fontSize: '10px', fontWeight: '700', color: '#a16207' }}>관리자 크로스체크{cardAssignees.length > 1 ? ` (${aName})` : ''}</span>
+                                                    {currentUser?.isAdmin && <span onClick={() => setEditingAdminNotes(prev => ({ ...prev, [noteKey]: rd.adminNote }))} style={{ fontSize: '10px', color: '#d97706', cursor: 'pointer', fontWeight: '600' }}>수정</span>}
+                                                  </div>
+                                                  {rd.adminNote}
+                                                </div>
+                                              )}
+                                              {currentUser?.isAdmin && !hasAdminNote && !isEditingNote && (
+                                                <div onClick={() => setEditingAdminNotes(prev => ({ ...prev, [noteKey]: '' }))} style={{ fontSize: '11px', color: '#d97706', cursor: 'pointer', fontWeight: '600', padding: '4px 0' }}>+ 크로스체크 메모{cardAssignees.length > 1 ? ` (${aName})` : ''}</div>
+                                              )}
+                                              {isEditingNote && (
+                                                <div style={{ marginTop: '4px' }}>
+                                                  <textarea value={editingAdminNotes[noteKey] || ''} onChange={e => setEditingAdminNotes(prev => ({ ...prev, [noteKey]: e.target.value }))} placeholder="공고문 검토 내용, 크로스체크 메모..." style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #fef08a', fontSize: '12px', minHeight: '50px', resize: 'vertical', boxSizing: 'border-box', background: '#fffef5' }} />
+                                                  <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                                                    <button onClick={() => saveAdminNote(card.id, aName, editingAdminNotes[noteKey] || '')} style={{ padding: '4px 12px', borderRadius: '6px', border: 'none', background: '#f59e0b', color: 'white', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>저장</button>
+                                                    <button onClick={() => setEditingAdminNotes(prev => { const c = { ...prev }; delete c[noteKey]; return c; })} style={{ padding: '4px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </div>
+                                          );
+                                        });
+                                      })()}
+
+                                      {/* 개인 메모 (내가 적는란) */}
+                                      {currentUser && (() => {
+                                        const myMemo = card.rawData?.userMemos?.[currentUser.name];
+                                        const memoKey = card.id;
+                                        const isEditingMemo = editingUserMemos.hasOwnProperty(memoKey);
+                                        return (
+                                          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #e2e8f0' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                                              <span style={{ fontSize: '11px', fontWeight: '700', color: '#6366f1' }}>내 메모</span>
+                                              {!isEditingMemo && <span onClick={() => setEditingUserMemos(prev => ({ ...prev, [memoKey]: myMemo?.text || '' }))} style={{ fontSize: '10px', color: '#6366f1', cursor: 'pointer', fontWeight: '600' }}>{myMemo?.text ? '수정' : '+ 작성'}</span>}
+                                            </div>
+                                            {myMemo?.text && !isEditingMemo && (
+                                              <div style={{ padding: '6px 10px', background: '#eef2ff', borderRadius: '6px', fontSize: '12px', color: '#4338ca', lineHeight: '1.4' }}>{myMemo.text}</div>
+                                            )}
+                                            {isEditingMemo && (
+                                              <div>
+                                                <textarea value={editingUserMemos[memoKey] || ''} onChange={e => setEditingUserMemos(prev => ({ ...prev, [memoKey]: e.target.value }))} placeholder="개인 메모를 입력하세요..." style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #c7d2fe', fontSize: '12px', minHeight: '40px', resize: 'vertical', boxSizing: 'border-box', background: '#f5f3ff' }} />
+                                                <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                                                  <button onClick={() => saveUserMemo(card.id, editingUserMemos[memoKey] || '')} style={{ padding: '4px 12px', borderRadius: '6px', border: 'none', background: '#6366f1', color: 'white', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>저장</button>
+                                                  <button onClick={() => setEditingUserMemos(prev => { const c = { ...prev }; delete c[memoKey]; return c; })} style={{ padding: '4px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
+                                                </div>
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
+                                    </div>
+                                  );
+                                })}
+                                {filteredRows.length === 0 && (
+                                  <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8', fontSize: '13px' }}>해당 항목이 없습니다</div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </>
+                    )}
+
+                    {/* ===== 분석 탭 ===== */}
+                    {dashboardView === 'analysis' && (
+                      <>
+                        {/* 공종별 현황 - 4대 대분류 (방수/재도장/주차장/도로) */}
+                        <div style={{ background: 'white', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: '16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                            <div style={{ fontSize: '13px', fontWeight: '700', color: '#1e293b' }}>공종별 현황</div>
+                            <span style={{ fontSize: '11px', color: '#94a3b8', background: '#f1f5f9', padding: '2px 8px', borderRadius: '10px' }}>복합공종 서브공종 중복 집계 포함</span>
+                          </div>
+                          {/* 대분류 4개 카드 */}
+                          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: '10px', marginBottom: selectedMainCategory ? '14px' : '0' }}>
+                            {MAIN_CATEGORY_ORDER.map(mc => {
+                              const mcStats = teamData.mainCategoryStats[mc] || { total: 0, wins: 0, draws: 0, losses: 0 };
+                              const completed = mcStats.wins + mcStats.draws + mcStats.losses;
+                              const winRate = completed > 0 ? Math.round((mcStats.wins / completed) * 100) : 0;
+                              const isSelected = selectedMainCategory === mc;
+                              const catColor = MAIN_CATEGORY_MAP[mc].color;
+                              return (
+                                <div key={mc} onClick={() => { setSelectedMainCategory(isSelected ? null : mc); setSelectedCategoryTab('전체'); }} style={{ background: isSelected ? catColor + '10' : '#f8fafc', borderRadius: '10px', padding: '14px', border: isSelected ? `2px solid ${catColor}` : '1px solid #e2e8f0', cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s' }} onMouseOver={e => { if (!isSelected) e.currentTarget.style.borderColor = catColor; }} onMouseOut={e => { if (!isSelected) e.currentTarget.style.borderColor = '#e2e8f0'; }}>
+                                  <div style={{ fontSize: '14px', fontWeight: '700', color: catColor, marginBottom: '6px' }}>{mc}</div>
+                                  <div style={{ fontSize: '22px', fontWeight: '800', color: '#1e293b', marginBottom: '4px' }}>{mcStats.total}<span style={{ fontSize: '11px', fontWeight: '600', color: '#94a3b8' }}>건</span></div>
+                                  <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '4px' }}>
+                                    <span style={{ color: '#3b82f6', fontWeight: '700' }}>{mcStats.wins}승</span>
+                                    <span style={{ margin: '0 3px', color: '#cbd5e1' }}>·</span>
+                                    <span style={{ color: '#f59e0b', fontWeight: '700' }}>{mcStats.draws}무</span>
+                                    <span style={{ margin: '0 3px', color: '#cbd5e1' }}>·</span>
+                                    <span style={{ color: '#ef4444', fontWeight: '700' }}>{mcStats.losses}패</span>
+                                  </div>
+                                  <div style={{ fontSize: '16px', fontWeight: '800', color: completed < 1 ? '#94a3b8' : winRate >= 60 ? '#3b82f6' : winRate < 40 ? '#ef4444' : '#1e293b' }}>
+                                    {completed < 1 ? '-' : `${winRate}%`}
+                                  </div>
+                                  {(() => { const sl = getStrategyLabel(winRate, completed); return <div style={{ fontSize: '10px', fontWeight: '700', color: sl.color, background: sl.bg, padding: '2px 8px', borderRadius: '10px', marginTop: '4px', display: 'inline-block' }}>{sl.label}</div>; })()}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {/* 선택된 대분류의 서브공종 상세 */}
+                          {selectedMainCategory && (() => {
+                            const config = MAIN_CATEGORY_MAP[selectedMainCategory];
+                            const catColor = config.color;
+                            return (
+                              <div style={{ background: catColor + '08', borderRadius: '10px', padding: '14px', border: `1px solid ${catColor}30` }}>
+                                <div style={{ fontSize: '13px', fontWeight: '700', color: catColor, marginBottom: '10px' }}>{selectedMainCategory} 세부 공종</div>
+                                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : `repeat(${config.subs.length}, 1fr)`, gap: '8px' }}>
+                                  {config.subs.map(sub => {
+                                    const subKey = selectedMainCategory + '_' + sub;
+                                    const subStats = teamData.mainCategoryStats[subKey] || { total: 0, wins: 0, draws: 0, losses: 0 };
+                                    const completed = subStats.wins + subStats.draws + subStats.losses;
+                                    const wr = completed > 0 ? Math.round((subStats.wins / completed) * 100) : 0;
+                                    const isInsufficient = completed < 1;
+                                    const isSubSelected = selectedCategoryTab === subKey;
+                                    return (
+                                      <div key={sub} onClick={() => setSelectedCategoryTab(isSubSelected ? '전체' : subKey)} style={{ background: isSubSelected ? catColor + '15' : 'white', borderRadius: '8px', padding: '12px', textAlign: 'center', border: isSubSelected ? `2px solid ${catColor}` : '1px solid #e2e8f0', cursor: 'pointer', transition: 'all 0.2s' }}>
+                                        <div style={{ fontSize: '12px', fontWeight: '700', color: catColor, marginBottom: '6px' }}>{sub}</div>
+                                        <div style={{ fontSize: '18px', fontWeight: '800', color: '#1e293b', marginBottom: '2px' }}>{subStats.total}<span style={{ fontSize: '10px', fontWeight: '600', color: '#94a3b8' }}>건</span></div>
+                                        <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '4px' }}>
+                                          <span style={{ color: '#3b82f6', fontWeight: '700' }}>{subStats.wins}승</span>
+                                          <span style={{ margin: '0 2px', color: '#cbd5e1' }}>·</span>
+                                          <span style={{ color: '#f59e0b', fontWeight: '700' }}>{subStats.draws}무</span>
+                                          <span style={{ margin: '0 2px', color: '#cbd5e1' }}>·</span>
+                                          <span style={{ color: '#ef4444', fontWeight: '700' }}>{subStats.losses}패</span>
+                                        </div>
+                                        <div style={{ fontSize: '15px', fontWeight: '800', color: isInsufficient ? '#94a3b8' : wr >= 60 ? '#3b82f6' : wr < 40 ? '#ef4444' : '#1e293b' }}>
+                                          {isInsufficient ? '-' : `${wr}%`}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                {/* 선택된 세부공종 상세 (최근 현장 목록) */}
+                                {selectedCategoryTab !== '전체' && selectedCategoryTab.startsWith(selectedMainCategory + '_') && (() => {
+                                  const subName = selectedCategoryTab.replace(selectedMainCategory + '_', '');
+                                  const subStats = teamData.mainCategoryStats[selectedCategoryTab] || { total: 0, wins: 0, draws: 0, losses: 0 };
+                                  const completed = subStats.wins + subStats.draws + subStats.losses;
+                                  const winRate = completed > 0 ? Math.round((subStats.wins / completed) * 100) : 0;
+                                  // 해당 세부공종 PT 목록 필터
+                                  const subPts = ptSchedules.filter(s => {
+                                    if (!s.date || !s.ptAssignee) return false;
+                                    if (exportYear !== 'all' && (s.date < `${exportYear}-01-01` || s.date > `${exportYear}-12-31`)) return false;
+                                    if (previewAssignee) {
+                                      const aa = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim());
+                                      if (!aa.includes(previewAssignee)) return false;
+                                    }
+                                    const tags = getSubCategoryTags(s.workType);
+                                    return tags.some(t => t.main === selectedMainCategory && t.sub === subName);
+                                  }).sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 20);
+                                  return (
+                                    <div style={{ marginTop: '12px', background: 'white', borderRadius: '10px', padding: '16px', border: '1px solid #e2e8f0' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                                        <span style={{ fontSize: '15px', fontWeight: '800', color: catColor }}>{subName}</span>
+                                        <span style={{ fontSize: '12px', color: '#64748b' }}>총 {subStats.total}건</span>
+                                      </div>
+                                      <div style={{ display: 'flex', gap: '16px', marginBottom: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                        <DonutChart percent={winRate} size={60} />
+                                        <div>
+                                          <div style={{ fontSize: '11px', color: '#64748b' }}>승률</div>
+                                          <div style={{ fontSize: '18px', fontWeight: '800', color: '#1e293b' }}>{winRate}%</div>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '12px', fontSize: '13px' }}>
+                                          <span style={{ color: '#3b82f6', fontWeight: '700' }}>승 {subStats.wins}</span>
+                                          <span style={{ color: '#f59e0b', fontWeight: '700' }}>무 {subStats.draws}</span>
+                                          <span style={{ color: '#ef4444', fontWeight: '700' }}>패 {subStats.losses}</span>
+                                        </div>
+                                      </div>
+                                      {subPts.length > 0 && (
+                                        <>
+                                          <div style={{ fontSize: '12px', fontWeight: '700', color: '#64748b', marginBottom: '8px' }}>최근 현장</div>
+                                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                            {subPts.map(s => {
+                                              const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                                              let result = null;
+                                              if (s.results) { for (const a of assignees) { if (s.results[a]) { result = s.results[a]; break; } } }
+                                              if (!result) result = s.result;
+                                              const rColor = result === '승' ? '#3b82f6' : result === '패' ? '#ef4444' : result === '무' ? '#f59e0b' : '#94a3b8';
+                                              return (
+                                                <div key={s.id} onClick={() => { setDashboardView('overview'); setSiteListTab('all'); handleEditClick({ ...s, type: 'pt' }); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: '#f8fafc', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', transition: 'background 0.15s' }} onMouseOver={e => e.currentTarget.style.background = '#eef2ff'} onMouseOut={e => e.currentTarget.style.background = '#f8fafc'}>
+                                                  <span style={{ color: rColor, fontWeight: '700', minWidth: '24px' }}>{result || '-'}</span>
+                                                  <span style={{ color: '#64748b', minWidth: '72px', flexShrink: 0 }}>{(s.date || '').slice(2)}</span>
+                                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <div style={{ color: '#1e293b', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.siteName}</div>
+                                                    <div style={{ color: '#94a3b8', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>{s.workType || ''}</div>
+                                                  </div>
+                                                  <span style={{ color: '#94a3b8', flexShrink: 0 }}>{assignees[0]}</span>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        </>
+                                      )}
+                                      {subPts.length === 0 && <div style={{ fontSize: '12px', color: '#94a3b8', textAlign: 'center', padding: '12px' }}>해당 공종 데이터가 없습니다</div>}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            );
+                          })()}
+                        </div>
+
+                        {/* 패배유형 분석 */}
+                        {(() => {
+                          const analysis = selectedAssignee === 'all' ? null : getPtAnalysis(selectedAssignee, ptSchedules);
+                          // 전체 모드일 때 팀 전체 패배유형 계산
+                          const lossTypeCounts = { COMPETITOR: 0, PRICE: 0, SALES: 0, TECH: 0, UNKNOWN: 0 };
+                          const competitorCounts = {};
+                          const getDateRange = (year, quarter) => {
+                            const y = parseInt(year);
+                            if (quarter === '1분기') return { start: `${y}-01-01`, end: `${y}-03-31` };
+                            if (quarter === '2분기') return { start: `${y}-04-01`, end: `${y}-06-30` };
+                            if (quarter === '3분기') return { start: `${y}-07-01`, end: `${y}-09-30` };
+                            if (quarter === '4분기') return { start: `${y}-10-01`, end: `${y}-12-31` };
+                            return { start: `${y}-01-01`, end: `${y}-12-31` };
+                          };
+                          const skipYearFilterLocal = exportYear === 'all';
+                          const range = skipYearFilterLocal ? null : getDateRange(exportYear, exportQuarter);
+
+                          // 선택된 공종 필터 라벨
+                          const selectedSubName = selectedCategoryTab !== '전체' && selectedCategoryTab.includes('_') ? selectedCategoryTab.replace('_', '>') : null;
+                          const lossFilterLabel = selectedSubName ? selectedSubName : selectedMainCategory ? selectedMainCategory : '전체';
+
+                          ptSchedules.filter(s => s.date && s.ptAssignee && (skipYearFilterLocal || (s.date >= range.start && s.date <= range.end))).forEach(s => {
+                            // 공종 필터 적용
+                            if (selectedCategoryTab !== '전체' && selectedCategoryTab.includes('_')) {
+                              const [mainCat, subName] = selectedCategoryTab.split('_');
+                              const tags = getSubCategoryTags(s.workType);
+                              if (!tags.some(t => t.main === mainCat && t.sub === subName)) return;
+                            } else if (selectedMainCategory) {
+                              const tags = getSubCategoryTags(s.workType);
+                              if (!tags.some(t => t.main === selectedMainCategory)) return;
+                            }
+                            const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                            if (selectedAssignee !== 'all' && !assignees.includes(selectedAssignee)) return;
+                            assignees.forEach(assignee => {
+                              if (selectedAssignee !== 'all' && assignee !== selectedAssignee) return;
+                              let result = null;
+                              if (s.results && s.results[assignee]) result = s.results[assignee];
+                              else if (assignees.length === 1) result = s.result;
+                              if (result !== '패') return;
+                              const reasonData = s.resultReasons?.[assignee] || {};
+                              const lt = classifyLossType(reasonData.reason, reasonData.competitor, s.competitor);
+                              lossTypeCounts[lt]++;
+                              if (lt === 'COMPETITOR') {
+                                const comp = (reasonData.competitor || '').trim() || (s.competitor || '').trim();
+                                const isExcluded = (str) => /^(\d+개업체|\d+곳|\d+개사|\d+개|총\d+개|외\s*\d+|등\s*\d+)$/.test(str.trim());
+                                comp.split(/[\/,.+&]+/).map(c => c.trim()).filter(c => c && !isExcluded(c)).map(normalizeCompetitor).forEach(c => { competitorCounts[c] = (competitorCounts[c] || 0) + 1; });
+                              }
+                            });
+                          });
+
+                          const lossTypesSorted = Object.entries(lossTypeCounts).filter(([_, c]) => c > 0).sort((a, b) => b[1] - a[1]);
+                          const totalLosses = lossTypesSorted.reduce((s, [_, c]) => s + c, 0);
+                          const competitorSorted = Object.entries(competitorCounts).sort((a, b) => b[1] - a[1]);
+                          const LOSS_COLORS = { COMPETITOR: '#ef4444', PRICE: '#f59e0b', SALES: '#6366f1', TECH: '#06b6d4', UNKNOWN: '#94a3b8' };
+
+                          // 세분화 6분류 집계
+                          const refinedCounts = { PRICE: 0, METHOD: 0, BRAND: 0, EXISTING: 0, TECH_EVAL: 0, OTHER: 0 };
+                          ptSchedules.filter(s => s.date && s.ptAssignee && (skipYearFilterLocal || (s.date >= range.start && s.date <= range.end))).forEach(s => {
+                            if (selectedCategoryTab !== '전체' && selectedCategoryTab.includes('_')) { const [mc2, sn2] = selectedCategoryTab.split('_'); if (!getSubCategoryTags(s.workType).some(t => t.main === mc2 && t.sub === sn2)) return; }
+                            else if (selectedMainCategory) { if (!getSubCategoryTags(s.workType).some(t => t.main === selectedMainCategory)) return; }
+                            const asgs = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(Boolean);
+                            if (selectedAssignee !== 'all' && !asgs.includes(selectedAssignee)) return;
+                            asgs.forEach(a => {
+                              if (selectedAssignee !== 'all' && a !== selectedAssignee) return;
+                              let r = s.results?.[a] || (asgs.length === 1 ? s.result : null);
+                              if (r !== '패') return;
+                              const rd = s.resultReasons?.[a] || {};
+                              refinedCounts[classifyLossTypeRefined(rd.reason, rd.competitor, s.competitor)]++;
+                            });
+                          });
+                          const refinedSorted = Object.entries(refinedCounts).filter(([_, c]) => c > 0).sort((a, b) => b[1] - a[1]);
+                          const totalRefinedLosses = refinedSorted.reduce((s, [_, c]) => s + c, 0);
+
+                          const useRefined = lossTypeMode === 'refined';
+                          const displaySorted = useRefined ? refinedSorted : lossTypesSorted;
+                          const displayTotal = useRefined ? totalRefinedLosses : totalLosses;
+                          const displayColors = useRefined ? Object.fromEntries(Object.entries(REFINED_LOSS_TYPES).map(([k, v]) => [k, v.color])) : LOSS_COLORS;
+                          const displayLabels = useRefined ? Object.fromEntries(Object.entries(REFINED_LOSS_TYPES).map(([k, v]) => [k, v.label])) : LOSS_TYPE_LABELS;
+                          const maxLossCount = displaySorted.length > 0 ? displaySorted[0][1] : 1;
+
+                          return (
+                            <div style={{ background: 'white', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b' }}>패배 유형 분석 ({displayTotal}건) {lossFilterLabel !== '전체' && <span style={{ fontSize: '11px', fontWeight: '600', color: '#6366f1', background: '#eef2ff', padding: '2px 8px', borderRadius: '10px', marginLeft: '6px' }}>{lossFilterLabel}</span>}</div>
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                  {['basic', 'refined'].map(m => (
+                                    <button key={m} onClick={() => setLossTypeMode(m)} style={{ padding: '3px 8px', borderRadius: '6px', border: '1px solid ' + (lossTypeMode === m ? '#6366f1' : '#e2e8f0'), background: lossTypeMode === m ? '#eef2ff' : 'white', color: lossTypeMode === m ? '#6366f1' : '#94a3b8', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>
+                                      {m === 'basic' ? '5분류' : '6분류'}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                              {displayTotal === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '13px' }}>패배 데이터 없음</div>
+                              ) : (
+                                <>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+                                    {displaySorted.map(([code, count]) => (
+                                      <div key={code}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                          <span style={{ fontSize: '12px', fontWeight: '600', color: displayColors[code] }}>{useRefined && REFINED_LOSS_TYPES[code]?.icon} {displayLabels[code]}</span>
+                                          <span style={{ fontSize: '12px', fontWeight: '700', color: '#1e293b' }}>{count}건 ({Math.round((count / displayTotal) * 100)}%)</span>
+                                        </div>
+                                        <div style={{ height: '8px', background: '#f1f5f9', borderRadius: '4px', overflow: 'hidden' }}>
+                                          <div style={{ height: '100%', width: `${(count / maxLossCount) * 100}%`, background: displayColors[code], borderRadius: '4px', transition: 'width 0.3s' }} />
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {/* 경쟁사별 승률 분석 */}
+                                  {(() => {
+                                    const compData = getCompetitorStats(ptSchedules, exportYear, exportQuarter, previewAssignee || selectedAssignee);
+                                    if (compData.length === 0) return null;
+                                    return (
+                                      <div style={{ padding: '14px', background: '#fef2f2', borderRadius: '10px' }}>
+                                        <div style={{ fontSize: '12px', fontWeight: '700', color: '#991b1b', marginBottom: '10px' }}>경쟁사별 승률 ({compData.length}개사)</div>
+                                        {/* 테이블 헤더 */}
+                                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 0.7fr 0.5fr 0.5fr 0.5fr 0.8fr', gap: '4px', padding: '4px 8px', fontSize: '10px', fontWeight: '700', color: '#94a3b8', borderBottom: '1px solid #fecaca' }}>
+                                          <span>경쟁사</span><span style={{ textAlign: 'center' }}>총</span><span style={{ textAlign: 'center' }}>승</span><span style={{ textAlign: 'center' }}>무</span><span style={{ textAlign: 'center' }}>패</span><span style={{ textAlign: 'right' }}>승률</span>
+                                        </div>
+                                        {compData.slice(0, 10).map(c => (
+                                          <div key={c.name} style={{ display: 'grid', gridTemplateColumns: '2fr 0.7fr 0.5fr 0.5fr 0.5fr 0.8fr', gap: '4px', padding: '6px 8px', fontSize: '11px', alignItems: 'center', borderBottom: '1px solid #fef2f2' }}>
+                                            <span style={{ fontWeight: '600', color: '#1e293b', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{c.name}</span>
+                                            <span style={{ textAlign: 'center', color: '#64748b' }}>{c.total}</span>
+                                            <span style={{ textAlign: 'center', color: '#3b82f6', fontWeight: '700' }}>{c.wins}</span>
+                                            <span style={{ textAlign: 'center', color: '#f59e0b', fontWeight: '700' }}>{c.draws}</span>
+                                            <span style={{ textAlign: 'center', color: '#ef4444', fontWeight: '700' }}>{c.losses}</span>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
+                                              <div style={{ width: '30px', height: '6px', borderRadius: '3px', background: '#fee2e2', overflow: 'hidden' }}>
+                                                <div style={{ width: `${c.winRate}%`, height: '100%', borderRadius: '3px', background: c.winRate >= 60 ? '#3b82f6' : c.winRate >= 40 ? '#f59e0b' : '#ef4444' }} />
+                                              </div>
+                                              <span style={{ fontWeight: '800', fontSize: '12px', color: c.winRate >= 60 ? '#3b82f6' : c.winRate >= 40 ? '#f59e0b' : '#ef4444', minWidth: '28px', textAlign: 'right' }}>{c.winRate}%</span>
+                                            </div>
+                                          </div>
+                                        ))}
+                                        {compData.length > 10 && <div style={{ fontSize: '10px', color: '#94a3b8', textAlign: 'center', marginTop: '6px' }}>외 {compData.length - 10}개사</div>}
+                                      </div>
+                                    );
+                                  })()}
+                                </>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* 담당자 분석 */}
+                        {(() => {
+                          const filterMain = selectedMainCategory || null;
+                          const filterSub = selectedCategoryTab && selectedCategoryTab !== '전체' && selectedCategoryTab.includes('_') ? selectedCategoryTab.split('_').slice(1).join('_') : null;
+                          const asgnData = getAssigneeStrategyStats(ptSchedules, exportYear, exportQuarter, filterMain, filterSub);
+                          const activeAsgn = asgnData.filter(a => a.total > 0);
+                          if (activeAsgn.length === 0) return null;
+                          const teamColors = { '1팀': '#3b82f6', '2팀': '#10b981', '3팀': '#8b5cf6' };
+                          const mainCats = ['방수', '재도장', '주차장', '도로'];
+                          const filterLabel = filterSub ? `${filterMain} > ${filterSub}` : filterMain || '';
+                          return (
+                            <div style={{ background: 'white', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                              <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '12px' }}>
+                                담당자 분석
+                                {filterLabel && <span style={{ fontSize: '11px', fontWeight: '600', color: MAIN_CATEGORY_MAP[filterMain]?.color || '#94a3b8', background: (MAIN_CATEGORY_MAP[filterMain]?.color || '#94a3b8') + '18', padding: '2px 8px', borderRadius: '10px', marginLeft: '8px' }}>{filterLabel}</span>}
+                              </div>
+                              {activeAsgn.map(a => {
+                                const tc = teamColors[a.team] || '#94a3b8';
+                                const comp = a.wins + a.draws + a.losses;
+                                const isExpanded = expandedAssigneeAnalysis === a.name;
+                                return (
+                                  <div key={a.name} style={{ marginBottom: '6px' }}>
+                                    <div onClick={() => setExpandedAssigneeAnalysis(isExpanded ? null : a.name)}
+                                      style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.6fr 1.2fr 1fr', gap: '8px', padding: '10px 12px', borderRadius: '10px', border: isExpanded ? `1.5px solid ${tc}` : '1px solid #f1f5f9', background: isExpanded ? tc + '08' : '#f8fafc', cursor: 'pointer', alignItems: 'center', transition: 'all 0.15s' }}>
+                                      {/* 이름 + 팀 */}
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <span style={{ fontSize: '13px', fontWeight: '700', color: '#1e293b' }}>{a.name}</span>
+                                        <span style={{ fontSize: '9px', fontWeight: '700', color: tc, background: tc + '15', padding: '1px 5px', borderRadius: '4px' }}>{a.team}</span>
+                                      </div>
+                                      {/* PT 건수 */}
+                                      <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '600' }}>{a.total}건</span>
+                                      {/* 승/무/패 */}
+                                      <div style={{ display: 'flex', gap: '6px', fontSize: '11px', fontWeight: '700' }}>
+                                        <span style={{ color: '#3b82f6' }}>{a.wins}승</span>
+                                        <span style={{ color: '#f59e0b' }}>{a.draws}무</span>
+                                        <span style={{ color: '#ef4444' }}>{a.losses}패</span>
+                                      </div>
+                                      {/* 승률 바 */}
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <div style={{ flex: 1, height: '8px', borderRadius: '4px', background: '#f1f5f9', overflow: 'hidden' }}>
+                                          <div style={{ width: `${a.winRate}%`, height: '100%', borderRadius: '4px', background: a.winRate >= 60 ? '#3b82f6' : a.winRate >= 40 ? '#f59e0b' : '#ef4444' }} />
+                                        </div>
+                                        <span style={{ fontSize: '13px', fontWeight: '800', color: a.winRate >= 60 ? '#3b82f6' : a.winRate >= 40 ? '#f59e0b' : '#ef4444', minWidth: '32px', textAlign: 'right' }}>{a.winRate}%</span>
+                                      </div>
+                                    </div>
+                                    {/* 펼침: 공종별 승률 */}
+                                    {isExpanded && (
+                                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', padding: '8px 12px', marginTop: '4px' }}>
+                                        {mainCats.map(mc => {
+                                          const wts = a.workTypeStats[mc] || { wins: 0, draws: 0, losses: 0, total: 0 };
+                                          const wComp = wts.wins + wts.draws + wts.losses;
+                                          const wWr = wComp > 0 ? Math.round((wts.wins / wComp) * 100) : 0;
+                                          return (
+                                            <div key={mc} style={{ textAlign: 'center', padding: '8px 4px', borderRadius: '8px', background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                                              <div style={{ fontSize: '10px', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>{mc}</div>
+                                              <div style={{ fontSize: '14px', fontWeight: '800', color: wComp === 0 ? '#94a3b8' : wWr >= 60 ? '#3b82f6' : wWr < 40 ? '#ef4444' : '#1e293b' }}>{wComp === 0 ? '-' : `${wWr}%`}</div>
+                                              <div style={{ fontSize: '9px', color: '#94a3b8' }}>{wts.total}건</div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
+
+                        {/* 공법 승률 분석 */}
+                        {(() => {
+                          const methodData = getMethodAnalysis(ptSchedules, exportYear, exportQuarter, previewAssignee || selectedAssignee);
+                          const { combosSorted, methodsSorted } = methodData;
+                          const hasData = combosSorted.length > 0;
+                          return (
+                            <div style={{ background: 'white', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                              <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '12px' }}>
+                                공법 승률 분석
+                                {hasData && <span style={{ fontSize: '11px', fontWeight: '600', color: '#94a3b8', marginLeft: '8px' }}>{combosSorted.reduce((s, c) => s + c.total, 0)}건</span>}
+                              </div>
+                              {!hasData ? (
+                                <div style={{ textAlign: 'center', padding: '24px', color: '#94a3b8' }}>
+                                  <div style={{ fontSize: '24px', marginBottom: '8px' }}>📋</div>
+                                  <div style={{ fontSize: '13px', fontWeight: '600' }}>공법 데이터가 아직 없습니다</div>
+                                  <div style={{ fontSize: '11px', marginTop: '4px' }}>PT 결과 입력 시 공고문 공법을 선택하면 분석됩니다</div>
+                                </div>
+                              ) : (
+                                <>
+                                  {/* 조합별 승률 */}
+                                  <div style={{ marginBottom: '14px' }}>
+                                    <div style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', marginBottom: '8px' }}>공법 조합별</div>
+                                    {combosSorted.slice(0, 8).map(c => {
+                                      const isPourWin = c.key.includes('POUR') && !c.key.includes('vs') && !c.key.includes('미포함');
+                                      return (
+                                        <div key={c.key} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0' }}>
+                                          <span style={{ fontSize: '11px', fontWeight: '700', color: isPourWin ? '#2563eb' : '#475569', minWidth: '120px', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{c.key}</span>
+                                          <div style={{ flex: 1, height: '10px', borderRadius: '5px', background: '#f1f5f9', overflow: 'hidden' }}>
+                                            <div style={{ width: `${c.winRate}%`, height: '100%', borderRadius: '5px', background: c.winRate >= 60 ? '#3b82f6' : c.winRate >= 40 ? '#f59e0b' : '#ef4444', transition: 'width 0.3s' }} />
+                                          </div>
+                                          <span style={{ fontSize: '12px', fontWeight: '800', color: c.winRate >= 60 ? '#3b82f6' : c.winRate >= 40 ? '#f59e0b' : '#ef4444', minWidth: '35px', textAlign: 'right' }}>{c.winRate}%</span>
+                                          <span style={{ fontSize: '10px', color: '#94a3b8', minWidth: '20px' }}>{c.total}건</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  {/* 개별 공법 칩 */}
+                                  <div>
+                                    <div style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', marginBottom: '8px' }}>개별 공법</div>
+                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                      {methodsSorted.map(m => {
+                                        const isPour = ['POUR', 'DO', 'CNC'].includes(m.key);
+                                        return (
+                                          <div key={m.key} style={{ padding: '6px 12px', borderRadius: '10px', background: isPour ? '#dbeafe' : '#f1f5f9', border: `1px solid ${isPour ? '#93c5fd' : '#e2e8f0'}`, textAlign: 'center' }}>
+                                            <div style={{ fontSize: '12px', fontWeight: '700', color: isPour ? '#2563eb' : '#475569' }}>{m.key}</div>
+                                            <div style={{ fontSize: '14px', fontWeight: '800', color: m.winRate >= 60 ? '#3b82f6' : m.winRate >= 40 ? '#f59e0b' : '#ef4444', marginTop: '2px' }}>{m.winRate}%</div>
+                                            <div style={{ fontSize: '9px', color: '#94a3b8' }}>{m.total}건</div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* AI 전략 코멘트 */}
+                        {(() => {
+                          // 필터 정보
+                          const filterLabel = (() => {
+                            let parts = [];
+                            if (exportYear !== 'all') parts.push(`${exportYear}년`);
+                            if (exportQuarter !== 'all') parts.push(exportQuarter);
+                            if (previewAssignee) parts.push(previewAssignee);
+                            return parts.length > 0 ? parts.join(' ') : '전체 기간';
+                          })();
+
+                          // 선택된 공종 필터 반영
+                          const aiSelectedSub = selectedCategoryTab !== '전체' && selectedCategoryTab.includes('_') ? selectedCategoryTab : null;
+                          const aiSelectedMain = selectedMainCategory;
+                          const aiScopeLabel = aiSelectedSub ? aiSelectedSub.replace('_', '>') : aiSelectedMain || '전체';
+
+                          // 공종별 강점/약점 분석 (대분류 + 세부공종 기반)
+                          const groupAnalysis = [];
+                          const targetMains = aiSelectedMain ? [aiSelectedMain] : MAIN_CATEGORY_ORDER;
+                          targetMains.forEach(mc => {
+                            const mcStats = teamData.mainCategoryStats[mc] || { total: 0, wins: 0, draws: 0, losses: 0 };
+                            const completed = mcStats.wins + mcStats.draws + mcStats.losses;
+                            const winRate = completed > 0 ? Math.round((mcStats.wins / completed) * 100) : 0;
+                            if (mcStats.total > 0) groupAnalysis.push({ name: mc, ...mcStats, completed, winRate, isMain: true });
+                            const config = MAIN_CATEGORY_MAP[mc];
+                            config.subs.forEach(sub => {
+                              if (aiSelectedSub && aiSelectedSub !== mc + '_' + sub) return;
+                              const subStats = teamData.mainCategoryStats[mc + '_' + sub] || { total: 0, wins: 0, draws: 0, losses: 0 };
+                              const subCompleted = subStats.wins + subStats.draws + subStats.losses;
+                              const subWinRate = subCompleted > 0 ? Math.round((subStats.wins / subCompleted) * 100) : 0;
+                              if (subStats.total > 0) groupAnalysis.push({ name: `${mc}>${sub}`, ...subStats, completed: subCompleted, winRate: subWinRate, isMain: false, mainCat: mc });
+                            });
+                          });
+
+                          const subAnalysis = groupAnalysis.filter(g => !g.isMain);
+                          const strongGroups = subAnalysis.filter(g => g.completed >= 3 && g.winRate >= 60).sort((a, b) => b.winRate - a.winRate);
+                          const weakGroups = subAnalysis.filter(g => g.completed >= 3 && g.winRate < 40).sort((a, b) => a.winRate - b.winRate);
+                          const normalGroups = subAnalysis.filter(g => g.completed >= 3 && g.winRate >= 40 && g.winRate < 60);
+                          const insufficientGroups = subAnalysis.filter(g => g.completed < 3 && g.total > 0);
+
+                          // 전체 승률 (선택된 범위 기준)
+                          const totalCompleted = aiSelectedSub ? subAnalysis.reduce((s, g) => s + g.completed, 0) : groupAnalysis.filter(g => g.isMain).reduce((s, g) => s + g.completed, 0);
+                          const totalWins = aiSelectedSub ? subAnalysis.reduce((s, g) => s + g.wins, 0) : groupAnalysis.filter(g => g.isMain).reduce((s, g) => s + g.wins, 0);
+                          const overallWinRate = totalCompleted > 0 ? Math.round((totalWins / totalCompleted) * 100) : 0;
+
+                          // 가장 많은 PT 공종 (대분류)
+                          const mainAnalysis = groupAnalysis.filter(g => g.isMain);
+                          const mostPtGroup = [...mainAnalysis].sort((a, b) => b.total - a.total)[0];
+
+                          // 패배유형 재계산 (코멘트용)
+                          const aiLossTypeCounts = { COMPETITOR: 0, PRICE: 0, SALES: 0, TECH: 0, UNKNOWN: 0 };
+                          const getDateRangeAi = (year, quarter) => {
+                            const y = parseInt(year);
+                            if (quarter === '1분기') return { start: `${y}-01-01`, end: `${y}-03-31` };
+                            if (quarter === '2분기') return { start: `${y}-04-01`, end: `${y}-06-30` };
+                            if (quarter === '3분기') return { start: `${y}-07-01`, end: `${y}-09-30` };
+                            if (quarter === '4분기') return { start: `${y}-10-01`, end: `${y}-12-31` };
+                            return { start: `${y}-01-01`, end: `${y}-12-31` };
+                          };
+                          const skipAi = exportYear === 'all';
+                          const aiRange = skipAi ? null : getDateRangeAi(exportYear, exportQuarter);
+                          ptSchedules.filter(s => s.date && s.ptAssignee && (skipAi || (s.date >= aiRange.start && s.date <= aiRange.end))).forEach(s => {
+                            // 공종 필터 적용
+                            if (aiSelectedSub) {
+                              const [mc, sn] = aiSelectedSub.split('_');
+                              const tags = getSubCategoryTags(s.workType);
+                              if (!tags.some(t => t.main === mc && t.sub === sn)) return;
+                            } else if (aiSelectedMain) {
+                              const tags = getSubCategoryTags(s.workType);
+                              if (!tags.some(t => t.main === aiSelectedMain)) return;
+                            }
+                            const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                            if (previewAssignee && !assignees.includes(previewAssignee)) return;
+                            assignees.forEach(assignee => {
+                              if (previewAssignee && assignee !== previewAssignee) return;
+                              let result = null;
+                              if (s.results && s.results[assignee]) result = s.results[assignee];
+                              else if (assignees.length === 1) result = s.result;
+                              if (result !== '패') return;
+                              const reasonData = s.resultReasons?.[assignee] || {};
+                              const lt = classifyLossType(reasonData.reason, reasonData.competitor, s.competitor);
+                              aiLossTypeCounts[lt]++;
+                            });
+                          });
+                          const aiLossSorted = Object.entries(aiLossTypeCounts).filter(([_, c]) => c > 0).sort((a, b) => b[1] - a[1]);
+                          const aiTotalLosses = aiLossSorted.reduce((s, [_, c]) => s + c, 0);
+                          const LOSS_LABELS = { COMPETITOR: '경쟁사 패배', PRICE: '가격 경쟁', SALES: '영업력 부족', TECH: '기술력 부족', UNKNOWN: '미기재' };
+
+                          // 코멘트 생성
+                          const comments = [];
+
+                          // 1. 종합 평가
+                          if (totalCompleted > 0) {
+                            const subjectName = previewAssignee || '팀 전체';
+                            let overallComment = `[${filterLabel}] ${subjectName}의 종합 승률은 ${overallWinRate}%이며, 총 ${totalCompleted}건 완료`;
+                            if (overallWinRate >= 60) overallComment += ' — 우수한 성과를 보이고 있습니다.';
+                            else if (overallWinRate >= 40) overallComment += ' — 보통 수준으로, 개선 여지가 있습니다.';
+                            else overallComment += ' — 개선이 시급합니다.';
+                            comments.push({ type: 'overall', icon: overallWinRate >= 60 ? '📊' : overallWinRate >= 40 ? '📈' : '⚠️', text: overallComment });
+                          }
+
+                          // 1-1. 대분류별 승률 요약
+                          if (mainAnalysis.length > 0) {
+                            const mainSummary = mainAnalysis.map(g => `${g.name} ${g.winRate}%(${g.total}건)`).join(' / ');
+                            comments.push({ type: 'overall', icon: '📋', text: `대분류별: ${mainSummary}` });
+                          }
+
+                          // 2. 강점 공종 (세부공종 기준)
+                          if (strongGroups.length > 0) {
+                            const names = strongGroups.map(g => `${g.name}(${g.winRate}%)`).join(', ');
+                            comments.push({ type: 'strong', icon: '💪', text: `강점 세부공종: ${names} — 높은 승률을 유지하고 있어 핵심 경쟁력 분야입니다.` });
+                          }
+
+                          // 3. 약점 공종 (세부공종 기준)
+                          if (weakGroups.length > 0) {
+                            const names = weakGroups.map(g => `${g.name}(${g.winRate}%)`).join(', ');
+                            comments.push({ type: 'weak', icon: '🔻', text: `약점 세부공종: ${names} — 승률이 낮아 전략 보완이 필요합니다.` });
+                          }
+
+                          // 4. 주력 대분류
+                          if (mostPtGroup && mostPtGroup.total >= 3) {
+                            // 해당 대분류의 세부공종 중 최다 PT
+                            const subOfMain = subAnalysis.filter(g => g.mainCat === mostPtGroup.name).sort((a, b) => b.total - a.total);
+                            const topSub = subOfMain[0];
+                            let mainComment = `주력 분야: ${mostPtGroup.name} (${mostPtGroup.total}건, 승률 ${mostPtGroup.winRate}%)`;
+                            if (topSub) mainComment += ` — 세부 최다: ${topSub.name.split('>')[1]}(${topSub.total}건, ${topSub.winRate}%)`;
+                            comments.push({ type: 'main', icon: '🎯', text: mainComment });
+                          }
+
+                          // 5. 패배 원인 분석
+                          if (aiTotalLosses > 0 && aiLossSorted.length > 0) {
+                            const topLoss = aiLossSorted[0];
+                            const topPct = Math.round((topLoss[1] / aiTotalLosses) * 100);
+                            let lossComment = `패배 주요 원인: ${LOSS_LABELS[topLoss[0]]} (${topLoss[1]}건, ${topPct}%)`;
+                            if (topLoss[0] === 'COMPETITOR') lossComment += ' — 경쟁사 대비 차별화 전략이 필요합니다.';
+                            else if (topLoss[0] === 'PRICE') lossComment += ' — 가격 경쟁력 확보 방안을 검토해야 합니다.';
+                            else if (topLoss[0] === 'SALES') lossComment += ' — 사전 영업 및 고객 관계 강화가 필요합니다.';
+                            else if (topLoss[0] === 'TECH') lossComment += ' — 기술 역량 강화 및 실적 확보가 시급합니다.';
+                            comments.push({ type: 'loss', icon: '📉', text: lossComment });
+                          }
+
+                          // 6. 보완 제안
+                          if (normalGroups.length > 0 && weakGroups.length === 0) {
+                            const names = normalGroups.map(g => g.name).join(', ');
+                            comments.push({ type: 'suggest', icon: '💡', text: `${names} 공종은 보통 수준(40~60%)으로, 집중 관리 시 강점으로 전환 가능합니다.` });
+                          }
+
+                          // 7. 데이터 부족 안내
+                          if (insufficientGroups.length > 0 && groupAnalysis.length > 0) {
+                            const names = insufficientGroups.map(g => `${g.name}(${g.total}건)`).join(', ');
+                            comments.push({ type: 'info', icon: 'ℹ️', text: `${names}은 데이터 부족(3건 미만)으로 정확한 분석이 어렵습니다.` });
+                          }
+
+                          if (comments.length === 0) {
+                            comments.push({ type: 'empty', icon: '📋', text: '분석할 데이터가 부족합니다. PT 결과가 더 누적되면 AI 분석 코멘트가 생성됩니다.' });
+                          }
+
+                          // ── 전략 코멘트 추가 ──
+                          if (totalCompleted >= 3) {
+                            // 전략 1: 공종 집중 전략
+                            if (strongGroups.length > 0 && weakGroups.length > 0) {
+                              const sNames = strongGroups.slice(0, 2).map(g => `${g.name}(${g.winRate}%)`).join(', ');
+                              const wNames = weakGroups.slice(0, 2).map(g => `${g.name}(${g.winRate}%)`).join(', ');
+                              comments.push({ type: 'strategy', icon: '🎯', text: `전략 제안: ${sNames} 공종에 역량을 집중하고, ${wNames} 공종은 사전 영업 강화 또는 파트너십 전략을 검토하세요.` });
+                            }
+                            // 전략 2: 경쟁사 대응
+                            const compStrat = getCompetitorStats(ptSchedules, exportYear, exportQuarter, previewAssignee || selectedAssignee);
+                            const topThreat = compStrat.filter(c => c.total >= 3).sort((a, b) => a.winRate - b.winRate)[0];
+                            if (topThreat && topThreat.winRate < 50) {
+                              comments.push({ type: 'strategy', icon: '⚔️', text: `경쟁사 대응: ${topThreat.name}에 대한 승률이 ${topThreat.winRate}%(${topThreat.total}건)입니다. 차별화 포인트를 정리하고 PT 자료에 반영하세요.` });
+                            }
+                            // 전략 3: 공법 전략
+                            const methodStrat = getMethodAnalysis(ptSchedules, exportYear, exportQuarter, previewAssignee || selectedAssignee);
+                            const bestCombo = methodStrat.combosSorted.filter(c => c.total >= 3).sort((a, b) => b.winRate - a.winRate)[0];
+                            if (bestCombo) {
+                              comments.push({ type: 'strategy', icon: '🔧', text: `공법 전략: ${bestCombo.key} 조합의 승률이 ${bestCombo.winRate}%(${bestCombo.total}건)로 가장 높습니다. 해당 공법 제안을 우선 추진하세요.` });
+                            }
+                            // 전략 4: 담당자 배치 (관리자 또는 전체 보기)
+                            if (selectedAssignee === 'all' || !previewAssignee) {
+                              const asgnStrat = getAssigneeStrategyStats(ptSchedules, exportYear, exportQuarter);
+                              mainAnalysis.filter(g => g.completed >= 5).forEach(mc => {
+                                const bestPerson = asgnStrat.filter(a => {
+                                  const wts = a.workTypeStats[mc.name];
+                                  if (!wts) return false;
+                                  const c = wts.wins + wts.draws + wts.losses;
+                                  return c >= 3;
+                                }).sort((a, b) => {
+                                  const aWts = a.workTypeStats[mc.name]; const bWts = b.workTypeStats[mc.name];
+                                  const aWr = (aWts.wins / (aWts.wins + aWts.draws + aWts.losses)) * 100;
+                                  const bWr = (bWts.wins / (bWts.wins + bWts.draws + bWts.losses)) * 100;
+                                  return bWr - aWr;
+                                })[0];
+                                if (bestPerson) {
+                                  const bwts = bestPerson.workTypeStats[mc.name];
+                                  const bwr = Math.round((bwts.wins / (bwts.wins + bwts.draws + bwts.losses)) * 100);
+                                  if (bwr >= 60) {
+                                    comments.push({ type: 'strategy', icon: '👤', text: `담당자 배치: ${mc.name} 공종에서 ${bestPerson.name}(승률 ${bwr}%)이 강점을 보입니다. 해당 공종 PT 우선 배정을 고려하세요.` });
+                                  }
+                                }
+                              });
+                            }
+                          }
+
+                          const TYPE_COLORS = { overall: '#6366f1', strong: '#3b82f6', weak: '#ef4444', main: '#8b5cf6', loss: '#f59e0b', suggest: '#06b6d4', info: '#64748b', empty: '#94a3b8', strategy: '#16a34a' };
+
+                          return (
+                            <div style={{ background: 'linear-gradient(135deg, #f0f4ff 0%, #faf5ff 100%)', borderRadius: '12px', padding: '20px', boxShadow: '0 1px 4px rgba(99,102,241,0.1)', marginTop: '16px', border: '1px solid #e0e7ff' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                                <span style={{ fontSize: '16px' }}>🤖</span>
+                                <span style={{ fontSize: '14px', fontWeight: '800', color: '#4338ca' }}>AI 전략 코멘트</span>
+                                <span style={{ fontSize: '11px', color: '#818cf8', background: '#eef2ff', padding: '2px 10px', borderRadius: '10px', fontWeight: '600' }}>{filterLabel}</span>
+                                {aiScopeLabel !== '전체' && <span style={{ fontSize: '11px', color: '#6366f1', background: '#e0e7ff', padding: '2px 10px', borderRadius: '10px', fontWeight: '600' }}>{aiScopeLabel}</span>}
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                {comments.map((c, i) => (
+                                  <div key={i} style={{ display: 'flex', gap: '10px', padding: '10px 14px', background: 'white', borderRadius: '8px', borderLeft: `3px solid ${TYPE_COLORS[c.type]}`, boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+                                    <span style={{ fontSize: '15px', flexShrink: 0, lineHeight: '1.4' }}>{c.icon}</span>
+                                    <span style={{ fontSize: '13px', color: '#374151', lineHeight: '1.5', fontWeight: '500' }}>{c.text}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </>
+                    )}
+
+                    {/* ===== 전략 탭 ===== */}
+                    {dashboardView === 'strategy' && (() => {
+                      const stratAssigneeStats = getAssigneeStrategyStats(ptSchedules, exportYear, exportQuarter);
+                      const stratCompStats = getCompetitorStats(ptSchedules, exportYear, exportQuarter, selectedAssignee === 'all' ? null : selectedAssignee);
+                      const stratMethodData = getMethodAnalysis(ptSchedules, exportYear, exportQuarter, selectedAssignee === 'all' ? null : selectedAssignee);
+                      const periodLabel = exportYear === 'all' ? '전체' : exportQuarter !== 'all' ? `${exportYear} ${exportQuarter}` : `${exportYear}`;
+
+                      // 리스크 파이프라인: 진행중 PT의 예측 승률
+                      const todayStr2 = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
+                      const inProgressPts = ptSchedules.filter(s => {
+                        if (s.type !== 'pt' || !s.date || s.dateType !== 'confirmed') return false;
+                        if (s.date > todayStr2) return true;
+                        const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                        return assignees.some(a => !s.results?.[a] && !s.result);
+                      }).map(s => {
+                        const probData = predictWinProbability(s, ptSchedules);
+                        return { ...s, prob: typeof probData === 'object' ? probData.rate : probData, competitorDetails: probData.competitorDetails || [] };
+                      }).sort((a, b) => a.prob - b.prob);
+
+                      return (
+                        <>
+                          {/* 1. 팀 히트맵: 담당자(행) × 공종(열) 승률 */}
+                          <div style={{ background: 'white', borderRadius: '12px', padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                              <span style={{ fontSize: '16px' }}>🗺️</span>
+                              <span style={{ fontSize: '14px', fontWeight: '800', color: '#1e293b' }}>팀 역량 히트맵</span>
+                              <span style={{ fontSize: '11px', color: '#6366f1', background: '#eef2ff', padding: '2px 10px', borderRadius: '10px', fontWeight: '600' }}>{periodLabel}</span>
+                            </div>
+                            <div style={{ overflowX: 'auto' }}>
+                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                                <thead>
+                                  <tr>
+                                    <th style={{ padding: '10px 12px', textAlign: 'left', borderBottom: '2px solid #e2e8f0', fontWeight: '700', color: '#374151', minWidth: '80px' }}>담당자</th>
+                                    <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', fontWeight: '700', color: '#374151', minWidth: '50px' }}>팀</th>
+                                    <th style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', fontWeight: '700', color: '#374151' }}>전체</th>
+                                    {MAIN_CATEGORY_ORDER.map(mc => (
+                                      <th key={mc} style={{ padding: '10px 8px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', fontWeight: '700', color: MAIN_CATEGORY_MAP[mc].color, minWidth: '70px' }}>{mc}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {stratAssigneeStats.map((a, i) => {
+                                    const teamColor = a.team === '1팀' ? '#3b82f6' : a.team === '2팀' ? '#10b981' : '#8b5cf6';
+                                    return (
+                                      <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                        <td style={{ padding: '10px 12px', fontWeight: '700', color: '#1e293b' }}>{a.name}</td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center' }}><span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: teamColor + '15', color: teamColor }}>{a.team}</span></td>
+                                        <td style={{ padding: '10px 8px', textAlign: 'center', cursor: 'help', position: 'relative' }} title={`${a.name} 전체 실적\n총 ${a.total}건 | 승 ${a.wins} · 무 ${a.draws} · 패 ${a.losses}\n승률 ${a.winRate}%${a.winRate >= 60 ? ' (우수)' : a.winRate >= 40 ? ' (보통)' : ' (개선 필요)'}`}>
+                                          <div style={{ fontWeight: '700', color: a.winRate >= 60 ? '#16a34a' : a.winRate >= 40 ? '#d97706' : '#ef4444' }}>{a.winRate}%</div>
+                                          <div style={{ fontSize: '10px', color: '#94a3b8' }}>{a.total}건</div>
+                                        </td>
+                                        {MAIN_CATEGORY_ORDER.map(mc => {
+                                          const ws = a.workTypeStats?.[mc] || { total: 0, wins: 0, draws: 0, losses: 0 };
+                                          const wr = ws.total > 0 ? Math.round((ws.wins / ws.total) * 100) : -1;
+                                          const heatBg = wr < 0 ? '#f8fafc' : wr >= 70 ? '#dcfce7' : wr >= 50 ? '#fef9c3' : wr >= 30 ? '#ffedd5' : '#fef2f2';
+                                          const heatColor = wr < 0 ? '#cbd5e1' : wr >= 70 ? '#166534' : wr >= 50 ? '#854d0e' : wr >= 30 ? '#9a3412' : '#991b1b';
+                                          const heatLabel = wr < 0 ? '' : wr >= 70 ? '핵심 역량' : wr >= 50 ? '양호' : wr >= 30 ? '개선 필요' : '취약';
+                                          const tooltipText = wr >= 0 ? `${a.name} - ${mc} 공종\n승 ${ws.wins}건 / 전체 ${ws.total}건\n승률 ${wr}% → ${heatLabel}` : `${a.name} - ${mc} 공종\n데이터 없음`;
+                                          return (
+                                            <td key={mc} style={{ padding: '10px 8px', textAlign: 'center', background: heatBg, cursor: 'help' }} title={tooltipText}>
+                                              {wr >= 0 ? <><div style={{ fontWeight: '700', color: heatColor }}>{wr}%</div><div style={{ fontSize: '10px', color: heatColor + '99' }}>{ws.wins}/{ws.total}</div></> : <span style={{ fontSize: '11px', color: '#cbd5e1' }}>-</span>}
+                                            </td>
+                                          );
+                                        })}
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+
+                          {/* 2. 경쟁사 위협 매트릭스 */}
+                          <div style={{ background: 'white', borderRadius: '12px', padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                              <span style={{ fontSize: '16px' }}>⚔️</span>
+                              <span style={{ fontSize: '14px', fontWeight: '800', color: '#1e293b' }}>경쟁사 위협 매트릭스</span>
+                              <span style={{ fontSize: '11px', color: '#ef4444', background: '#fef2f2', padding: '2px 10px', borderRadius: '10px', fontWeight: '600' }}>상위 5개사</span>
+                            </div>
+                            {stratCompStats.slice(0, 5).map((comp, i) => {
+                              const threatLevel = comp.winRate < 30 ? { label: '위협', color: '#ef4444', bg: '#fef2f2' } : comp.winRate < 50 ? { label: '주의', color: '#f59e0b', bg: '#fffbeb' } : { label: '우위', color: '#16a34a', bg: '#f0fdf4' };
+                              const suggestion = comp.winRate < 30 ? '차별화 포인트 정리 & 레퍼런스 강화 필요' : comp.winRate < 50 ? '가격/기술 경쟁력 비교 분석 권장' : '현재 전략 유지, 꾸준한 모니터링';
+                              return (
+                                <div key={i} style={{ padding: '14px', background: '#f8fafc', borderRadius: '10px', marginBottom: '10px', borderLeft: `4px solid ${threatLevel.color}` }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                      <span style={{ fontWeight: '700', color: '#1e293b', fontSize: '14px' }}>{i + 1}. {comp.name}</span>
+                                      <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: threatLevel.bg, color: threatLevel.color }}>{threatLevel.label}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '12px', fontSize: '12px' }}>
+                                      <span style={{ color: '#16a34a', fontWeight: '600' }}>승 {comp.wins}</span>
+                                      <span style={{ color: '#d97706', fontWeight: '600' }}>무 {comp.draws}</span>
+                                      <span style={{ color: '#ef4444', fontWeight: '600' }}>패 {comp.losses}</span>
+                                      <span style={{ fontWeight: '700', color: comp.winRate >= 50 ? '#16a34a' : comp.winRate >= 30 ? '#d97706' : '#ef4444' }}>승률 {comp.winRate}%</span>
+                                    </div>
+                                  </div>
+                                  <div style={{ height: '6px', background: '#e2e8f0', borderRadius: '3px', overflow: 'hidden', marginBottom: '8px' }}>
+                                    <div style={{ height: '100%', width: `${comp.winRate}%`, background: comp.winRate >= 50 ? '#16a34a' : comp.winRate >= 30 ? '#f59e0b' : '#ef4444', borderRadius: '3px', transition: 'width 0.5s' }} />
+                                  </div>
+                                  <div style={{ fontSize: '12px', color: '#64748b', fontStyle: 'italic' }}>💡 {suggestion}</div>
+                                </div>
+                              );
+                            })}
+                            {stratCompStats.length === 0 && <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '13px' }}>경쟁사 데이터가 없습니다.</div>}
+                          </div>
+
+                          {/* 3. 공법 효과 요약 */}
+                          <div style={{ background: 'white', borderRadius: '12px', padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                              <span style={{ fontSize: '16px' }}>🔧</span>
+                              <span style={{ fontSize: '14px', fontWeight: '800', color: '#1e293b' }}>공법 효과 요약</span>
+                            </div>
+                            {stratMethodData.combosSorted.length > 0 ? (
+                              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '16px' }}>
+                                {/* 최고 승률 조합 */}
+                                <div style={{ padding: '16px', background: '#f0fdf4', borderRadius: '10px', border: '1px solid #bbf7d0' }}>
+                                  <div style={{ fontSize: '12px', fontWeight: '700', color: '#16a34a', marginBottom: '10px' }}>✅ 최고 승률 조합</div>
+                                  {stratMethodData.combosSorted.slice(0, 3).map((c, i) => (
+                                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: i < 2 ? '1px dashed #dcfce7' : 'none' }}>
+                                      <span style={{ fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>{c.combo}</span>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{ fontSize: '13px', fontWeight: '700', color: '#16a34a' }}>{c.winRate}%</span>
+                                        <span style={{ fontSize: '11px', color: '#94a3b8' }}>{c.total}건</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                {/* 최저 승률 조합 */}
+                                <div style={{ padding: '16px', background: '#fef2f2', borderRadius: '10px', border: '1px solid #fecaca' }}>
+                                  <div style={{ fontSize: '12px', fontWeight: '700', color: '#ef4444', marginBottom: '10px' }}>⚠️ 주의 필요 조합</div>
+                                  {[...stratMethodData.combosSorted].reverse().slice(0, 3).map((c, i) => (
+                                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: i < 2 ? '1px dashed #fef2f2' : 'none' }}>
+                                      <span style={{ fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>{c.combo}</span>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{ fontSize: '13px', fontWeight: '700', color: '#ef4444' }}>{c.winRate}%</span>
+                                        <span style={{ fontSize: '11px', color: '#94a3b8' }}>{c.total}건</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '13px' }}>공법 데이터가 아직 없습니다. PT 등록 시 공고문 공법을 입력하면 분석됩니다.</div>
+                            )}
+                          </div>
+
+                          {/* 4. 리스크 파이프라인 */}
+                          <div style={{ background: 'white', borderRadius: '12px', padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                              <span style={{ fontSize: '16px' }}>⚠️</span>
+                              <span style={{ fontSize: '14px', fontWeight: '800', color: '#1e293b' }}>리스크 파이프라인</span>
+                              <span style={{ fontSize: '11px', color: '#ef4444', background: '#fef2f2', padding: '2px 10px', borderRadius: '10px', fontWeight: '600' }}>{inProgressPts.filter(p => p.prob < 35).length}건 리스크</span>
+                            </div>
+                            {inProgressPts.length > 0 ? (
+                              <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                                  <thead>
+                                    <tr>
+                                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '2px solid #e2e8f0', fontWeight: '700', color: '#374151' }}>현장명</th>
+                                      <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', fontWeight: '700', color: '#374151' }}>담당자</th>
+                                      <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', fontWeight: '700', color: '#374151' }}>공종</th>
+                                      <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', fontWeight: '700', color: '#374151' }}>경쟁사</th>
+                                      <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', fontWeight: '700', color: '#374151' }}>예측 승률</th>
+                                      <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '2px solid #e2e8f0', fontWeight: '700', color: '#374151' }}>등급</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {inProgressPts.slice(0, 15).map((pt, i) => {
+                                      const grade = pt.prob >= 60 ? { label: '양호', color: '#16a34a', bg: '#f0fdf4' } : pt.prob >= 35 ? { label: '보통', color: '#d97706', bg: '#fffbeb' } : { label: '리스크', color: '#ef4444', bg: '#fef2f2' };
+                                      const isExpanded = expandedRiskRow === pt.id;
+                                      const hasDetails = pt.competitorDetails && pt.competitorDetails.length > 1;
+                                      return (
+                                        <React.Fragment key={i}>
+                                        <tr style={{ borderBottom: isExpanded ? 'none' : '1px solid #f1f5f9', background: pt.prob < 35 ? '#fef2f2' : 'transparent', cursor: hasDetails ? 'pointer' : 'default' }} onClick={() => hasDetails && setExpandedRiskRow(isExpanded ? null : pt.id)}>
+                                          <td style={{ padding: '10px', fontWeight: '600', color: '#1e293b', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pt.siteName || '-'}</td>
+                                          <td style={{ padding: '10px', textAlign: 'center', color: '#2563eb', fontWeight: '600' }}>{pt.ptAssignee || '-'}</td>
+                                          <td style={{ padding: '10px', textAlign: 'center', color: '#64748b' }}>{pt.workType || '-'}</td>
+                                          <td style={{ padding: '10px', textAlign: 'center', color: '#ea580c', fontSize: '11px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pt.competitor || '-'}</td>
+                                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>
+                                              <div style={{ width: '50px', height: '6px', background: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
+                                                <div style={{ height: '100%', width: `${pt.prob}%`, background: pt.prob >= 60 ? '#16a34a' : pt.prob >= 35 ? '#f59e0b' : '#ef4444', borderRadius: '3px' }} />
+                                              </div>
+                                              <span style={{ fontWeight: '700', color: grade.color, fontSize: '13px' }}>{pt.prob}%</span>
+                                              {hasDetails && <span style={{ fontSize: '9px', color: '#94a3b8' }}>{isExpanded ? '▲' : '▼'}</span>}
+                                            </div>
+                                          </td>
+                                          <td style={{ padding: '10px', textAlign: 'center' }}><span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: grade.bg, color: grade.color }}>{grade.label}</span></td>
+                                        </tr>
+                                        {isExpanded && hasDetails && (
+                                          <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                            <td colSpan="6" style={{ padding: '0 10px 12px 10px', background: '#fafafa' }}>
+                                              <div style={{ padding: '10px 14px', background: 'white', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                                                <div style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', marginBottom: '8px' }}>경쟁사별 대전 승률</div>
+                                                {pt.competitorDetails.map((cd, ci) => {
+                                                  const cdColor = cd.winRate >= 60 ? '#16a34a' : cd.winRate >= 40 ? '#d97706' : '#ef4444';
+                                                  return (
+                                                    <div key={ci} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 0', borderBottom: ci < pt.competitorDetails.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
+                                                      <span style={{ fontSize: '12px', fontWeight: '600', color: '#1e293b', minWidth: '80px' }}>{cd.name}</span>
+                                                      <div style={{ flex: 1, height: '6px', background: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
+                                                        <div style={{ height: '100%', width: `${cd.winRate}%`, background: cdColor, borderRadius: '3px' }} />
+                                                      </div>
+                                                      <span style={{ fontSize: '12px', fontWeight: '700', color: cdColor, minWidth: '35px', textAlign: 'right' }}>{cd.winRate}%</span>
+                                                      <span style={{ fontSize: '10px', color: '#94a3b8', minWidth: '30px' }}>{cd.total > 0 ? `${cd.wins}승/${cd.total}건` : '신규'}</span>
+                                                    </div>
+                                                  );
+                                                })}
+                                                <div style={{ marginTop: '8px', paddingTop: '6px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                  <span style={{ fontSize: '11px', fontWeight: '700', color: '#64748b' }}>최종 예측 (평균)</span>
+                                                  <span style={{ fontSize: '14px', fontWeight: '800', color: grade.color }}>{pt.prob}%</span>
+                                                </div>
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        )}
+                                        </React.Fragment>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            ) : (
+                              <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '13px' }}>진행 중인 PT가 없습니다.</div>
+                            )}
+                          </div>
+
+                          {/* 5. AI 팀 전략 추천 */}
+                          {(() => {
+                            const strategies = [];
+                            // 팀원 강약점 기반 전략
+                            if (stratAssigneeStats.length > 0) {
+                              const best = stratAssigneeStats[0];
+                              const worst = stratAssigneeStats[stratAssigneeStats.length - 1];
+                              if (best.total >= 3 && worst.total >= 3) {
+                                strategies.push({ icon: '👑', text: `${best.name}(승률 ${best.winRate}%)이 팀 최고 성과자입니다. 핵심 PT에 우선 배정하세요.` });
+                                if (worst.winRate < 40) strategies.push({ icon: '📚', text: `${worst.name}(승률 ${worst.winRate}%)의 역량 강화가 필요합니다. ${best.name}과 동행 PT를 고려하세요.` });
+                              }
+                            }
+                            // 공종별 강약점 전략
+                            MAIN_CATEGORY_ORDER.forEach(mc => {
+                              const mcStat = teamData.mainCategoryStats[mc];
+                              if (mcStat) {
+                                const comp = mcStat.wins + mcStat.draws + mcStat.losses;
+                                if (comp >= 5) {
+                                  const wr = Math.round((mcStat.wins / comp) * 100);
+                                  if (wr >= 65) strategies.push({ icon: '💪', text: `${mc} 공종(승률 ${wr}%)은 핵심 역량입니다. 적극적으로 수주하세요.` });
+                                  else if (wr < 35) strategies.push({ icon: '🎯', text: `${mc} 공종(승률 ${wr}%)이 취약합니다. 사전 영업 강화 및 레퍼런스를 확보하세요.` });
+                                }
+                              }
+                            });
+                            // 경쟁사 대응 전략
+                            const topThreat = stratCompStats.find(c => c.total >= 5 && c.winRate < 30);
+                            if (topThreat) strategies.push({ icon: '⚔️', text: `${topThreat.name} 대비 승률이 ${topThreat.winRate}%로 낮습니다. 차별화 전략 수립이 시급합니다.` });
+                            // 리스크 경고
+                            const riskCount = inProgressPts.filter(p => p.prob < 35).length;
+                            if (riskCount > 0) strategies.push({ icon: '🚨', text: `현재 진행 중 PT 중 ${riskCount}건이 리스크(예측 승률 35% 미만)입니다. 긴급 점검이 필요합니다.` });
+                            // 공법 전략
+                            if (stratMethodData.combosSorted.length > 0) {
+                              const bestCombo = stratMethodData.combosSorted[0];
+                              if (bestCombo.total >= 3) strategies.push({ icon: '🔧', text: `${bestCombo.combo}(승률 ${bestCombo.winRate}%) 조합이 가장 효과적입니다. 제안서 작성 시 해당 공법을 우선 추천하세요.` });
+                            }
+
+                            if (strategies.length === 0) strategies.push({ icon: '📋', text: '데이터가 더 누적되면 팀 전략 제안이 생성됩니다.' });
+
+                            return (
+                              <div style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 50%, #f0f9ff 100%)', borderRadius: '12px', padding: '20px', boxShadow: '0 1px 4px rgba(22,163,74,0.1)', border: '1px solid #bbf7d0' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                                  <span style={{ fontSize: '16px' }}>🧠</span>
+                                  <span style={{ fontSize: '14px', fontWeight: '800', color: '#166534' }}>AI 팀 전략 추천</span>
+                                  <span style={{ fontSize: '11px', color: '#16a34a', background: '#dcfce7', padding: '2px 10px', borderRadius: '10px', fontWeight: '600' }}>{strategies.length}개 제안</span>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                  {strategies.slice(0, 6).map((s, i) => (
+                                    <div key={i} style={{ display: 'flex', gap: '10px', padding: '12px 14px', background: 'white', borderRadius: '8px', borderLeft: '3px solid #16a34a', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+                                      <span style={{ fontSize: '15px', flexShrink: 0, lineHeight: '1.4' }}>{s.icon}</span>
+                                      <span style={{ fontSize: '13px', color: '#374151', lineHeight: '1.5', fontWeight: '500' }}>{s.text}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </>
+                      );
+                    })()}
+
+                  </>
+                );
+              })()}
+              </>
+              )}
+            </>
+          )}
+
+          {/* 마이페이지 */}
+          {showMyPage && (
+            <>
+              {!isLoggedIn ? (
+                <div style={{ background: 'white', borderRadius: '12px', padding: '60px 40px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', textAlign: 'center' }}>
+                  <h2 style={{ fontSize: '20px', fontWeight: '700', color: '#1e293b', marginBottom: '12px' }}>로그인이 필요합니다</h2>
+                  <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '24px' }}>마이페이지는 로그인 후 이용 가능합니다.</p>
+                  <button onClick={() => setShowLoginModal(true)} style={{ padding: '12px 24px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>로그인하기</button>
+                </div>
+              ) : (() => {
+                const team1 = ['한준엽', '조재연', '정정훈', '김성민'];
+                const team2 = ['이필선'];
+                const team3 = ['조현식', '한인규'];
+                const allMembers = [...team1, ...team2, ...team3];
+                const isAdmin = currentUser?.isAdmin === true;
+                const viewingUser = (isAdmin && (!myPageUser || !allMembers.includes(myPageUser))) ? allMembers[0] : (myPageUser || currentUser.name);
+                const getTeamName = (name) => team1.includes(name) ? '영업1팀' : team2.includes(name) ? '영업2팀' : team3.includes(name) ? '영업3팀' : '';
+                const todayStr = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
+
+                // PT 데이터 필터링
+                const myPtSchedules = ptSchedules.filter(s => {
+                  if (!s.ptAssignee) return false;
+                  return s.ptAssignee.split(/[\/,+&]/).map(a => a.trim()).some(a => a === viewingUser);
+                });
+                const getMyResult = (s) => {
+                  if (s.results && s.results[viewingUser] !== undefined) return s.results[viewingUser];
+                  const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                  if (assignees.length <= 1) return s.result || null;
+                  return null;
+                };
+                const ptTotal = myPtSchedules.length;
+                const ptInProgress = myPtSchedules.filter(s => !getMyResult(s)).length;
+                const ptWins = myPtSchedules.filter(s => getMyResult(s) === '승').length;
+                const ptLosses = myPtSchedules.filter(s => getMyResult(s) === '패').length;
+                const ptDraws = myPtSchedules.filter(s => getMyResult(s) === '무').length;
+                const ptCompleted = ptWins + ptLosses + ptDraws;
+                const ptWinRate = ptCompleted > 0 ? Math.round((ptWins / ptCompleted) * 100) : 0;
+
+                // 정산금액 계산 (전체)
+                const mySettlementAmount = myPtSchedules.reduce((sum, s) => {
+                  const r = getMyResult(s);
+                  if (!r || s.selfPT) return sum;
+                  const stl = s.settlement?.[viewingUser] || {};
+                  if (stl.selfSales) return sum;
+                  if (r === '승') return sum + 500000;
+                  if (r === '무' || r === '지원') return sum + 250000;
+                  return sum;
+                }, 0);
+
+                // 이번 분기 예상 수당
+                const nowQ = Math.ceil((new Date().getMonth() + 1) / 3);
+                const nowY = new Date().getFullYear();
+                const qStart = `${nowY}-${String((nowQ - 1) * 3 + 1).padStart(2, '0')}-01`;
+                const qEnd = `${nowY}-${String(nowQ * 3).padStart(2, '0')}-${nowQ === 1 || nowQ === 4 ? '31' : nowQ === 2 ? '30' : '30'}`;
+                const thisQuarterAmount = myPtSchedules.filter(s => s.date >= qStart && s.date <= qEnd).reduce((sum, s) => {
+                  const r = getMyResult(s);
+                  if (!r || s.selfPT) return sum;
+                  const stl = s.settlement?.[viewingUser] || {};
+                  if (stl.selfSales) return sum;
+                  if (r === '승') return sum + 500000;
+                  if (r === '무' || r === '지원') return sum + 250000;
+                  return sum;
+                }, 0);
+
+                // 누적 수령 금액 (정산완료된 건만)
+                const paidAmount = myPtSchedules.reduce((sum, s) => {
+                  const r = getMyResult(s);
+                  if (!r || s.selfPT) return sum;
+                  const stl = s.settlement?.[viewingUser] || {};
+                  if (stl.selfSales || !stl.completed) return sum;
+                  if (r === '승') return sum + 500000;
+                  if (r === '무' || r === '지원') return sum + 250000;
+                  return sum;
+                }, 0);
+
+                // 미확정 PT 관리 데이터
+                const currentQMonth = new Date().getMonth() + 1;
+                const currentQuarterNum = Math.ceil(currentQMonth / 3);
+                const currentYearNum = new Date().getFullYear();
+
+                // 분기 미확정 PT: 최종 결과가 아직 확정되지 않은 모든 PT
+                // 결과확인중(본인PT 포함) + 연락없음 + 진행보류 + 진행중단
+                const myUnconfirmedPts = myPtSchedules.filter(s => {
+                  if (!s.date || s.dateType !== 'confirmed') return false;
+                  if (s.date >= todayStr) return false;
+                  const status = getPtTrackingStatus(s, viewingUser);
+                  return ['결과확인중', '연락없음', '진행보류', '진행중단'].includes(status);
+                });
+
+                const unconfirmedByStatus = {
+                  '결과확인중': myUnconfirmedPts.filter(s => getPtTrackingStatus(s, viewingUser) === '결과확인중').length,
+                  '연락없음': myUnconfirmedPts.filter(s => getPtTrackingStatus(s, viewingUser) === '연락없음').length,
+                  '진행보류': myUnconfirmedPts.filter(s => getPtTrackingStatus(s, viewingUser) === '진행보류').length,
+                  '진행중단': myUnconfirmedPts.filter(s => getPtTrackingStatus(s, viewingUser) === '진행중단').length,
+                };
+                const totalUnconfirmed = myUnconfirmedPts.length;
+                const criticalPts = myUnconfirmedPts.filter(s => getDaysSincePt(s) >= 90);
+
+                // 관리자용: 담당자별 미확정 PT 카운트
+                const adminUnconfirmedByPerson = isAdmin ? (() => {
+                  const team1 = ['한준엽', '조재연', '정정훈', '김성민'];
+                  const team2 = ['이필선'];
+                  const team3 = ['조현식', '한인규'];
+                  const allMembersList = [...team1, ...team2, ...team3];
+                  return allMembersList.map(name => {
+                    const personPts = ptSchedules.filter(s => {
+                      if (!s.ptAssignee || !s.date || s.dateType !== 'confirmed') return false;
+                      if (s.date >= todayStr) return false;
+                      if (!s.ptAssignee.split(/[\/,+&]/).map(a => a.trim()).some(a => a === name)) return false;
+                      const status = getPtTrackingStatus(s, name);
+                      return ['결과확인중', '연락없음', '진행보류', '진행중단'].includes(status);
+                    });
+                    return { name, count: personPts.length };
+                  }).filter(p => p.count > 0);
+                })() : [];
+
+                const adminTotalUnconfirmed = isAdmin ? adminUnconfirmedByPerson.reduce((sum, p) => sum + p.count, 0) : 0;
+
+                // 월별 트렌드 (최근 6개월)
+                const monthlyTrend = (() => {
+                  const now = new Date();
+                  const months = [];
+                  for (let i = 5; i >= 0; i--) {
+                    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                    const monthStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+                    const label = `${d.getMonth()+1}월`;
+                    const monthPts = myPtSchedules.filter(s => s.date && s.date.startsWith(monthStr));
+                    const mWins = monthPts.filter(s => getMyResult(s) === '승').length;
+                    const mCompleted = monthPts.filter(s => ['승','패','무'].includes(getMyResult(s))).length;
+                    months.push({ monthStr, label, count: monthPts.length, winRate: mCompleted > 0 ? Math.round((mWins / mCompleted) * 100) : 0, wins: mWins });
+                  }
+                  return months;
+                })();
+                const maxCount = Math.max(...monthlyTrend.map(m => m.count), 1);
+
+                // 월별 공종별 분류 추가
+                const categoryColors = { '방수': '#89CFF0', '재도장': '#C3A6F0', '주차장': '#FFB885', '도로': '#88D8A8', '기타': '#cbd5e1' };
+                const categoryOrder = ['방수', '재도장', '주차장', '도로', '기타'];
+                monthlyTrend.forEach(mt => {
+                  const monthPts = myPtSchedules.filter(s => s.date && s.date.startsWith(mt.monthStr));
+                  mt.categories = { '방수': 0, '재도장': 0, '주차장': 0, '도로': 0, '기타': 0 };
+                  monthPts.forEach(s => {
+                    const tags = getSubCategoryTags(s.workType || '');
+                    if (tags.length > 0) {
+                      const processed = new Set();
+                      tags.forEach(t => { if (!processed.has(t.main)) { mt.categories[t.main] = (mt.categories[t.main] || 0) + 1; processed.add(t.main); } });
+                    } else {
+                      mt.categories['기타']++;
+                    }
+                  });
+                });
+
+                // 일정 타입별 통계
+                const myBriefings = briefingSchedules.filter(s => s.assignee === viewingUser);
+                const myPersonal = personalSchedules.filter(s => s.assignees?.includes(viewingUser));
+                const mySeminars = seminarSchedules.filter(s => s.assignees?.includes(viewingUser));
+                const myAsq = asqSchedules.filter(s => {
+                  if (s.ptAssignee) return s.ptAssignee.split(/[\/,+&]/).map(a => a.trim()).some(a => a === viewingUser);
+                  return s.assignees?.includes(viewingUser);
+                });
+                const myVacations = [...vacationSchedules.filter(s => s.assignees?.includes(viewingUser)), ...hiworksVacations.filter(v => v.userName === viewingUser)];
+                const myMeetings = meetingSchedules.filter(m => (m.attendees || []).includes(viewingUser));
+
+                const typeStats = [
+                  { type: 'pt', label: 'PT', count: ptTotal },
+                  { type: 'briefing', label: '현설', count: myBriefings.length },
+                  { type: 'personal', label: '개인', count: myPersonal.length },
+                  { type: 'seminar', label: '세미나', count: mySeminars.length },
+                  { type: 'asq', label: '아스퀘', count: myAsq.length },
+                  { type: 'vacation', label: '휴가', count: myVacations.length },
+                  { type: 'meeting', label: '회의', count: myMeetings.length },
+                ];
+                const totalSchedules = typeStats.reduce((sum, t) => sum + t.count, 0);
+
+                // 앞으로의 일정
+                const allMySchedules = [
+                  ...myPtSchedules.map(s => ({ ...s, type: s.type || 'pt' })),
+                  ...myBriefings.map(s => ({ ...s, type: s.type || 'briefing' })),
+                  ...myPersonal.map(s => ({ ...s, type: s.type || 'personal' })),
+                  ...mySeminars.map(s => ({ ...s, type: s.type || 'seminar' })),
+                  ...myAsq.map(s => ({ ...s, type: s.type || 'asq' })),
+                  ...myVacations.map(v => ({ ...v, type: 'vacation', dateType: v.dateType || 'confirmed' })),
+                  ...myMeetings.map(m => ({ ...m, type: 'meeting', siteName: m.title, dateType: m.dateType || 'confirmed' }))
+                ];
+                const seenIds = new Set();
+                const myFutureSchedules = allMySchedules.filter(s => {
+                  if (!s.id || seenIds.has(s.id)) return false;
+                  seenIds.add(s.id);
+                  if (s.dateType === 'confirmed' && s.date >= todayStr) return true;
+                  if (s.dateType === 'monthOnly' || s.dateType === 'pending') return true;
+                  return false;
+                }).sort((a, b) => {
+                  const ac = a.dateType === 'confirmed', bc = b.dateType === 'confirmed';
+                  const am = a.dateType === 'monthOnly', bm = b.dateType === 'monthOnly';
+                  if (ac && !bc) return -1; if (!ac && bc) return 1;
+                  if (ac && bc) return (a.date || '').localeCompare(b.date || '');
+                  if (am && !bm) return -1; if (!am && bm) return 1;
+                  if (am && bm) return (a.expectedMonth || '').localeCompare(b.expectedMonth || '');
+                  return 0;
+                });
+
+                const cardStyle = { background: 'white', borderRadius: 16, overflow: 'hidden' };
+                const sectionTitle = (text, right) => (
+                  <div style={{ padding: '18px 20px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e', letterSpacing: '-0.3px' }}>{text}</span>
+                    {right && <span style={{ fontSize: 12, color: '#8e99a4', fontWeight: 600 }}>{right}</span>}
+                  </div>
+                );
+                const maxTypeCount = Math.max(...typeStats.map(t => t.count), 1);
+
+                // Pipeline data (top-level, no longer inside IIFE)
+                const myPipeline = pipelineData.filter(item => item.assigneeName === viewingUser);
+                const myActive = myPipeline.filter(i => i.stageType === 'active');
+                const myWon = myPipeline.filter(i => i.stageType === 'won');
+                const myLost = myPipeline.filter(i => i.stageType === 'lost');
+                const myTotalValue = myPipeline.reduce((s, i) => s + (Number(i.dealValue) || 0), 0);
+                const myActiveValue = myActive.reduce((s, i) => s + (Number(i.dealValue) || 0), 0);
+                const myWonValue = myWon.reduce((s, i) => s + (Number(i.dealValue) || 0), 0);
+                const myLostValue = myLost.reduce((s, i) => s + (Number(i.dealValue) || 0), 0);
+                const pipeWinRate = (myWon.length + myLost.length) > 0 ? Math.round(myWon.length / (myWon.length + myLost.length) * 100) : 0;
+
+                const fmtVal = (v) => {
+                  if (v >= 100000000) return (v / 100000000).toFixed(1) + '\uc5B5';
+                  if (v >= 10000) return Math.round(v / 10000) + '\uB9CC';
+                  return v.toLocaleString();
+                };
+
+                const kanbanGroupDefs = [
+                  { key: 'early', label: '\uCD08\uAE30', stages: ['\uB300\uAE30\uACE0\uAC1D', '\uC720\uB300\uAD00\uACC4 \uAC15\uD654', '\uCEE8\uC124\uD305 \uC790\uB8CC \uBC1C\uC1A1\uC644\uB8CC', '\uCE68\uBB35 \uAD00\uB9AC \uB2E8\uACC4'], color: '#6b7280', bg: '#f3f4f6' },
+                  { key: 'consulting', label: '\uCEE8\uC124\uD305', stages: ['\uCEE8\uC124\uD305 \uC124\uACC4\uB2E8\uACC4', '2\uCC28 \uBBF8\uD305', '\uACAC\uC801\uC11C \uBC1C\uC1A1'], color: '#3b82f6', bg: '#dbeafe' },
+                  { key: 'compete', label: '\uACBD\uC7C1/PT', stages: ['\uACBD\uC7C1 \uB2E8\uACC4', '\uC785\uCC30\uB2E8\uACC4', '\uACF5\uC0AC \uC784\uBC15 \uB2E8\uACC4', '\uACF5\uC0AC \uC784\uBC15 \uB2E8\uACC4 (\uB9C8\uC9C0\uB9C9 \uD68C\uC758)'], color: '#f59e0b', bg: '#fef3c7' },
+                  { key: 'contract', label: '\uACC4\uC57D/\uC2DC\uACF5', stages: ['\uACC4\uC57D\uB2E8\uACC4', '\uC2DC\uACF5\uB2E8\uACC4', '\uACF5\uC0AC \uC9C4\uD589', '\uC900\uACF5\uB2E8\uACC4', '\uC778\uACC4', '\uD655\uC7A5\uB2E8\uACC4'], color: '#8b5cf6', bg: '#ede9fe' },
+                  { key: 'won', label: '\uC218\uC8FC', stages: ['\uC218\uC8FC \uC131\uACF5', '\uACF5\uC0AC\uC644\uB8CC'], color: '#10b981', bg: '#d1fae5' },
+                  { key: 'lost', label: '\uC2E4\uD328', stages: ['\uC218\uC8FC \uC2E4\uD328'], color: '#ef4444', bg: '#fee2e2' },
+                ];
+                const getStageGroup = (stage) => {
+                  for (const g of kanbanGroupDefs) {
+                    if (g.stages.some(s => (stage || '').includes(s) || s.includes(stage || ''))) return g;
+                  }
+                  return kanbanGroupDefs[0];
+                };
+
+                const groupStats = kanbanGroupDefs.map(g => {
+                  const items = myPipeline.filter(i => getStageGroup(i.stage) === g);
+                  return { ...g, count: items.length, value: items.reduce((s, i) => s + (Number(i.dealValue) || 0), 0) };
+                }).filter(g => g.count > 0);
+                const totalGroupCount = groupStats.reduce((s, g) => s + g.count, 0) || 1;
+
+                const stageGroups = {};
+                myActive.forEach(item => {
+                  const stage = item.stage || '\uAE30\uD0C0';
+                  if (!stageGroups[stage]) stageGroups[stage] = { items: [], value: 0 };
+                  stageGroups[stage].items.push(item);
+                  stageGroups[stage].value += (Number(item.dealValue) || 0);
+                });
+
+                // Pipeline warnings
+                const nowDate = new Date();
+                const daysDiff = (dateStr) => {
+                  if (!dateStr) return 9999;
+                  try { return Math.floor((nowDate - new Date(dateStr)) / 86400000); } catch { return 9999; }
+                };
+                const warningRules = [
+                  { stage: '\uCEE8\uC124\uD305 \uC124\uACC4\uB2E8\uACC4', field: 'stageEnteredAt', limit: 7, label: '\uB2E8\uACC4\uC9C4\uC785 7\uC77C \uCD08\uACFC', desc: '\uCEE8\uC124\uD305 \uC124\uACC4 \uD6C4 7\uC77C \uC774\uB0B4 \uC790\uB8CC \uBC1C\uC1A1 \uD544\uC694', color: '#ef4444', icon: '\uD83D\uDD34' },
+                  { stage: '\uCEE8\uC124\uD305 \uC790\uB8CC \uBC1C\uC1A1\uC644\uB8CC', field: 'stageEnteredAt', limit: 3, label: '\uBC1C\uC1A1 \uD6C4 3\uC77C \uCD08\uACFC', desc: '\uC790\uB8CC \uBC1C\uC1A1 \uD6C4 3\uC77C \uC774\uB0B4 Follow-up \uD544\uC694', color: '#f59e0b', icon: '\uD83D\uDFE1' },
+                  { stage: '\uC720\uB300\uAD00\uACC4 \uAC15\uD654', field: 'lastActivityDate', limit: 30, label: '30\uC77C \uC774\uC0C1 \uBBF8\uD65C\uB3D9', desc: '\uC6D4 1\uD68C \uC774\uC0C1 \uCEE8\uD0DD \uD544\uC694 (\uAD00\uB9AC\uC8FC\uAE30 3\uAC1C\uC6D4)', color: '#f59e0b', icon: '\uD83D\uDFE1' },
+                  { stage: '\uC720\uB300\uAD00\uACC4 \uAC15\uD654', field: 'stageEnteredAt', limit: 90, label: '3\uAC1C\uC6D4 \uCD08\uACFC \uCCB4\uB958', desc: '\uC720\uB300\uAD00\uACC4 \uAC15\uD654 \uB2E8\uACC4 3\uAC1C\uC6D4 \uCD08\uACFC - \uC804\uD658 \uD544\uC694', color: '#ef4444', icon: '\uD83D\uDD34' },
+                  { stage: '\uCE68\uBB35 \uAD00\uB9AC \uB2E8\uACC4', field: 'lastActivityDate', limit: 30, label: '30\uC77C \uC774\uC0C1 \uBBF8\uD65C\uB3D9', desc: '\uC6D4 1\uD68C \uC774\uC0C1 \uCEE8\uD0DD \uD544\uC694 (\uAD00\uB9AC\uC8FC\uAE30 6\uAC1C\uC6D4)', color: '#f59e0b', icon: '\uD83D\uDFE1' },
+                  { stage: '\uCE68\uBB35 \uAD00\uB9AC \uB2E8\uACC4', field: 'stageEnteredAt', limit: 180, label: '6\uAC1C\uC6D4 \uCD08\uACFC \uCCB4\uB958', desc: '\uCE68\uBB35 \uAD00\uB9AC 6\uAC1C\uC6D4 \uCD08\uACFC - \uC218\uC8FC\uC2E4\uD328 \uC804\uD658 \uAC80\uD1A0', color: '#ef4444', icon: '\uD83D\uDD34' },
+                ];
+                const pipelineWarnings = [];
+                myActive.forEach(item => {
+                  const itemStage = item.stage || '';
+                  warningRules.forEach(rule => {
+                    if (itemStage.includes(rule.stage) || rule.stage.includes(itemStage)) {
+                      const days = daysDiff(item[rule.field]);
+                      if (days > rule.limit) {
+                        pipelineWarnings.push({ ...rule, item, days, overDays: days - rule.limit });
+                      }
+                    }
+                  });
+                });
+                pipelineWarnings.sort((a, b) => {
+                  if (a.color === '#ef4444' && b.color !== '#ef4444') return -1;
+                  if (a.color !== '#ef4444' && b.color === '#ef4444') return 1;
+                  return b.overDays - a.overDays;
+                });
+
+                // 타입 색상/라벨 맵
+                const typeColorMap = { pt: '#3b82f6', briefing: '#f59e0b', personal: '#10b981', seminar: '#8b5cf6', asq: '#ec4899', vacation: '#06b6d4', meeting: '#f97316', sales: '#eab308' };
+                const typeLabelMap = { pt: 'PT', briefing: '현설', personal: '개인', seminar: '세미나', asq: 'ASQ', vacation: '휴가', meeting: '회의', sales: '영업' };
+
+                // 오늘의 일정
+                const seenTodayIds = new Set();
+                const todaySchedules = allMySchedules.filter(s => {
+                  if (!s.id || seenTodayIds.has(s.id)) return false;
+                  seenTodayIds.add(s.id);
+                  return s.dateType === 'confirmed' && s.date === todayStr;
+                });
+
+                // 이번 주 일정 (오늘 제외, 7일 이내)
+                const weekEndDate = new Date();
+                weekEndDate.setDate(weekEndDate.getDate() + 7);
+                const weekEndStr = `${weekEndDate.getFullYear()}-${String(weekEndDate.getMonth()+1).padStart(2,'0')}-${String(weekEndDate.getDate()).padStart(2,'0')}`;
+                const seenWeekIds = new Set();
+                const thisWeekSchedules = allMySchedules.filter(s => {
+                  if (!s.id || seenWeekIds.has(s.id)) return false;
+                  seenWeekIds.add(s.id);
+                  return s.dateType === 'confirmed' && s.date > todayStr && s.date <= weekEndStr;
+                }).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+                // 결과 미입력 PT (날짜 지남)
+                const unenteredPts = myPtSchedules.filter(s => s.dateType === 'confirmed' && s.date < todayStr && !getMyResult(s));
+
+                // 이번 달 PT 통계
+                const currentMonthStr = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
+                const thisMonthPts = myPtSchedules.filter(s => s.date && s.date.startsWith(currentMonthStr));
+                const thisMonthWins = thisMonthPts.filter(s => getMyResult(s) === '승').length;
+
+                // 총 조치 필요 건수
+                const totalActionItems = pipelineWarnings.length + unenteredPts.length;
+
+                return (
+                  <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', gap: 14, flexDirection: 'column' }}>
+                    {/* Hero header */}
+                    <div style={{ background: 'white', borderRadius: isMobile ? 16 : 20, padding: isMobile ? '16px 16px 14px' : '20px 22px 18px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <button onClick={() => { setShowMyPage(false); setShowDashboard(true); }} style={{ background: '#f2f4f8', border: 'none', fontSize: 11, fontWeight: 600, color: '#64748b', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, marginBottom: 12 }}>{'\u2190'} 돌아가기</button>
+                          <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, letterSpacing: 2, textTransform: 'uppercase' }}>WELCOME</div>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginTop: 4 }}>
+                            <span style={{ fontSize: isMobile ? 22 : 26, fontWeight: 800, color: '#1a1a2e', letterSpacing: -0.5 }}>{viewingUser}</span>
+                            <span style={{ fontSize: 14, color: '#94a3b8' }}>님</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2, fontWeight: 500 }}>{getTeamName(viewingUser)}</div>
+                        </div>
+                        {isAdmin && (
+                          <select value={viewingUser} onChange={(e) => setMyPageUser(e.target.value)} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 12, background: '#f8fafc', fontWeight: 600, color: '#1a1a2e', outline: 'none' }}>
+                            {allMembers.map(name => <option key={name} value={name}>{name}</option>)}
+                          </select>
+                        )}
+                      </div>
+                      {/* Action summary banner */}
+                      <div style={{ marginTop: 12, background: '#eff6ff', borderRadius: 10, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
+                        <span style={{ fontSize: 11, fontWeight: 600, color: '#3b82f6' }}>오늘 처리할 업무 {todaySchedules.length + totalActionItems}건</span>
+                      </div>
+
+                      {/* 분기 정산 확인 알림 배너 */}
+                      {(() => {
+                        const now = new Date();
+                        const year = now.getFullYear();
+                        const month = now.getMonth() + 1;
+                        const qNum = Math.ceil(month / 3);
+                        const quarterEndDates = { 1: new Date(year, 2, 31), 2: new Date(year, 5, 30), 3: new Date(year, 8, 30), 4: new Date(year, 11, 31) };
+                        const quarterEnd = quarterEndDates[qNum];
+                        const daysUntilEnd = Math.ceil((quarterEnd - now) / (1000 * 60 * 60 * 24));
+                        const isLastWeek = daysUntilEnd <= 7 && daysUntilEnd >= 0;
+                        if (!isLastWeek) return null;
+
+                        const qKey = `${year}-Q${qNum}`;
+                        const confirmation = quarterConfirmations[qKey]?.[viewingUser];
+                        const isConfirmed = confirmation?.confirmed === true;
+
+                        // 해당 분기의 미확정 PT 수 계산
+                        const qStart = [`${year}-${String((qNum-1)*3+1).padStart(2,'0')}-01`];
+                        const qEnd2 = [`${year}-${String(qNum*3).padStart(2,'0')}-${qNum===1?'31':qNum===2?'30':qNum===3?'30':'31'}`];
+                        const quarterUnconfirmedCount = myPtSchedules.filter(s => {
+                          if (!s.date || s.dateType !== 'confirmed') return false;
+                          if (s.date >= todayStr) return false;
+                          if (s.date < qStart[0] || s.date > qEnd2[0]) return false;
+                          const status = getPtTrackingStatus(s, viewingUser);
+                          return ['결과확인중', '연락없음', '진행보류', '진행중단'].includes(status);
+                        }).length;
+
+                        if (isConfirmed) {
+                          return (
+                            <div style={{ marginTop: 8, background: '#ecfdf5', borderRadius: 10, padding: '10px 14px', border: '1px solid #a7f3d0' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontSize: 14 }}>&#10004;</span>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: '#059669' }}>{qNum}분기 PT 실적 확인 완료</span>
+                              </div>
+                              <div style={{ fontSize: 11, color: '#6ee7b7', marginTop: 2, marginLeft: 22 }}>정산을 진행할 수 있습니다</div>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div style={{ marginTop: 8, background: '#fffbeb', borderRadius: 10, padding: '10px 14px', border: '1px solid #fde68a', cursor: 'pointer' }}
+                            onClick={() => {
+                              setUnconfirmedPtFilter('all');
+                              setUnconfirmedPtQuarter(String(qNum));
+                              setUnconfirmedPtAssignee(viewingUser);
+                              setShowUnconfirmedPtModal(true);
+                            }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontSize: 14 }}>&#9888;</span>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: '#92400e' }}>{qNum}분기 PT 실적 확인 필요</span>
+                              </div>
+                              {quarterUnconfirmedCount > 0 && (
+                                <span style={{ fontSize: 11, fontWeight: 700, color: '#d97706', background: '#fef3c7', padding: '2px 8px', borderRadius: 6 }}>{quarterUnconfirmedCount}건</span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: 11, color: '#b45309', marginTop: 3, marginLeft: 22 }}>정산 전 담당 PT 결과를 확인해주세요</div>
+                            <div style={{ textAlign: 'right', marginTop: 4 }}>
+                              <span style={{ fontSize: 11, fontWeight: 600, color: '#d97706', textDecoration: 'underline' }}>확인하러 가기 ▸</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* 오늘 처리할 업무 - unified section */}
+                    <div style={cardStyle}>
+                      <div style={{ padding: '16px 20px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>오늘 처리할 업무</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'white', background: (todaySchedules.length + totalActionItems) > 0 ? '#ef4444' : '#10b981', borderRadius: 10, padding: '2px 8px', lineHeight: 1.4 }}>{todaySchedules.length + totalActionItems}건</span>
+                      </div>
+
+                      {/* Today's schedules first */}
+                      {todaySchedules.length > 0 && (
+                        <div style={{ padding: '0 16px 8px' }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: '#3b82f6', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <div style={{ width: 4, height: 4, borderRadius: 2, background: '#3b82f6' }} />
+                            오늘 일정
+                          </div>
+                          {todaySchedules.map((s, idx) => {
+                            const ts = getTypeStyle(s.type);
+                            return (
+                              <div key={s.id || idx} onClick={() => handleEditClick(s)} style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, borderRadius: 10, marginBottom: 4, cursor: 'pointer', background: '#f8fafc', transition: 'background 0.15s' }}
+                                onMouseOver={e => e.currentTarget.style.background = '#f1f5f9'}
+                                onMouseOut={e => e.currentTarget.style.background = '#f8fafc'}>
+                                <div style={{ width: 3, height: 20, borderRadius: 2, background: typeColorMap[s.type] || '#94a3b8', flexShrink: 0 }} />
+                                <div style={{ padding: '1px 5px', borderRadius: 3, background: `${typeColorMap[s.type] || '#94a3b8'}14`, fontSize: 8, fontWeight: 700, color: typeColorMap[s.type] || '#64748b', flexShrink: 0 }}>{ts.label}</div>
+                                <div style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: '#1a1a2e', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.siteName || s.title || '-'}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Severity-based warning list */}
+                      {totalActionItems > 0 && (
+                        <div style={{ padding: todaySchedules.length > 0 ? '8px 16px 12px' : '0 16px 12px', borderTop: todaySchedules.length > 0 ? '1px solid #f2f4f8' : 'none' }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: '#ef4444', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <div style={{ width: 4, height: 4, borderRadius: 2, background: '#ef4444' }} />
+                            조치 필요
+                          </div>
+                          {/* PT 결과 미입력 - Critical (red) */}
+                          {unenteredPts.length > 0 && (
+                            <div onClick={() => { setShowMyPage(false); setShowPerformance(true); setShowDashboard(false); setShowMeetingView(false); setShowSalesView(false); setSelectedAssignee(viewingUser); setPreviewAssignee(viewingUser); setSettlementFilter('all'); }}
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 4, cursor: 'pointer', background: '#fef2f2', border: '1px solid #fecaca', transition: 'background 0.15s' }}
+                              onMouseOver={e => e.currentTarget.style.background = '#fee2e2'}
+                              onMouseOut={e => e.currentTarget.style.background = '#fef2f2'}>
+                              <div style={{ width: 4, height: 28, borderRadius: 2, background: '#ef4444', flexShrink: 0 }} />
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#dc2626' }}>PT 결과 미입력</div>
+                                <div style={{ fontSize: 10, color: '#ef4444', opacity: 0.7, marginTop: 1 }}>최종 결과 입력이 필요한 PT</div>
+                              </div>
+                              <span style={{ fontSize: 18, fontWeight: 800, color: '#ef4444' }}>{unenteredPts.length}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
+                            </div>
+                          )}
+                          {/* Pipeline warnings - grouped by stage with severity colors */}
+                          {pipelineWarnings.length > 0 && (() => {
+                            const stageConfig = {
+                              '컨설팅 설계단계': { label: '컨설팅 설계 지연', severity: 'critical', bg: '#fef2f2', border: '#fecaca', textColor: '#dc2626', barColor: '#ef4444' },
+                              '컨설팅 자료 발송완료': { label: '자료 발송 후속 지연', severity: 'warning', bg: '#fffbeb', border: '#fed7aa', textColor: '#d97706', barColor: '#f59e0b' },
+                              '유대관계 강화': { label: '유대관계 미활동', severity: 'normal', bg: '#eff6ff', border: '#bfdbfe', textColor: '#2563eb', barColor: '#3b82f6' },
+                              '침묵 관리 단계': { label: '침묵 관리 필요', severity: 'warning', bg: '#f5f3ff', border: '#ddd6fe', textColor: '#7c3aed', barColor: '#8b5cf6' },
+                            };
+                            const grouped = {};
+                            pipelineWarnings.forEach(w => {
+                              const stageKey = Object.keys(stageConfig).find(k => w.stage.includes(k) || k.includes(w.stage)) || w.stage;
+                              if (!grouped[stageKey]) grouped[stageKey] = [];
+                              grouped[stageKey].push(w);
+                            });
+                            const stageOrder = ['컨설팅 설계단계', '컨설팅 자료 발송완료', '유대관계 강화', '침묵 관리 단계'];
+                            const sortedKeys = Object.keys(grouped).sort((a, b) => {
+                              const ai = stageOrder.indexOf(a), bi = stageOrder.indexOf(b);
+                              return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+                            });
+                            return sortedKeys.map(stageKey => {
+                              const cfg = stageConfig[stageKey] || { label: stageKey, bg: '#f8f9fb', border: '#e2e8f0', textColor: '#64748b', barColor: '#94a3b8' };
+                              const items = grouped[stageKey];
+                              const isOpen = myPageOpenStage === stageKey;
+                              const hasUrgent = items.some(w => w.color === '#ef4444');
+                              return (
+                                <div key={stageKey} style={{ marginBottom: 4 }}>
+                                  <div onClick={() => setMyPageOpenStage(isOpen ? null : stageKey)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, cursor: 'pointer', background: cfg.bg, border: `1px solid ${cfg.border}`, transition: 'background 0.15s' }}
+                                    onMouseOver={e => e.currentTarget.style.opacity = '0.85'}
+                                    onMouseOut={e => e.currentTarget.style.opacity = '1'}>
+                                    <div style={{ width: 4, height: 28, borderRadius: 2, background: cfg.barColor, flexShrink: 0 }} />
+                                    <div style={{ flex: 1 }}>
+                                      <div style={{ fontSize: 12, fontWeight: 700, color: cfg.textColor }}>{cfg.label}</div>
+                                      {items.length > 0 && (
+                                        <div style={{ fontSize: 10, color: cfg.textColor, opacity: 0.6, marginTop: 1 }}>
+                                          {hasUrgent ? '긴급 포함' : `최대 +${Math.max(...items.map(w => w.overDays))}일`}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <span style={{ fontSize: 18, fontWeight: 800, color: cfg.textColor }}>{items.length}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
+                                    <span style={{ fontSize: 10, color: cfg.textColor, opacity: 0.5, transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>{'\u25BC'}</span>
+                                  </div>
+                                  {/* Expanded detail list */}
+                                  {isOpen && (
+                                    <div style={{ marginTop: 2, marginLeft: 16, borderLeft: `2px solid ${cfg.border}`, marginBottom: 4 }}>
+                                      {items.map((w, idx) => (
+                                        <div key={idx} onClick={(e) => { e.stopPropagation(); setSelectedPipelineItem(w.item); }}
+                                          style={{ padding: '7px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, transition: 'background 0.15s', borderRadius: '0 8px 8px 0' }}
+                                          onMouseOver={e => e.currentTarget.style.background = '#f8f9fb'}
+                                          onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
+                                          <div style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: '#1a1a2e', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{w.item.orgName}</div>
+                                          <span style={{ fontSize: 11, fontWeight: 800, color: w.color === '#ef4444' ? '#ef4444' : cfg.textColor, flexShrink: 0 }}>+{w.overDays}일</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
+                      )}
+
+                      {/* Empty state */}
+                      {todaySchedules.length === 0 && totalActionItems === 0 && (
+                        <div style={{ padding: '24px 20px', textAlign: 'center', color: '#10b981', fontSize: 13, fontWeight: 600 }}>
+                          {'\u2728'} 오늘 처리할 업무가 없습니다
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 분기 미확정 PT */}
+                    {isAdmin && adminTotalUnconfirmed > 0 && (
+                      <div style={cardStyle}>
+                        <div style={{ padding: '16px 20px 14px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>분기 미확정 PT</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{ fontSize: 10, fontWeight: 600, color: '#94a3b8' }}>Q{currentQuarterNum}</span>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: 'white', background: '#f59e0b', borderRadius: 10, padding: '2px 8px', lineHeight: 1.4 }}>{adminTotalUnconfirmed}건</span>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 3 }}>아직 최종 결과가 확정되지 않은 PT</div>
+                        </div>
+
+                        {/* 상태별 카운트 - 담당자 뷰 */}
+                        {!isAdmin && (
+                          <div style={{ padding: '0 16px 12px' }}>
+                            {[
+                              { status: '결과확인중', color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe' },
+                              { status: '연락없음', color: '#ef4444', bg: '#fef2f2', border: '#fecaca' },
+                              { status: '진행보류', color: '#f97316', bg: '#fff7ed', border: '#fed7aa' },
+                              { status: '진행중단', color: '#6b7280', bg: '#f9fafb', border: '#e5e7eb' },
+                            ].filter(item => unconfirmedByStatus[item.status] > 0).map(item => (
+                              <div key={item.status}
+                                onClick={() => { setUnconfirmedPtFilter(item.status); setUnconfirmedPtQuarter('all'); setUnconfirmedPtAssignee(viewingUser); setShowUnconfirmedPtModal(true); }}
+                                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 10, marginBottom: 4, cursor: 'pointer', background: item.bg, border: `1px solid ${item.border}`, transition: 'opacity 0.15s' }}
+                                onMouseOver={e => e.currentTarget.style.opacity = '0.8'}
+                                onMouseOut={e => e.currentTarget.style.opacity = '1'}>
+                                <div style={{ width: 4, height: 24, borderRadius: 2, background: item.color, flexShrink: 0 }} />
+                                <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: item.color }}>{item.status}</span>
+                                <span style={{ fontSize: 16, fontWeight: 800, color: item.color }}>{unconfirmedByStatus[item.status]}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
+                                <span style={{ fontSize: 10, color: item.color, opacity: 0.5 }}>▸</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* 관리자 뷰 - 담당자별 */}
+                        {isAdmin && (
+                          <div style={{ padding: '0 16px 12px' }}>
+                            {/* 상태 요약 바 */}
+                            <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                              {[
+                                { status: '결과확인중', color: '#3b82f6' },
+                                { status: '연락없음', color: '#ef4444' },
+                                { status: '진행보류', color: '#f97316' },
+                                { status: '진행중단', color: '#6b7280' },
+                              ].map(item => {
+                                const allCount = ptSchedules.filter(s => {
+                                  if (!s.date || s.dateType !== 'confirmed' || s.date >= todayStr) return false;
+                                  const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                                  return assignees.some(a => getPtTrackingStatus(s, a) === item.status);
+                                }).length;
+                                return allCount > 0 ? (
+                                  <span key={item.status} style={{ fontSize: 11, fontWeight: 600, color: item.color, background: `${item.color}14`, padding: '3px 8px', borderRadius: 6 }}>
+                                    {item.status} {allCount}건
+                                  </span>
+                                ) : null;
+                              })}
+                            </div>
+                            {/* 담당자별 그리드 */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
+                              {adminUnconfirmedByPerson.map(p => {
+                                const qcKey = `${currentYearNum}-Q${currentQuarterNum}`;
+                                const isQConfirmed = quarterConfirmations[qcKey]?.[p.name]?.confirmed === true;
+                                return (
+                                <div key={p.name}
+                                  onClick={() => { setUnconfirmedPtFilter('all'); setUnconfirmedPtQuarter('all'); setUnconfirmedPtAssignee(p.name); setShowUnconfirmedPtModal(true); }}
+                                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderRadius: 8, cursor: 'pointer', background: '#f8fafc', border: '1px solid #e2e8f0', transition: 'background 0.15s' }}
+                                  onMouseOver={e => e.currentTarget.style.background = '#f1f5f9'}
+                                  onMouseOut={e => e.currentTarget.style.background = '#f8fafc'}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: '#1a1a2e' }}>{p.name}</span>
+                                    {isQConfirmed ? (
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: '#059669', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 4, padding: '1px 5px' }}>&#10004;</span>
+                                    ) : (
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: '#f59e0b', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 4, padding: '1px 5px' }}>미확인</span>
+                                    )}
+                                  </div>
+                                  <span style={{ fontSize: 13, fontWeight: 800, color: '#f59e0b' }}>{p.count}<span style={{ fontSize: 9, fontWeight: 600 }}>건</span></span>
+                                </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 90일+ 경고 */}
+                        {criticalPts.length > 0 && (
+                          <div onClick={() => { setUnconfirmedPtFilter('all'); setUnconfirmedPtQuarter('all'); setUnconfirmedPtAssignee(isAdmin ? null : viewingUser); setShowUnconfirmedPtModal(true); }}
+                            style={{ margin: '0 16px 12px', padding: '8px 12px', borderRadius: 8, background: '#fef2f2', border: '1px solid #fecaca', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                            <span style={{ fontSize: 12 }}>⚠️</span>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: '#dc2626' }}>90일 이상 미확정 {criticalPts.length}건</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 이번 주 일정 */}
+                    {thisWeekSchedules.length > 0 && (
+                      <div style={cardStyle}>
+                        {sectionTitle('이번 주 일정', `${thisWeekSchedules.length}건`)}
+                        {thisWeekSchedules.slice(0, 8).map((s, idx) => {
+                          const ts = getTypeStyle(s.type);
+                          const dateDisplay = (() => {
+                            if (s.dateType === 'confirmed' && s.date) {
+                              const parts = s.date.split('-');
+                              const d = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
+                              const days = ['\uC77C','\uC6D4','\uD654','\uC218','\uBAA9','\uAE08','\uD1A0'];
+                              return `${parseInt(parts[1])}/${parseInt(parts[2])}(${days[d.getDay()]})`;
+                            }
+                            return '';
+                          })();
+                          return (
+                            <div key={s.id || idx} onClick={() => handleEditClick(s)} style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, borderTop: '1px solid #f5f6f8', cursor: 'pointer', transition: 'background 0.15s' }}
+                              onMouseOver={e => e.currentTarget.style.background = '#f8f9fb'}
+                              onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
+                              <div style={{ width: 3, height: 24, borderRadius: 2, background: typeColorMap[s.type] || '#94a3b8', flexShrink: 0 }} />
+                              <div style={{ padding: '1px 5px', borderRadius: 3, background: `${typeColorMap[s.type] || '#94a3b8'}14`, fontSize: 8, fontWeight: 700, color: typeColorMap[s.type] || '#64748b', flexShrink: 0 }}>{ts.label}</div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: '#1a1a2e', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.siteName || s.title || '-'}</div>
+                              </div>
+                              <div style={{ fontSize: 10, fontWeight: 600, color: '#8e99a4', flexShrink: 0 }}>{dateDisplay}</div>
+                            </div>
+                          );
+                        })}
+                        {thisWeekSchedules.length > 8 && (
+                          <div style={{ textAlign: 'center', fontSize: 10, color: '#8e99a4', padding: '8px 16px', borderTop: '1px solid #f5f6f8', fontWeight: 600 }}>+{thisWeekSchedules.length - 8}건 더보기</div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 핵심 KPI section */}
+                    <div style={cardStyle}>
+                      {sectionTitle('실적 요약')}
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(5, 1fr)', gap: 10, padding: '0 16px 14px' }}>
+                        {/* Card 1: PT 승률 - 클릭시 승/패 전체 목록 */}
+                        <div onClick={() => { setDrilldownUser(viewingUser); setDrilldownFilter('completed'); setDrilldownTitle('PT 승률 상세'); setShowDrilldownModal(true); }}
+                          style={{ background: '#f8fafc', borderRadius: 14, padding: '14px 12px', border: '1px solid #e2e8f0', cursor: 'pointer', transition: 'all 0.15s' }}
+                          onMouseOver={e => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.background = '#f0f7ff'; }}
+                          onMouseOut={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.background = '#f8fafc'; }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                            <div style={{ position: 'relative', width: 36, height: 36, flexShrink: 0 }}>
+                              <svg viewBox="0 0 36 36" style={{ width: 36, height: 36, transform: 'rotate(-90deg)' }}>
+                                <circle cx="18" cy="18" r="15" fill="none" stroke="#f2f4f8" strokeWidth="3" />
+                                <circle cx="18" cy="18" r="15" fill="none" stroke="#3b82f6" strokeWidth="3" strokeDasharray={`${ptWinRate * 0.94} ${94 - ptWinRate * 0.94}`} strokeLinecap="round" />
+                              </svg>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 9, color: '#94a3b8', fontWeight: 600 }}>PT 승률</div>
+                              <div style={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
+                                <span style={{ fontSize: 22, fontWeight: 800, color: '#3b82f6', lineHeight: 1 }}>{ptWinRate}</span>
+                                <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>%</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 6, fontSize: 9, fontWeight: 600 }}>
+                            <span style={{ color: '#3b82f6', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); setDrilldownUser(viewingUser); setDrilldownFilter('승'); setDrilldownTitle('승리 PT 목록'); setShowDrilldownModal(true); }}>승 {ptWins}</span>
+                            <span style={{ color: '#ef4444', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); setDrilldownUser(viewingUser); setDrilldownFilter('패'); setDrilldownTitle('패배 PT 목록'); setShowDrilldownModal(true); }}>패 {ptLosses}</span>
+                            <span style={{ color: '#f59e0b', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); setDrilldownUser(viewingUser); setDrilldownFilter('무'); setDrilldownTitle('무승부 PT 목록'); setShowDrilldownModal(true); }}>무 {ptDraws}</span>
+                          </div>
+                        </div>
+                        {/* Card 2: 파이프라인 */}
+                        <div onClick={() => { setPipelineAssigneeFilter(viewingUser); setPipelineSource('mypage'); setShowMyPage(false); setShowSalesView(true); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); }}
+                          style={{ background: '#f8fafc', borderRadius: 14, padding: '14px 12px', border: '1px solid #e2e8f0', cursor: 'pointer', transition: 'all 0.15s' }}
+                          onMouseOver={e => { e.currentTarget.style.borderColor = '#8b5cf6'; e.currentTarget.style.background = '#faf5ff'; }}
+                          onMouseOut={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.background = '#f8fafc'; }}>
+                          <div style={{ fontSize: 9, color: '#94a3b8', fontWeight: 600, marginBottom: 4 }}>파이프라인</div>
+                          <div style={{ fontSize: 22, fontWeight: 800, color: '#1a1a2e', lineHeight: 1, marginBottom: 4 }}>{fmtVal(myActiveValue)}</div>
+                          <div style={{ fontSize: 9, color: '#8e99a4', fontWeight: 600, marginBottom: 6 }}>진행 {myActive.length}건</div>
+                          <div style={{ display: 'flex', height: 4, borderRadius: 2, overflow: 'hidden', background: '#f2f4f8' }}>
+                            {myTotalValue > 0 && [
+                              { w: (myActiveValue / myTotalValue) * 100, c: '#3b82f6' },
+                              { w: (myWonValue / myTotalValue) * 100, c: '#10b981' },
+                              { w: (myLostValue / myTotalValue) * 100, c: '#ef4444' },
+                            ].map((s, i) => <div key={i} style={{ width: `${s.w}%`, background: s.c }} />)}
+                          </div>
+                        </div>
+                        {/* Card 3: 이번 달 PT - 클릭시 이번달 PT 목록 */}
+                        <div onClick={() => { setDrilldownUser(viewingUser); setDrilldownFilter('month'); setDrilldownTitle(`${new Date().getMonth()+1}월 PT 목록`); setShowDrilldownModal(true); }}
+                          style={{ background: '#f8fafc', borderRadius: 14, padding: '14px 12px', border: '1px solid #e2e8f0', cursor: 'pointer', transition: 'all 0.15s' }}
+                          onMouseOver={e => { e.currentTarget.style.borderColor = '#f59e0b'; e.currentTarget.style.background = '#fffbeb'; }}
+                          onMouseOut={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.background = '#f8fafc'; }}>
+                          <div style={{ fontSize: 9, color: '#94a3b8', fontWeight: 600, marginBottom: 4 }}>이번 달 PT</div>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 2 }}>
+                            <span style={{ fontSize: 22, fontWeight: 800, color: '#1a1a2e', lineHeight: 1 }}>{thisMonthPts.length}</span>
+                            <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>건</span>
+                          </div>
+                          <div style={{ fontSize: 9, color: '#8e99a4', fontWeight: 600, marginTop: 4 }}>승 {thisMonthWins}</div>
+                        </div>
+                        {/* Card 4: 수주 현황 */}
+                        <div onClick={() => { setPipelineAssigneeFilter(viewingUser); setPipelineStageTypeFilter('won'); setPipelineSource('mypage'); setShowMyPage(false); setShowSalesView(true); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); }}
+                          style={{ background: '#f8fafc', borderRadius: 14, padding: '14px 12px', border: '1px solid #e2e8f0', cursor: 'pointer', transition: 'all 0.15s' }}
+                          onMouseOver={e => { e.currentTarget.style.borderColor = '#10b981'; e.currentTarget.style.background = '#ecfdf5'; }}
+                          onMouseOut={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.background = '#f8fafc'; }}>
+                          <div style={{ fontSize: 9, color: '#94a3b8', fontWeight: 600, marginBottom: 4 }}>수주 현황</div>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 2 }}>
+                            <span style={{ fontSize: 22, fontWeight: 800, color: '#10b981', lineHeight: 1 }}>{myWon.length}</span>
+                            <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>건</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                            <span style={{ fontSize: 9, color: '#8e99a4', fontWeight: 600 }}>{fmtVal(myWonValue)}</span>
+                            <span style={{ fontSize: 9, fontWeight: 700, color: 'white', background: '#10b981', borderRadius: 6, padding: '1px 5px' }}>{pipeWinRate}%</span>
+                          </div>
+                        </div>
+                        {/* Card 5: 이번 분기 예상 수당 */}
+                        <div onClick={() => { setDrilldownUser(viewingUser); setDrilldownFilter('settlement'); setDrilldownTitle('정산 대상 PT 목록'); setShowDrilldownModal(true); }}
+                          style={{ background: '#f8fafc', borderRadius: 14, padding: '14px 12px', border: '1px solid #e2e8f0', cursor: 'pointer', transition: 'all 0.15s' }}
+                          onMouseOver={e => { e.currentTarget.style.borderColor = '#f97316'; e.currentTarget.style.background = '#fff7ed'; }}
+                          onMouseOut={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.background = '#f8fafc'; }}>
+                          <div style={{ fontSize: 9, color: '#94a3b8', fontWeight: 600, marginBottom: 4 }}>이번 분기 예상 수당 ({nowQ}Q)</div>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 2 }}>
+                            <span style={{ fontSize: 22, fontWeight: 800, color: '#f97316', lineHeight: 1 }}>{(thisQuarterAmount / 10000).toLocaleString()}</span>
+                            <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>만원</span>
+                          </div>
+                          <div style={{ fontSize: 9, color: '#8e99a4', fontWeight: 600, marginTop: 4 }}>전체 {(mySettlementAmount / 10000).toLocaleString()}만원</div>
+                        </div>
+                        {/* Card 6: 누적 수령 금액 */}
+                        <div onClick={() => { setDrilldownUser(viewingUser); setDrilldownFilter('settlement'); setDrilldownTitle('정산 완료 PT 목록'); setShowDrilldownModal(true); }}
+                          style={{ background: '#f8fafc', borderRadius: 14, padding: '14px 12px', border: '1px solid #e2e8f0', cursor: 'pointer', transition: 'all 0.15s' }}
+                          onMouseOver={e => { e.currentTarget.style.borderColor = '#10b981'; e.currentTarget.style.background = '#f0fdf4'; }}
+                          onMouseOut={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.background = '#f8fafc'; }}>
+                          <div style={{ fontSize: 9, color: '#94a3b8', fontWeight: 600, marginBottom: 4 }}>누적 수령 금액</div>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 2 }}>
+                            <span style={{ fontSize: 22, fontWeight: 800, color: '#10b981', lineHeight: 1 }}>{(paidAmount / 10000).toLocaleString()}</span>
+                            <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>만원</span>
+                          </div>
+                          <div style={{ fontSize: 9, color: '#8e99a4', fontWeight: 600, marginTop: 4 }}>정산완료 건</div>
+                        </div>
+                      </div>
+                      {/* Pipeline stage funnel bar */}
+                      {groupStats.length > 0 && (
+                        <div style={{ padding: '0 16px 14px' }}>
+                          <div style={{ display: 'flex', height: 20, borderRadius: 6, overflow: 'hidden', background: '#f2f4f8' }}>
+                            {groupStats.map(g => (
+                              <div key={g.key} style={{ width: `${(g.count / totalGroupCount) * 100}%`, background: g.color, display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: g.count > 0 ? 16 : 0 }}>
+                                <span style={{ fontSize: 8, fontWeight: 700, color: 'white' }}>{g.count}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+                            {groupStats.map(g => (
+                              <div key={g.key} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                                <div style={{ width: 5, height: 5, borderRadius: 2, background: g.color }} />
+                                <span style={{ fontSize: 9, color: '#8e99a4', fontWeight: 600 }}>{g.label} {g.count}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 바로가기 (Quick Actions) */}
+                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${isAdmin ? 5 : 4}, 1fr)`, gap: 8 }}>
+                      {[
+                        { label: '전체일정', icon: '\uD83D\uDCC5', color: '#3b82f6', bg: '#eff6ff', onClick: () => { setShowMyPage(false); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); } },
+                        { label: 'PT실적', icon: '\uD83C\uDFC6', color: '#f59e0b', bg: '#fffbeb', onClick: () => { setShowMyPage(false); setShowPerformance(true); setShowDashboard(false); setShowMeetingView(false); setShowSalesView(false); setSelectedAssignee(viewingUser); setPreviewAssignee(viewingUser); setSettlementFilter('all'); } },
+                        { label: '파이프라인', icon: '\uD83D\uDCCA', color: '#8b5cf6', bg: '#f5f3ff', onClick: () => { setPipelineAssigneeFilter(viewingUser); setPipelineSource('mypage'); setShowMyPage(false); setShowSalesView(true); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); } },
+                        ...(isAdmin ? [{ label: '미확정PT', icon: '📋', color: '#f59e0b', bg: '#fffbeb', onClick: () => { setUnconfirmedPtFilter('all'); setUnconfirmedPtQuarter('all'); setUnconfirmedPtAssignee(null); setShowUnconfirmedPtModal(true); } }] : []),
+                        { label: '릴레잇', icon: '\uD83D\uDD17', color: '#10b981', bg: '#ecfdf5', isLink: true },
+                      ].map((item, i) => item.isLink ? (
+                        <a key={i} href="https://app.relate.so" target="_blank" rel="noopener noreferrer" style={{ background: 'white', borderRadius: 14, border: 'none', padding: '14px 4px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, textDecoration: 'none' }}>
+                          <div style={{ width: 38, height: 38, borderRadius: 12, background: item.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17 }}>{item.icon}</div>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: '#1a1a2e' }}>{item.label}</span>
+                        </a>
+                      ) : (
+                        <button key={i} onClick={item.onClick} style={{ background: 'white', borderRadius: 14, border: 'none', padding: '14px 4px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                          <div style={{ width: 38, height: 38, borderRadius: 12, background: item.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17 }}>{item.icon}</div>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: '#1a1a2e' }}>{item.label}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div style={{ height: 20 }} />
+
+                  </div>
+                );
+              })()}
+            </>
+          )}
+
+          {/* 회의관리 */}
+          {showMeetingView && (
+            <>
+              {!isLoggedIn ? (
+                <div style={{ background: 'white', borderRadius: '12px', padding: '60px 40px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', textAlign: 'center' }}>
+                                    <h2 style={{ fontSize: '20px', fontWeight: '700', color: '#1e293b', marginBottom: '12px' }}>로그인이 필요합니다</h2>
+                  <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '24px' }}>회의관리는 로그인 후 이용 가능합니다.</p>
+                  <button onClick={() => setShowLoginModal(true)} style={{ padding: '14px 32px', borderRadius: '8px', border: 'none', background: '#3b82f6', color: 'white', fontSize: '15px', fontWeight: '600', cursor: 'pointer' }}>로그인하기</button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {/* 헤더 */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#4b5563', padding: '20px', borderRadius: '12px', color: 'white' }}>
+                    <div>
+                      <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0 }}>회의관리</h2>
+                      <p style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px' }}>
+                        전체 {meetingSchedules.length}건 · 예정 {meetingSchedules.filter(m => m.date >= new Date().toISOString().split('T')[0]).length}건
+                      </p>
+                    </div>
+                    <button onClick={() => setShowMeetingModal(true)} style={{ background: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', padding: '10px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>+ 새 회의</button>
+                  </div>
+
+                  {/* 회의 목록 */}
+                  {meetingSchedules.length === 0 ? (
+                    <div style={{ background: 'white', borderRadius: '12px', padding: '60px', textAlign: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+                      <div style={{ fontSize: '48px', marginBottom: '12px' }}>목록</div>
+                      <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '16px' }}>등록된 회의가 없습니다</p>
+                      <button onClick={() => setShowMeetingModal(true)} style={{ padding: '10px 20px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>첫 회의 등록하기</button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {meetingSchedules.sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(meeting => {
+                        const isPast = meeting.date < new Date().toISOString().split('T')[0];
+                        const isToday = meeting.date === new Date().toISOString().split('T')[0];
+                        const attendeeCount = (meeting.attendees || []).length;
+                        const confirmedCount = (meeting.attendees || []).filter(n => {
+                          const r = meeting.responses && meeting.responses[n];
+                          return (typeof r === 'object' ? r.status : r) === '참석';
+                        }).length;
+                        const declinedCount = (meeting.attendees || []).filter(n => {
+                          const r = meeting.responses && meeting.responses[n];
+                          return (typeof r === 'object' ? r.status : r) === '불참';
+                        }).length;
+                        const pendingCount = attendeeCount - confirmedCount - declinedCount;
+                        
+                        return (
+                          <div 
+                            key={meeting.id} 
+                            onClick={() => { setSelectedMeeting(meeting); setShowMeetingDetailModal(true); }}
+                            style={{ 
+                              background: 'white', 
+                              borderRadius: '12px', 
+                              padding: '16px 20px', 
+                              boxShadow: '0 1px 3px rgba(0,0,0,0.08)', 
+                              cursor: 'pointer',
+                              border: isToday ? '2px solid #3b82f6' : '1px solid #e2e8f0',
+                              opacity: isPast ? 0.7 : 1,
+                              transition: 'all 0.2s'
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                              <div style={{ flex: 1 }}>
+                                {/* 상태 배지 */}
+                                <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+                                  {isToday && <span style={{ padding: '2px 8px', background: '#3b82f6', color: 'white', borderRadius: '4px', fontSize: '10px', fontWeight: '700' }}>오늘</span>}
+                                  {isPast && <span style={{ padding: '2px 8px', background: '#94a3b8', color: 'white', borderRadius: '4px', fontSize: '10px', fontWeight: '600' }}>종료</span>}
+                                  {!isPast && !isToday && <span style={{ padding: '2px 8px', background: '#dbeafe', color: '#1e3a5f', borderRadius: '4px', fontSize: '10px', fontWeight: '600' }}>예정</span>}
+                                  {meeting.minutes && <span style={{ padding: '2px 8px', background: '#dcfce7', color: '#166534', borderRadius: '4px', fontSize: '10px', fontWeight: '600' }}>회의록 ✓</span>}
+                                </div>
+                                
+                                {/* 회의 제목 */}
+                                <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b', margin: '0 0 6px 0' }}>{meeting.title}</h3>
+                                
+                                {/* 일시/장소 */}
+                                <div style={{ fontSize: '13px', color: '#64748b', display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+                                  <span>{meeting.date}</span>
+                                  {meeting.time && <span>시간: {meeting.time}</span>}
+                                  {meeting.location && <span>{meeting.location}</span>}
+                                </div>
+                              </div>
+                              
+                              {/* 참석 현황 */}
+                              <div style={{ textAlign: 'right', minWidth: '80px' }}>
+                                <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '4px' }}>참석 현황</div>
+                                <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                                  {confirmedCount > 0 && <span style={{ padding: '2px 6px', background: '#dcfce7', color: '#166534', borderRadius: '4px', fontSize: '11px', fontWeight: '600' }}>✓{confirmedCount}</span>}
+                                  {declinedCount > 0 && <span style={{ padding: '2px 6px', background: '#fee2e2', color: '#dc2626', borderRadius: '4px', fontSize: '11px', fontWeight: '600' }}>✗{declinedCount}</span>}
+                                  {pendingCount > 0 && <span style={{ padding: '2px 6px', background: '#f1f5f9', color: '#64748b', borderRadius: '4px', fontSize: '11px', fontWeight: '600' }}>미응답 {pendingCount}</span>}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {/* 안건 미리보기 */}
+                            {meeting.agenda && (
+                              <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #f1f5f9' }}>
+                                <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '4px' }}>안건</div>
+                                <div style={{ fontSize: '13px', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {meeting.agenda.substring(0, 50)}{meeting.agenda.length > 50 ? '...' : ''}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          
+          {/* 영업일지 모달 */}
+          {showSalesModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: '20px' }} onClick={(e) => { if (e.target === e.currentTarget) setShowSalesModal(false); }}>
+              <div style={{ background: 'white', borderRadius: '16px', width: '100%', maxWidth: '500px', maxHeight: '90vh', overflow: 'auto' }}>
+                <div style={{ padding: '20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#1e293b', margin: 0 }}>{editingSales ? '영업일지 수정' : '영업일지 작성'}</h3>
+                  <button onClick={() => setShowSalesModal(false)} style={{ background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', color: '#94a3b8' }}>×</button>
+                </div>
+                <div style={{ padding: '20px' }}>
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', marginBottom: '6px' }}>날짜 *</label>
+                    <input type="date" id="salesDate" defaultValue={editingSales?.date || new Date().toISOString().split('T')[0]} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', marginBottom: '6px' }}>담당자 *</label>
+                    <select id="salesAssignee" defaultValue={editingSales?.assignee || currentUser?.name || ''} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', boxSizing: 'border-box' }}>
+                      {['이승우', '황윤선', '조재연', '이필선', '한인규', '한준엽', '정정훈', '김성민'].map(a => <option key={a} value={a}>{a}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', marginBottom: '6px' }}>회사명 *</label>
+                    <input type="text" id="salesCompany" defaultValue={editingSales?.company || ''} placeholder="영업 대상 회사명" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', marginBottom: '6px' }}>담당자 / 연락처</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input type="text" id="salesContactPerson" defaultValue={editingSales?.contactPerson || ''} placeholder="담당자명" style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', boxSizing: 'border-box' }} />
+                      <input type="tel" id="salesContactPhone" defaultValue={editingSales?.contactPhone || ''} placeholder="연락처" style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', boxSizing: 'border-box' }} />
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', marginBottom: '6px' }}>영업 내용 *</label>
+                    <textarea id="salesContent" defaultValue={editingSales?.content || ''} placeholder="영업 활동 내용" rows={5} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', resize: 'vertical', boxSizing: 'border-box' }} />
+                  </div>
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', marginBottom: '6px' }}>후속 조치</label>
+                    <input type="text" id="salesFollowUp" defaultValue={editingSales?.followUp || ''} placeholder="다음 미팅 일정 등" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    {editingSales && <button onClick={async () => { if (!confirm('삭제?')) return; if (firebaseEnabled) await database.ref('sales/' + editingSales.id).remove(); setSalesSchedules(p => p.filter(s => s.id !== editingSales.id)); setShowSalesModal(false); }} style={{ padding: '14px 20px', borderRadius: '8px', border: 'none', background: '#fee2e2', color: '#dc2626', fontWeight: '600', cursor: 'pointer' }}>삭제</button>}
+                    <button onClick={() => setShowSalesModal(false)} style={{ flex: 1, padding: '14px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontWeight: '600', cursor: 'pointer' }}>취소</button>
+                    <button onClick={async () => {
+                      const d = document.getElementById('salesDate').value;
+                      const a = document.getElementById('salesAssignee').value;
+                      const c = document.getElementById('salesCompany').value;
+                      const ct = document.getElementById('salesContent').value;
+                      if (!d || !c || !ct) { alert('날짜, 회사명, 내용 필수'); return; }
+                      const data = { id: editingSales?.id || 'sales_' + Date.now(), type: 'sales', dateType: 'confirmed', date: d, assignee: a, company: c, siteName: c, contactPerson: document.getElementById('salesContactPerson').value, contactPhone: document.getElementById('salesContactPhone').value, content: ct, followUp: document.getElementById('salesFollowUp').value };
+                      if (firebaseEnabled) await database.ref('sales/' + data.id).set(data);
+                      setSalesSchedules(p => { const e = p.find(s => s.id === data.id); return e ? p.map(s => s.id === data.id ? data : s) : [...p, data]; });
+                      setShowSalesModal(false); setEditingSales(null);
+                    }} style={{ flex: 1, padding: '14px', borderRadius: '8px', border: 'none', background: '#ec4899', color: 'white', fontWeight: '600', cursor: 'pointer' }}>저장</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 시트 설정 모달 */}
+          {showSettings && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowSettings(false)}>
+              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '600px', maxWidth: '90%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+                <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>설정</h2>
+                
+                {/* 탭 */}
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                  <button onClick={() => setSheetTab('import')} style={{ flex: 1, minWidth: '80px', padding: '10px', borderRadius: '8px', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: sheetTab === 'import' ? '#2563eb' : '#f1f5f9', color: sheetTab === 'import' ? 'white' : '#64748b' }}>가져오기</button>
+                  <button onClick={() => setSheetTab('hiworks')} style={{ flex: 1, minWidth: '80px', padding: '10px', borderRadius: '8px', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: sheetTab === 'hiworks' ? '#16a34a' : '#f1f5f9', color: sheetTab === 'hiworks' ? 'white' : '#64748b' }}>하이웍스</button>
+                  <button onClick={() => setSheetTab('export')} style={{ flex: 1, minWidth: '80px', padding: '10px', borderRadius: '8px', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: sheetTab === 'export' ? '#2563eb' : '#f1f5f9', color: sheetTab === 'export' ? 'white' : '#64748b' }}>내보내기</button>
+                  {currentUser?.isAdmin && currentUser?.canManagePasswords && (
+                    <button onClick={() => setSheetTab('accounts')} style={{ flex: 1, minWidth: '80px', padding: '10px', borderRadius: '8px', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: sheetTab === 'accounts' ? '#dc2626' : '#f1f5f9', color: sheetTab === 'accounts' ? 'white' : '#64748b' }}>계정관리</button>
+                  )}
+                </div>
+                
+                {/* 하이웍스 휴가 동기화 탭 */}
+                {sheetTab === 'hiworks' && (
+                  <>
+                    <div style={{ background: '#f0fdf4', borderRadius: '8px', padding: '14px', marginBottom: '16px', fontSize: '13px', color: '#166534' }}>
+                      <p style={{ margin: '0 0 8px 0', fontWeight: '600' }}>하이웍스 휴가 자동 동기화</p>
+                      <p style={{ margin: '0 0 8px 0' }}>넷폼알앤디 하이웍스 휴가 데이터를 자동으로 가져옵니다.</p>
+                      <p style={{ margin: 0, fontSize: '12px', color: '#15803d' }}>
+                        대상: 이승우, 황윤선, 이필선, 한준엽, 한인규, 조현식, 김성민, 정정훈<br/>
+                        조건: 2026-02-19 이후, 결재완료 건
+                      </p>
+                    </div>
+                    
+                    <button 
+                      onClick={syncHiworksVacations} 
+                      disabled={hiworksSyncLoading}
+                      style={{ 
+                        width: '100%', 
+                        padding: '14px', 
+                        borderRadius: '8px', 
+                        border: 'none', 
+                        background: hiworksSyncLoading ? '#94a3b8' : '#16a34a', 
+                        color: 'white', 
+                        fontSize: '14px', 
+                        fontWeight: '600', 
+                        cursor: hiworksSyncLoading ? 'not-allowed' : 'pointer',
+                        marginBottom: '12px'
+                      }}
+                    >
+                      {hiworksSyncLoading ? '동기화 중...' : '하이웍스 휴가 동기화'}
+                    </button>
+                    
+                    {hiworksLastSync && (
+                      <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '12px' }}>
+                        마지막 동기화: {hiworksLastSync}
+                      </div>
+                    )}
+                    
+                    {hiworksVacations.length > 0 && (
+                      <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '12px' }}>
+                        <div style={{ fontSize: '13px', fontWeight: '600', color: '#1e293b', marginBottom: '8px' }}>
+                          동기화된 휴가: {hiworksVacations.length}건
+                        </div>
+                        <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                          {hiworksVacations.slice(0, 20).map((v, i) => (
+                            <div key={i} style={{ fontSize: '12px', padding: '6px 0', borderBottom: '1px solid #e2e8f0', color: '#475569' }}>
+                              {v.date} - {v.userName} ({v.type}) {v.dayType === 'hours' && v.hours > 0 ? `${v.hours}시간` : '종일'}
+                            </div>
+                          ))}
+                          {hiworksVacations.length > 20 && (
+                            <div style={{ fontSize: '12px', color: '#94a3b8', padding: '8px 0' }}>
+                              ... 외 {hiworksVacations.length - 20}건
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    
+                    <button onClick={() => setShowSettings(false)} style={{ width: '100%', marginTop: '16px', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', fontWeight: '600', color: '#64748b', cursor: 'pointer' }}>닫기</button>
+                  </>
+                )}
+                
+                {/* 계정관리 탭 (admin 전용) */}
+                {sheetTab === 'accounts' && currentUser?.isAdmin && currentUser?.canManagePasswords && (
+                  <>
+                    <div style={{ background: '#fef2f2', borderRadius: '8px', padding: '14px', marginBottom: '16px', fontSize: '13px', color: '#991b1b' }}>
+                      <p style={{ margin: 0, fontWeight: '600' }}>관리자 전용 기능입니다. 계정 추가/삭제/비밀번호 변경이 가능합니다.</p>
+                    </div>
+                    
+                    {/* 새 계정 추가 */}
+                    <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
+                      <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '12px' }}>+ 새 계정 추가</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '12px' }}>
+                        <input type="text" value={newAccountId} onChange={e => setNewAccountId(e.target.value)} placeholder="아이디" style={{ padding: '10px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '13px' }} />
+                        <input type="text" value={newAccountPw} onChange={e => setNewAccountPw(e.target.value)} placeholder="비밀번호" style={{ padding: '10px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '13px' }} />
+                        <input type="text" value={newAccountName} onChange={e => setNewAccountName(e.target.value)} placeholder="이름" style={{ padding: '10px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '13px' }} />
+                      </div>
+                      <button onClick={handleAddAccount} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: 'none', background: '#16a34a', color: 'white', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>계정 추가</button>
+                    </div>
+                    
+                    {/* 계정 목록 */}
+                    <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '12px' }}>계정 목록 ({Object.keys(userAccounts).length}개)</div>
+                    <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                      {Object.entries(userAccounts).map(([id, account], idx) => (
+                        <div key={id} style={{ padding: '12px', borderBottom: idx < Object.keys(userAccounts).length - 1 ? '1px solid #e5e7eb' : 'none', display: 'flex', alignItems: 'center', gap: '12px', background: idx % 2 === 0 ? 'white' : '#fafafa' }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b' }}>{account.name}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b' }}>ID: {id} {account.isAdmin && <span style={{ color: '#dc2626' }}>(관리자)</span>}</div>
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button onClick={() => handleResetAccountPassword(id)} style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #e2e8f0', background: 'white', fontSize: '11px', fontWeight: '600', color: '#64748b', cursor: 'pointer' }}>비번변경</button>
+                            {id !== 'admin' && (
+                              <button onClick={() => handleDeleteAccount(id)} style={{ padding: '6px 10px', borderRadius: '4px', border: 'none', background: '#fee2e2', fontSize: '11px', fontWeight: '600', color: '#dc2626', cursor: 'pointer' }}>삭제</button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    
+                    <button onClick={() => setShowSettings(false)} style={{ width: '100%', marginTop: '16px', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', fontWeight: '600', color: '#64748b', cursor: 'pointer' }}>닫기</button>
+                  </>
+                )}
+                
+                {/* 가져오기 탭 */}
+                {sheetTab === 'import' && (
+                  <>
+                    <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '14px', marginBottom: '16px', fontSize: '13px', color: '#64748b' }}>
+                      <p style={{ margin: '0 0 6px 0', fontWeight: '600', color: '#475569' }}>설정 방법:</p>
+                      <ol style={{ margin: 0, paddingLeft: '18px', lineHeight: '1.8' }}>
+                        <li>구글시트 → 파일 → 공유 → 웹에 게시</li>
+                        <li>시트 선택 후 형식: <strong>CSV</strong> 선택</li>
+                        <li>게시 후 URL 붙여넣기</li>
+                      </ol>
+                    </div>
+                    
+                    <input 
+                      type="text" 
+                      value={sheetUrl} 
+                      onChange={e => setSheetUrl(e.target.value)} 
+                      placeholder="https://docs.google.com/spreadsheets/d/e/2PACX-.../pub?output=csv" 
+                      style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', marginBottom: '12px', boxSizing: 'border-box' }} 
+                    />
+                    
+                    {/* 가져오기 모드 선택 */}
+                    <div style={{ background: '#eff6ff', borderRadius: '8px', padding: '12px', marginBottom: '12px' }}>
+                      <p style={{ margin: '0 0 8px 0', fontSize: '13px', fontWeight: '600', color: '#1d4ed8' }}>가져오기 모드:</p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                          <input type="radio" name="importMode" checked={importMode === 'replace'} onChange={() => setImportMode('replace')} />
+                          <span style={{ fontSize: '13px' }}><strong>전체 교체</strong> - 기존 데이터 삭제 후 시트 데이터로 대체</span>
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                          <input type="radio" name="importMode" checked={importMode === 'merge'} onChange={() => setImportMode('merge')} />
+                          <span style={{ fontSize: '13px' }}><strong>병합</strong> - 새 항목 추가 + 기존 항목 업데이트 (현장명+일정 기준)</span>
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                          <input type="radio" name="importMode" checked={importMode === 'addNew'} onChange={() => setImportMode('addNew')} />
+                          <span style={{ fontSize: '13px' }}><strong>새 항목만</strong> - 중복되지 않는 새 항목만 추가</span>
+                        </label>
+                      </div>
+                    </div>
+                    
+                    {importStatus && (
+                      <div style={{ padding: '12px', background: importStatus.type === 'success' ? '#dcfce7' : importStatus.type === 'error' ? '#fee2e2' : '#fef3c7', borderRadius: '8px', marginBottom: '12px', fontSize: '13px', color: importStatus.type === 'success' ? '#166534' : importStatus.type === 'error' ? '#dc2626' : '#92400e' }}>
+                        {importStatus.message}
+                      </div>
+                    )}
+                    
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      <button onClick={() => setShowSettings(false)} style={{ flex: 1, padding: '12px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', fontWeight: '600', color: '#64748b', cursor: 'pointer' }}>닫기</button>
+                      <button onClick={handleImportFromSheet} disabled={isImporting || !sheetUrl} style={{ flex: 1, padding: '12px', border: 'none', borderRadius: '8px', background: isImporting ? '#94a3b8' : '#2563eb', fontSize: '14px', fontWeight: '600', color: 'white', cursor: isImporting ? 'not-allowed' : 'pointer' }}>
+                        {isImporting ? '가져오는 중...' : '가져오기'}
+                      </button>
+                    </div>
+                    
+                    {ptSchedules.length > 0 && (
+                      <div style={{ marginTop: '16px', padding: '12px', background: '#f1f5f9', borderRadius: '8px', fontSize: '12px', color: '#64748b' }}>
+                        현재 PT 일정: <strong>{ptSchedules.length}건</strong> 저장됨
+                      </div>
+                    )}
+                  </>
+                )}
+                
+                {/* 내보내기 탭 */}
+                {sheetTab === 'export' && (
+                  <>
+                    <div style={{ background: '#f0fdf4', borderRadius: '8px', padding: '14px', marginBottom: '16px', fontSize: '13px', color: '#166534' }}>
+                      <p style={{ margin: '0 0 6px 0', fontWeight: '600' }}>내보내기 방법:</p>
+                      <ol style={{ margin: 0, paddingLeft: '18px', lineHeight: '1.8' }}>
+                        <li>아래 버튼으로 CSV 파일 다운로드</li>
+                        <li>구글시트 열기 → 파일 → 가져오기</li>
+                        <li>다운로드한 CSV 선택 → "현재 시트에 추가" 또는 "시트 대체"</li>
+                      </ol>
+                    </div>
+                    
+                    <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
+                      <div style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b', marginBottom: '12px' }}>내보낼 데이터:</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '13px' }}>
+                        <div>• PT 일정: <strong>{ptSchedules.length}건</strong></div>
+                        <div>• 현설 일정: <strong>{briefingSchedules.length}건</strong></div>
+                        <div>• 개인 일정: <strong>{personalSchedules.length}건</strong></div>
+                      </div>
+                    </div>
+                    
+                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                      <button onClick={() => handleExportCSV('pt')} style={{ flex: 1, padding: '12px', border: 'none', borderRadius: '8px', background: '#2563eb', fontSize: '14px', fontWeight: '600', color: 'white', cursor: 'pointer' }}>PT 일정 CSV</button>
+                      <button onClick={() => handleExportCSV('all')} style={{ flex: 1, padding: '12px', border: 'none', borderRadius: '8px', background: '#16a34a', fontSize: '14px', fontWeight: '600', color: 'white', cursor: 'pointer' }}>전체 일정 CSV</button>
+                    </div>
+                    
+                    <button onClick={() => setShowSettings(false)} style={{ width: '100%', marginTop: '12px', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', fontWeight: '600', color: '#64748b', cursor: 'pointer' }}>닫기</button>
+                    
+                                        {/* 데이터 초기화 - admin만 접근 가능 */}
+                    {currentUser?.isAdmin && (
+                    <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '2px solid #fee2e2' }}>
+                      <div style={{ fontSize: '14px', fontWeight: '700', color: '#dc2626', marginBottom: '12px' }}>데이터 초기화 (관리자 전용)</div>
+                      <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '12px' }}>Firebase에서 해당 데이터를 완전히 삭제합니다. 이 작업은 되돌릴 수 없습니다.</p>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <button onClick={() => {
+                          if (confirm('정말 모든 개인일정을 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다!')) {
+                            if (firebaseEnabled && database) {
+                              database.ref('personal').remove();
+                            }
+                            setPersonalSchedules([]);
+                            saveToLocal('personal_schedules', []);
+                            alert('개인일정이 모두 삭제되었습니다.');
+                          }
+                        }} style={{ padding: '10px 16px', borderRadius: '8px', border: '2px solid #dc2626', background: '#fee2e2', color: '#dc2626', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>개인일정 전체삭제</button>
+                        <button onClick={() => {
+                          if (confirm('정말 모든 현설일정을 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다!')) {
+                            if (firebaseEnabled && database) {
+                              database.ref('briefing').remove();
+                            }
+                            setBriefingSchedules([]);
+                            saveToLocal('briefing_schedules', []);
+                            alert('현설일정이 모두 삭제되었습니다.');
+                          }
+                        }} style={{ padding: '10px 16px', borderRadius: '8px', border: '2px solid #dc2626', background: '#fee2e2', color: '#dc2626', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>현설일정 전체삭제</button>
+                        <button onClick={async () => {
+                          const confirmText = prompt('정말 모든 PT일정을 삭제하시겠습니까?\n\n삭제하려면 "전체삭제"를 입력하세요:');
+                          if (confirmText === '전체삭제') {
+                            if (confirm(`PT일정 ${ptSchedules.length}건이 영구 삭제됩니다.\n\n정말 진행하시겠습니까?`)) {
+                              console.log('=== PT 데이터 백업 (삭제 전) ===');
+                              console.log(JSON.stringify(ptSchedules, null, 2));
+                              console.log('=== 백업 끝 ===');
+                              if (firebaseEnabled && database) {
+                                await database.ref('pt').remove();
+                              }
+                              setPtSchedules([]);
+                              saveToLocal('pt_schedules', []);
+                              alert('PT일정이 모두 삭제되었습니다.');
+                            }
+                          } else if (confirmText !== null) {
+                            alert('입력이 일치하지 않습니다.');
+                          }
+                        }} style={{ padding: '10px 16px', borderRadius: '8px', border: '2px solid #dc2626', background: '#fee2e2', color: '#dc2626', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>PT일정 전체삭제</button>
+                        <button onClick={() => {
+                          const localData = localStorage.getItem('pt_schedules');
+                          if (localData) {
+                            try {
+                              const parsed = JSON.parse(localData);
+                              const count = Array.isArray(parsed) ? parsed.length : Object.keys(parsed).length;
+                              if (confirm(`로컬 저장소에 PT 데이터 ${count}건이 있습니다.\n\nFirebase에 복원하시겠습니까?`)) {
+                                const dataArray = Array.isArray(parsed) ? parsed : Object.values(parsed);
+                                if (firebaseEnabled && database) {
+                                  const updates = {};
+                                  dataArray.forEach(item => {
+                                    const safeId = (item.id || `pt_${Date.now()}_${Math.random()}`).replace(/[.#$\/\[\]]/g, '_');
+                                    updates[safeId] = {...item, id: safeId};
+                                  });
+                                  database.ref('pt').update(updates).then(() => {
+                                    alert(`${dataArray.length}건 복원 완료!`);
+                                  });
+                                }
+                              }
+                            } catch (e) {
+                              alert('오류: ' + e.message);
+                            }
+                          } else {
+                            alert('로컬 저장소에 PT 데이터가 없습니다.');
+                          }
+                        }} style={{ padding: '10px 16px', borderRadius: '8px', border: '2px solid #16a34a', background: '#dcfce7', color: '#16a34a', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>로컬 데이터 복구</button>
+                      </div>
+                    </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 현설 통계 뷰 */}
+          {viewMode === 'briefingStats' && (
+            <div style={{ background: 'white', borderRadius: '12px', padding: isMobile ? '16px' : '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+              <h2 style={{ fontSize: isMobile ? '16px' : '20px', fontWeight: '700', color: '#1e293b', marginBottom: '16px' }}>현설 통계</h2>
+              
+              {(() => {
+                // 현설 담당자 목록 추출
+                const briefingAssignees = briefingSchedules.flatMap(s =>
+                  (s.assignee || '').split(/[\/,]/).map(a => a.trim()).filter(a => a)
+                ).filter((v, i, a) => a.indexOf(v) === i).sort();
+                
+                // 담당자별 건수 계산 (선택된 연월 기준)
+                const getStats = (assignee) => {
+                  let total = 0;
+                  const monthlyStats = {};
+                  for (let m = 1; m <= 12; m++) monthlyStats[m] = 0;
+                  
+                  briefingSchedules.forEach(s => {
+                    if (!s.date) return;
+                    const [y, m] = s.date.split('-').map(Number);
+                    if (y !== settleYear) return;
+                    if (statsMonth !== 'all' && m !== Number(statsMonth)) return;
+                    
+                    const assignees = (s.assignee || '').split(/[\/,]/).map(a => a.trim());
+                    if (assignee === 'all' || assignees.includes(assignee)) {
+                      total++;
+                      monthlyStats[m]++;
+                    }
+                  });
+                  
+                  return { total, monthlyStats };
+                };
+                
+                const selectedAssigneeStats = statsAssignee === 'all' ? getStats('all') : getStats(statsAssignee);
+                
+                return (
+                  <>
+                    {/* 연월/담당자 선택 */}
+                    <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <select value={settleYear} onChange={e => setSettleYear(Number(e.target.value))} style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '13px', fontWeight: '600' }}>
+                        {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}년</option>)}
+                      </select>
+                      <select value={statsMonth} onChange={e => setStatsMonth(e.target.value)} style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '13px', fontWeight: '600' }}>
+                        <option value="all">전체</option>
+                        {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <option key={m} value={m}>{m}월</option>)}
+                      </select>
+                      <select value={statsAssignee} onChange={e => setStatsAssignee(e.target.value)} style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '13px', fontWeight: '600' }}>
+                        <option value="all">전체</option>
+                        {briefingAssignees.map(a => <option key={a} value={a}>{a}</option>)}
+                      </select>
+                    </div>
+                    
+                    {/* 선택된 기간/담당자 합계 */}
+                    <div style={{ padding: isMobile ? '12px' : '16px', background: '#374151', borderRadius: '10px', color: 'white', marginBottom: '16px', textAlign: 'center' }}>
+                      <div style={{ fontSize: isMobile ? '12px' : '14px', opacity: 0.9, marginBottom: '2px' }}>
+                        {settleYear}년 {statsMonth === 'all' ? '전체' : `${statsMonth}월`} {statsAssignee !== 'all' && `/ ${statsAssignee}`}
+                      </div>
+                      <div style={{ fontSize: isMobile ? '24px' : '28px', fontWeight: '700' }}>{selectedAssigneeStats.total}건</div>
+                    </div>
+                    
+                    {/* 담당자별 통계 - 전체 선택시에만 표시 */}
+                    {statsAssignee === 'all' && (
+                      <div style={{ background: '#f8fafc', borderRadius: '8px', overflow: 'hidden', border: '1px solid #e2e8f0', marginBottom: '16px' }}>
+                        <div style={{ padding: '10px 12px', background: '#e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '13px', fontWeight: '700', color: '#475569' }}>담당자별</span>
+                          <span style={{ fontSize: '12px', fontWeight: '600', color: '#64748b' }}>건수</span>
+                        </div>
+                        {briefingAssignees.map((assignee, idx) => {
+                          const stats = getStats(assignee);
+                          if (stats.total === 0 && statsMonth !== 'all') return null;
+                          return (
+                            <div key={assignee} onClick={() => setStatsAssignee(assignee)} style={{ 
+                              padding: '8px 12px', 
+                              display: 'flex', 
+                              justifyContent: 'space-between', 
+                              alignItems: 'center',
+                              borderBottom: idx < briefingAssignees.length - 1 ? '1px solid #e5e7eb' : 'none',
+                              background: idx % 2 === 0 ? 'white' : '#fafafa',
+                              cursor: 'pointer'
+                            }}>
+                              <span style={{ fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>{assignee}</span>
+                              <span style={{ fontSize: '14px', fontWeight: '700', color: stats.total > 0 ? '#111827' : '#94a3b8' }}>{stats.total}건</span>
+                            </div>
+                          );
+                        }).filter(Boolean)}
+                        {briefingAssignees.length === 0 && (
+                          <div style={{ textAlign: 'center', padding: '16px', color: '#94a3b8', fontSize: '13px' }}>데이터가 없습니다</div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* 월별 분포 - 전체 또는 담당자 선택시 */}
+                    {briefingAssignees.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '8px' }}>월별 분포 {statsAssignee !== 'all' && `(${statsAssignee})`}</div>
+                        <div style={{ display: 'flex', gap: '2px' }}>
+                          {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
+                            <div key={m} style={{ flex: 1, textAlign: 'center' }}>
+                              <div style={{ 
+                                height: isMobile ? '28px' : '32px', 
+                                borderRadius: '4px', 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center',
+                                fontSize: isMobile ? '11px' : '12px',
+                                fontWeight: '700',
+                                background: selectedAssigneeStats.monthlyStats[m] > 0 ? '#16a34a' : '#e5e7eb',
+                                color: selectedAssigneeStats.monthlyStats[m] > 0 ? 'white' : '#9ca3af',
+                                marginBottom: '2px'
+                              }}>
+                                {selectedAssigneeStats.monthlyStats[m] || '-'}
+                              </div>
+                              <div style={{ fontSize: '9px', color: '#94a3b8' }}>{m}월</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* 현설정산 뷰 */}
+          {viewMode === 'briefingSettle' && (
+            <div style={{ background: 'white', borderRadius: '12px', padding: isMobile ? '16px' : '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+              {/* 헤더 */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                <h2 style={{ fontSize: isMobile ? '16px' : '20px', fontWeight: '700', color: '#1e293b', margin: 0 }}>현설 정산</h2>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button onClick={() => setShowPriceTable(true)} style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>단가표</button>
+                  <button onClick={() => {
+                    const element = document.getElementById('settle-list');
+                    if (!element) return;
+                    html2canvas(element, { backgroundColor: '#ffffff', scale: 2 }).then(canvas => {
+                      const link = document.createElement('a');
+                      link.download = `현설정산_${settleYear}년${settleMonth > 0 ? settleMonth + '월' : ''}_${settleAssignee === 'all' ? '전체' : settleAssignee}.png`;
+                      link.href = canvas.toDataURL('image/png');
+                      link.click();
+                    });
+                  }} style={{ padding: '6px 10px', borderRadius: '6px', border: 'none', background: '#2563eb', color: 'white', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>캡처</button>
+                </div>
+              </div>
+              
+              {/* 필터 */}
+              <div style={{ display: 'flex', gap: '6px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                <select value={settleYear} onChange={e => setSettleYear(Number(e.target.value))} style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', flex: isMobile ? '1' : 'none' }}>
+                  {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}년</option>)}
+                </select>
+                <select value={settleMonth} onChange={e => setSettleMonth(Number(e.target.value))} style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', flex: isMobile ? '1' : 'none' }}>
+                  <option value={0}>전체</option>
+                  {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <option key={m} value={m}>{m}월</option>)}
+                </select>
+                <select value={settleAssignee} onChange={e => setSettleAssignee(e.target.value)} style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', flex: isMobile ? '1' : 'none' }}>
+                  <option value="all">전체</option>
+                  <option value="김현조">김현조</option>
+                  <option value="박시현">박시현</option>
+                </select>
+              </div>
+
+              {/* 정산 리스트 */}
+              {(() => {
+                const settleBriefings = briefingSchedules.filter(s => {
+                  const assignees = (s.assignee || '').split(/[\/,]/).map(a => a.trim());
+                  const hasSettleAssignee = assignees.some(a => a === '김현조' || a === '박시현');
+                  if (!hasSettleAssignee) return false;
+                  if (settleAssignee !== 'all' && !assignees.includes(settleAssignee)) return false;
+                  if (!s.date) return false;
+                  const [y, m] = s.date.split('-').map(Number);
+                  if (y !== settleYear) return false;
+                  if (settleMonth !== 0 && m !== settleMonth) return false;
+                  return true;
+                }).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+                const totals = { '김현조': 0, '박시현': 0 };
+                const counts = { '김현조': 0, '박시현': 0 };
+                settleBriefings.forEach(s => {
+                  const { price: autoPrice } = getRegionPrice(s.address, s.date);
+                  const price = s.customPrice || autoPrice;
+                  const assignees = (s.assignee || '').split(/[\/,]/).map(a => a.trim());
+                  if (assignees.includes('김현조')) { totals['김현조'] += price; counts['김현조']++; }
+                  if (assignees.includes('박시현')) { totals['박시현'] += price; counts['박시현']++; }
+                });
+
+                return (
+                  <div id="settle-list" style={{ background: 'white', padding: '12px', maxWidth: '400px' }}>
+                    {/* 헤더 */}
+                    <div style={{ textAlign: 'center', marginBottom: '8px', paddingBottom: '8px', borderBottom: '2px solid #374151' }}>
+                      <div style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b' }}>현장설명회 참여리스트</div>
+                      <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>{settleYear}년 {settleMonth > 0 ? `${settleMonth}월` : ''} {settleAssignee !== 'all' ? `/ ${settleAssignee}` : ''}</div>
+                    </div>
+
+                    {/* 리스트 - 컴팩트 */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {settleBriefings.length === 0 ? (
+                        <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>해당 기간 정산 내역이 없습니다.</div>
+                      ) : (
+                        settleBriefings.map(s => {
+                          const { region, price: autoPrice } = getRegionPrice(s.address, s.date);
+                          const price = s.customPrice || autoPrice;
+                          const isCustom = autoPrice === 0;
+                          return (
+                            <div key={s.id} style={{ padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: '6px', background: '#fafafa' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                                <span style={{ fontSize: '15px', fontWeight: '600', color: '#1e293b' }}>{s.siteName}</span>
+                                {isCustom ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                    <input 
+                                      type="number" 
+                                      value={s.customPrice || ''} 
+                                      onChange={e => {
+                                        const val = e.target.value ? Number(e.target.value) : 0;
+                                        const db = firebase.database();
+                                        db.ref(`schedules/briefing/${s.id}/customPrice`).set(val);
+                                        setBriefingSchedules(prev => prev.map(item => item.id === s.id ? {...item, customPrice: val} : item));
+                                      }}
+                                      placeholder="금액"
+                                      style={{ width: '70px', padding: '4px 6px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '14px', textAlign: 'right' }}
+                                    />
+                                    <span style={{ fontSize: '12px', color: '#64748b' }}>원</span>
+                                  </div>
+                                ) : (
+                                  <span style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b' }}>{price.toLocaleString()}원</span>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                  <span style={{ fontSize: '13px', color: '#64748b' }}>{s.date}</span>
+                                  <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
+                                    background: price === 70000 ? '#dbeafe' : price === 100000 ? '#dcfce7' : price === 130000 ? '#fef3c7' : '#f1f5f9',
+                                    color: price === 70000 ? '#1d4ed8' : price === 100000 ? '#16a34a' : price === 130000 ? '#d97706' : '#64748b'
+                                  }}>{region}</span>
+                                </div>
+                                <span style={{ fontSize: '13px', color: '#2563eb', fontWeight: '600' }}>{s.assignee}</span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                      
+                      {/* 하단 합계 - 담당자 정보 포함 */}
+                      {settleBriefings.length > 0 && (
+                        <div style={{ padding: '10px 12px', background: '#374151', borderRadius: '6px', marginTop: '4px' }}>
+                          {settleAssignee !== 'all' ? (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontWeight: '600', color: 'white', fontSize: '14px' }}>{settleAssignee} ({counts[settleAssignee]}건)</span>
+                              <span style={{ fontSize: '18px', fontWeight: '700', color: '#60a5fa' }}>
+                                {totals[settleAssignee].toLocaleString()}원
+                              </span>
+                            </div>
+                          ) : (
+                            <>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', paddingBottom: '4px', borderBottom: '1px solid #6b7280' }}>
+                                {counts['김현조'] > 0 && <span style={{ fontSize: '13px', color: '#93c5fd' }}>김현조 {counts['김현조']}건: {totals['김현조'].toLocaleString()}원</span>}
+                                {counts['박시현'] > 0 && <span style={{ fontSize: '13px', color: '#86efac' }}>박시현 {counts['박시현']}건: {totals['박시현'].toLocaleString()}원</span>}
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontWeight: '600', color: 'white', fontSize: '14px' }}>합계 ({counts['김현조'] + counts['박시현']}건)</span>
+                                <span style={{ fontSize: '18px', fontWeight: '700', color: '#60a5fa' }}>
+                                  {(totals['김현조'] + totals['박시현']).toLocaleString()}원
+                                </span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* 일정 유형 선택 모달 */}
+          {showAddTypeModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowAddTypeModal(false)}>
+              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '360px', maxWidth: '90%' }} onClick={e => e.stopPropagation()}>
+                <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#1e293b', marginBottom: '20px', textAlign: 'center' }}>일정 유형 선택</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+                  <button onClick={() => { if(addTypeModalDate) setNewSchedule(prev => ({...prev, date: addTypeModalDate})); setShowSalesModal(true); setShowAddTypeModal(false); }} style={{ padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#f8fafc', fontSize: '14px', fontWeight: '700', color: '#475569', cursor: 'pointer' }}>영업</button>
+                  <button onClick={() => { setModalType('pt'); if(addTypeModalDate) setNewSchedule(prev => ({...prev, date: addTypeModalDate})); setShowModal(true); setShowAddTypeModal(false); }} style={{ padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#f8fafc', fontSize: '14px', fontWeight: '700', color: '#475569', cursor: 'pointer' }}>PT</button>
+                  <button onClick={() => { setModalType('briefing'); if(addTypeModalDate) setNewSchedule(prev => ({...prev, date: addTypeModalDate})); setShowModal(true); setShowAddTypeModal(false); }} style={{ padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#f8fafc', fontSize: '14px', fontWeight: '700', color: '#475569', cursor: 'pointer' }}>현설</button>
+                  <button onClick={() => { setModalType('seminar'); if(addTypeModalDate) setNewSchedule(prev => ({...prev, date: addTypeModalDate})); setShowModal(true); setShowAddTypeModal(false); }} style={{ padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#f8fafc', fontSize: '14px', fontWeight: '700', color: '#475569', cursor: 'pointer' }}>세미나</button>
+                  <button onClick={() => { setModalType('asq'); if(addTypeModalDate) setNewSchedule(prev => ({...prev, date: addTypeModalDate})); setShowModal(true); setShowAddTypeModal(false); }} style={{ padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#f8fafc', fontSize: '14px', fontWeight: '700', color: '#475569', cursor: 'pointer' }}>아.스.퀘</button>
+                  <button onClick={() => { setModalType('personal'); if(addTypeModalDate) setNewSchedule(prev => ({...prev, date: addTypeModalDate})); setShowModal(true); setShowAddTypeModal(false); }} style={{ padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#f8fafc', fontSize: '14px', fontWeight: '700', color: '#475569', cursor: 'pointer' }}>개인</button>
+                  <button onClick={() => { setModalType('vacation'); if(addTypeModalDate) setNewSchedule(prev => ({...prev, date: addTypeModalDate})); setShowModal(true); setShowAddTypeModal(false); }} style={{ padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#f8fafc', fontSize: '14px', fontWeight: '700', color: '#475569', cursor: 'pointer' }}>휴가</button>
+                  <button onClick={() => { if(addTypeModalDate) setNewMeeting(prev => ({...prev, date: addTypeModalDate})); setShowMeetingModal(true); setShowAddTypeModal(false); }} style={{ padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#f8fafc', fontSize: '14px', fontWeight: '700', color: '#475569', cursor: 'pointer' }}>회의</button>
+                </div>
+                <button onClick={() => setShowAddTypeModal(false)} style={{ width: '100%', marginTop: '16px', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', fontWeight: '600', color: '#64748b', cursor: 'pointer' }}>취소</button>
+              </div>
+            </div>
+          )}
+
+          {/* 등록 모달 */}
+          {showModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowModal(false)}>
+              <div style={{ background: 'white', borderRadius: '12px', padding: '16px', width: '480px', maxWidth: '90%' }} onClick={e => e.stopPropagation()}>
+                <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                  {[{ key: 'pt', label: 'PT', color: '#A7D8F0' }, { key: 'briefing', label: '현설', color: '#A8E6CF' }, { key: 'seminar', label: '세미나', color: '#E8D0F5' }, { key: 'asq', label: '아.스.퀘', color: '#BDE0FE' }, { key: 'personal', label: '개인', color: '#FFD4B8' }, { key: 'vacation', label: '휴가', color: '#C1E8C1' }].map(t => (
+                    <button key={t.key} onClick={() => setModalType(t.key)} style={{ flex: 1, minWidth: '60px', padding: '8px', borderRadius: '6px', border: 'none', fontSize: '12px', fontWeight: '600', cursor: 'pointer', background: modalType === t.key ? t.color : '#f1f5f9', color: modalType === t.key ? '#1e293b' : '#64748b' }}>{t.label}</button>
+                  ))}
+                </div>
+
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  {modalType === 'pt' && (
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>일정 타입</label>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {[{ key: 'confirmed', label: '확정일' }, { key: 'monthOnly', label: '예정월' }, { key: 'pending', label: '미정' }].map(t => (
+                          <button key={t.key} type="button" onClick={() => setNewSchedule({...newSchedule, dateType: t.key})} style={{ flex: 1, padding: '8px', borderRadius: '6px', border: newSchedule.dateType === t.key ? '2px solid #2563eb' : '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', cursor: 'pointer', background: newSchedule.dateType === t.key ? '#eff6ff' : 'white', color: newSchedule.dateType === t.key ? '#2563eb' : '#64748b' }}>{t.label}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(modalType === 'personal' || modalType === 'briefing' || modalType === 'seminar' || modalType === 'asq' || modalType === 'vacation' || newSchedule.dateType === 'confirmed') && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>일정</label><input type="date" value={newSchedule.date} onChange={e => setNewSchedule({...newSchedule, date: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>시간</label>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <select 
+                            value={newSchedule.time || ''} 
+                            onChange={e => setNewSchedule({...newSchedule, time: e.target.value})} 
+                            style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }}
+                          >
+                            <option value="">선택</option>
+                            {Array.from({length: 28}, (_, i) => {
+                              const hour = Math.floor(i / 2) + 8;
+                              const min = (i % 2) * 30;
+                              return `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+                            }).map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                          <input 
+                            type="text" 
+                            value={newSchedule.time || ''} 
+                            onChange={e => setNewSchedule({...newSchedule, time: e.target.value})} 
+                            placeholder="00:00" 
+                            style={{ width: '60px', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box', textAlign: 'center' }} 
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {modalType === 'pt' && newSchedule.dateType === 'monthOnly' && (
+                    <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>예정월</label><input type="month" value={newSchedule.expectedMonth} onChange={e => setNewSchedule({...newSchedule, expectedMonth: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
+                  )}
+
+                  {modalType === 'pt' && newSchedule.dateType === 'pending' && (
+                    <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>일정 메모</label><input type="text" value={newSchedule.dateNote} onChange={e => setNewSchedule({...newSchedule, dateNote: e.target.value})} placeholder="조율중, 협의필요" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
+                  )}
+
+                  {(modalType === 'pt' || modalType === 'briefing' || modalType === 'asq') && (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                        <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>현장명</label><input type="text" value={newSchedule.siteName} onChange={e => setNewSchedule({...newSchedule, siteName: e.target.value})} placeholder="OO아파트" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
+                        <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>공종</label><input type="text" value={newSchedule.workType} onChange={e => setNewSchedule({...newSchedule, workType: e.target.value})} placeholder="지하주차장 에폭시" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
+                      </div>
+                      <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>주소</label><input type="text" value={newSchedule.address} onChange={e => setNewSchedule({...newSchedule, address: e.target.value})} placeholder="서울 중구 만리재로 175" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
+                      {(modalType === 'pt' || modalType === 'asq') ? (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                          <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>요청사</label><input type="text" value={newSchedule.requester} onChange={e => setNewSchedule({...newSchedule, requester: e.target.value})} placeholder="피앤텍이앤지" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: newSchedule.requester && !checkPourAgreement(newSchedule.requester).isAgreement ? '1px solid #ef4444' : '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} />{newSchedule.requester && (() => { const chk = checkPourAgreement(newSchedule.requester); return !chk.isAgreement ? <div style={{ fontSize: '10px', color: '#ef4444', fontWeight: '600', marginTop: '2px' }}>POUR공법 협약업체 아닙니다, 확인바랍니다</div> : chk.grade ? <div style={{ fontSize: '10px', color: '#2563eb', fontWeight: '600', marginTop: '2px' }}>협약업체 ({chk.grade}등급)</div> : null; })()}</div>
+                          <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>참여인원</label><input type="text" value={newSchedule.participants} onChange={e => setNewSchedule({...newSchedule, participants: e.target.value})} placeholder="12부" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
+                        </div>
+                      ) : (
+                        <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>요청사</label><input type="text" value={newSchedule.requester} onChange={e => setNewSchedule({...newSchedule, requester: e.target.value})} placeholder="관리사무소" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: newSchedule.requester && !checkPourAgreement(newSchedule.requester).isAgreement ? '1px solid #ef4444' : '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} />{newSchedule.requester && (() => { const chk = checkPourAgreement(newSchedule.requester); return !chk.isAgreement ? <div style={{ fontSize: '10px', color: '#ef4444', fontWeight: '600', marginTop: '2px' }}>POUR공법 협약업체 아닙니다, 확인바랍니다</div> : chk.grade ? <div style={{ fontSize: '10px', color: '#2563eb', fontWeight: '600', marginTop: '2px' }}>협약업체 ({chk.grade}등급)</div> : null; })()}</div>
+                      )}
+                    </>
+                  )}
+
+                  {(modalType === 'pt' || modalType === 'asq') && (
+                    <>
+                      <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>경쟁사</label><input type="text" value={newSchedule.competitor} onChange={e => setNewSchedule({...newSchedule, competitor: e.target.value})} placeholder="4A, PMC" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>{modalType === 'asq' ? '담당자' : 'PT담당자'} (복수 선택)</label>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                          {assigneeList.map(a => {
+                            const currentAssignees = (newSchedule.ptAssignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                            const isSelected = currentAssignees.includes(a);
+                            const bgColor = modalType === 'asq' ? '#BDE0FE' : '#A7D8F0';
+                            return (
+                              <label key={a} style={{ display: 'flex', alignItems: 'center', padding: '5px 8px', borderRadius: '4px', cursor: 'pointer', background: isSelected ? bgColor : '#f8fafc', border: isSelected ? `2px solid ${bgColor}` : '1px solid #e2e8f0', fontSize: '11px' }}>
+                                <input type="checkbox" checked={isSelected} onChange={e => {
+                                  const current = (newSchedule.ptAssignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                                  let updated;
+                                  if (e.target.checked) {
+                                    updated = [...current, a];
+                                  } else {
+                                    updated = current.filter(x => x !== a);
+                                  }
+                                  setNewSchedule({...newSchedule, ptAssignee: updated.join('/')});
+                                }} style={{ display: 'none' }} />
+                                <span style={{ fontWeight: isSelected ? '600' : '400', color: isSelected ? '#1e293b' : '#64748b' }}>{a}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '8px' }}>
+                          <span style={{ fontSize: '11px', color: '#64748b' }}>기타:</span>
+                          <input type="text" value={customPtAssignee} onChange={e => setCustomPtAssignee(e.target.value)} placeholder="직접 입력" style={{ flex: 1, padding: '6px 8px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '11px' }} />
+                          <button type="button" onClick={() => {
+                            if (customPtAssignee.trim()) {
+                              const current = (newSchedule.ptAssignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                              if (!current.includes(customPtAssignee.trim())) {
+                                setNewSchedule({...newSchedule, ptAssignee: [...current, customPtAssignee.trim()].join('/')});
+                              }
+                              setCustomPtAssignee('');
+                            }
+                          }} style={{ padding: '6px 12px', borderRadius: '4px', border: 'none', background: modalType === 'asq' ? '#BDE0FE' : '#A7D8F0', color: '#1e293b', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>추가</button>
+                        </div>
+                        {newSchedule.ptAssignee && (
+                          <div style={{ marginTop: '8px' }}>
+                            <span style={{ fontSize: '11px', color: '#64748b' }}>선택됨: </span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                              {(newSchedule.ptAssignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x).map((name, idx) => (
+                                <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', background: modalType === 'asq' ? '#BDE0FE' : '#A7D8F0', color: '#1e293b', borderRadius: '4px', fontSize: '11px', fontWeight: '500' }}>
+                                  {name}
+                                  <span onClick={() => {
+                                    const current = (newSchedule.ptAssignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                                    const updated = current.filter(x => x !== name);
+                                    setNewSchedule({...newSchedule, ptAssignee: updated.join('/')});
+                                  }} style={{ cursor: 'pointer', marginLeft: '2px', color: '#64748b', fontWeight: '700' }}>×</span>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {modalType === 'briefing' && (
+                    <>
+                      <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>입찰마감</label><input type="date" value={newSchedule.bidDeadline} onChange={e => setNewSchedule({...newSchedule, bidDeadline: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
+                      <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>요청서류</label><input type="text" value={newSchedule.requiredDocs || ''} onChange={e => setNewSchedule({...newSchedule, requiredDocs: e.target.value})} placeholder="견적서, 시방서, 회사소개서 등" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>담당자 (복수 선택)</label>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
+                          {briefingAssigneeList.map(a => {
+                            const currentAssignees = (newSchedule.assignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                            const isSelected = currentAssignees.includes(a);
+                            return (
+                              <label key={a} style={{ display: 'flex', alignItems: 'center', padding: '5px 8px', borderRadius: '4px', cursor: 'pointer', background: isSelected ? '#dcfce7' : '#f8fafc', border: isSelected ? '2px solid #16a34a' : '1px solid #e2e8f0', fontSize: '11px' }}>
+                                <input type="checkbox" checked={isSelected} onChange={e => {
+                                  const current = (newSchedule.assignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                                  let updated;
+                                  if (e.target.checked) {
+                                    updated = [...current, a];
+                                  } else {
+                                    updated = current.filter(x => x !== a);
+                                  }
+                                  setNewSchedule({...newSchedule, assignee: updated.join('/')});
+                                }} style={{ display: 'none' }} />
+                                <span style={{ fontWeight: isSelected ? '600' : '400', color: isSelected ? '#16a34a' : '#64748b' }}>{a}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          <span style={{ fontSize: '11px', color: '#64748b' }}>기타:</span>
+                          <input type="text" value={customBriefingAssignee} onChange={e => setCustomBriefingAssignee(e.target.value)} placeholder="직접 입력" style={{ flex: 1, padding: '6px 8px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '11px' }} />
+                          <button type="button" onClick={() => {
+                            if (customBriefingAssignee.trim()) {
+                              const current = (newSchedule.assignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                              if (!current.includes(customBriefingAssignee.trim())) {
+                                setNewSchedule({...newSchedule, assignee: [...current, customBriefingAssignee.trim()].join('/')});
+                              }
+                              setCustomBriefingAssignee('');
+                            }
+                          }} style={{ padding: '6px 12px', borderRadius: '4px', border: 'none', background: '#16a34a', color: 'white', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>추가</button>
+                        </div>
+                        {newSchedule.assignee && (
+                          <div style={{ marginTop: '8px' }}>
+                            <span style={{ fontSize: '11px', color: '#64748b' }}>선택됨: </span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                              {(newSchedule.assignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x).map((name, idx) => (
+                                <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', background: '#dcfce7', color: '#166534', borderRadius: '4px', fontSize: '11px', fontWeight: '500' }}>
+                                  {name}
+                                  <span onClick={() => {
+                                    const current = (newSchedule.assignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                                    const updated = current.filter(x => x !== name);
+                                    setNewSchedule({...newSchedule, assignee: updated.join('/')});
+                                  }} style={{ cursor: 'pointer', marginLeft: '2px', color: '#16a34a', fontWeight: '700' }}>×</span>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {(modalType === 'personal' || modalType === 'vacation') && (
+                    <>
+                      <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>일정명</label><input type="text" value={newSchedule.title} onChange={e => setNewSchedule({...newSchedule, title: e.target.value})} placeholder={modalType === 'vacation' ? '휴가' : '본사 회의'} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>담당자 (복수 선택)</label>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                          {assigneeList.map(a => (
+                            <label key={a} style={{ display: 'flex', alignItems: 'center', padding: '5px 8px', borderRadius: '4px', cursor: 'pointer', background: newSchedule.assignees?.includes(a) ? (modalType === 'vacation' ? '#C1E8C1' : '#FFD4B8') : '#f8fafc', border: newSchedule.assignees?.includes(a) ? `2px solid ${modalType === 'vacation' ? '#8BC08B' : '#E8A888'}` : '1px solid #e2e8f0', fontSize: '11px' }}>
+                              <input type="checkbox" checked={newSchedule.assignees?.includes(a) || false} onChange={e => {
+                                const current = newSchedule.assignees || [];
+                                if (e.target.checked) {
+                                  setNewSchedule({...newSchedule, assignees: [...current, a]});
+                                } else {
+                                  setNewSchedule({...newSchedule, assignees: current.filter(x => x !== a)});
+                                }
+                              }} style={{ display: 'none' }} />
+                              <span style={{ fontWeight: newSchedule.assignees?.includes(a) ? '600' : '400', color: newSchedule.assignees?.includes(a) ? '#1e293b' : '#64748b' }}>{a}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      {modalType === 'personal' && <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>장소</label><input type="text" value={newSchedule.location} onChange={e => setNewSchedule({...newSchedule, location: e.target.value})} placeholder="본사 회의실" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>}
+                    </>
+                  )}
+
+                  {modalType === 'seminar' && (
+                    <>
+                      <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>일정명</label><input type="text" value={newSchedule.title} onChange={e => setNewSchedule({...newSchedule, title: e.target.value})} placeholder="세미나 제목" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>담당자 (복수 선택)</label>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                          {assigneeList.map(a => (
+                            <label key={a} style={{ display: 'flex', alignItems: 'center', padding: '5px 8px', borderRadius: '4px', cursor: 'pointer', background: newSchedule.assignees?.includes(a) ? '#E8D0F5' : '#f8fafc', border: newSchedule.assignees?.includes(a) ? '2px solid #D0B8E0' : '1px solid #e2e8f0', fontSize: '11px' }}>
+                              <input type="checkbox" checked={newSchedule.assignees?.includes(a) || false} onChange={e => {
+                                const current = newSchedule.assignees || [];
+                                if (e.target.checked) {
+                                  setNewSchedule({...newSchedule, assignees: [...current, a]});
+                                } else {
+                                  setNewSchedule({...newSchedule, assignees: current.filter(x => x !== a)});
+                                }
+                              }} style={{ display: 'none' }} />
+                              <span style={{ fontWeight: newSchedule.assignees?.includes(a) ? '600' : '400', color: newSchedule.assignees?.includes(a) ? '#1e293b' : '#64748b' }}>{a}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>장소</label><input type="text" value={newSchedule.location} onChange={e => setNewSchedule({...newSchedule, location: e.target.value})} placeholder="장소 입력" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box' }} /></div>
+                    </>
+                  )}
+
+                  <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>비고</label><textarea value={newSchedule.note} onChange={e => setNewSchedule({...newSchedule, note: e.target.value})} placeholder="연락처, 특이사항 등" rows={2} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', boxSizing: 'border-box', resize: 'vertical' }} /></div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                  <button onClick={() => setShowModal(false)} style={{ flex: 1, padding: '10px', border: '1px solid #e2e8f0', borderRadius: '6px', background: 'white', fontSize: '13px', fontWeight: '600', color: '#64748b', cursor: 'pointer' }}>취소</button>
+                  <button onClick={handleAddSchedule} style={{ flex: 1, padding: '10px', border: 'none', borderRadius: '6px', background: modalType === 'pt' ? '#A7D8F0' : modalType === 'briefing' ? '#A8E6CF' : modalType === 'seminar' ? '#E8D0F5' : modalType === 'asq' ? '#BDE0FE' : modalType === 'vacation' ? '#C1E8C1' : '#FFD4B8', fontSize: '13px', fontWeight: '600', color: '#1e293b', cursor: 'pointer' }}>등록하기</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 수정 모달 */}
+          {showEditModal && editingSchedule && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 1000, padding: '20px 0', overflowY: 'auto' }} onClick={() => setShowEditModal(false)}>
+              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '500px', maxWidth: '90%', margin: 'auto' }} onClick={e => e.stopPropagation()}>
+                
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+                  <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    일정 수정
+                    <select 
+                      value={editingSchedule.type} 
+                      onChange={e => setEditingSchedule({...editingSchedule, type: e.target.value})}
+                      style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '600', border: '1px solid #e2e8f0', background: '#f1f5f9', color: '#475569', cursor: 'pointer' }}
+                    >
+                      <option value="pt">PT</option>
+                      <option value="briefing">현설</option>
+                      <option value="seminar">세미나</option>
+                      <option value="asq">아.스.퀘</option>
+                      <option value="personal">개인</option>
+                      <option value="vacation">휴가</option>
+                      <option value="meeting">회의</option>
+                    </select>
+                  </h2>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {editingSchedule.type === 'briefing' && (
+                      <button onClick={() => { setBriefingExportData(editingSchedule); setShowBriefingExport(true); }} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#dbeafe', color: '#2563eb', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>이미지</button>
+                    )}
+                    <button onClick={handleDelete} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#fee2e2', color: '#dc2626', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>삭제</button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gap: '12px' }}>
+                  {editingSchedule.type === 'pt' && (
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>일정 타입</label>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        {[{ key: 'confirmed', label: '확정일' }, { key: 'monthOnly', label: '예정월' }, { key: 'pending', label: '미정' }].map(t => (
+                          <button key={t.key} type="button" onClick={() => setEditingSchedule({...editingSchedule, dateType: t.key})} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: editingSchedule.dateType === t.key ? '2px solid #2563eb' : '1px solid #e2e8f0', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: editingSchedule.dateType === t.key ? '#eff6ff' : 'white', color: editingSchedule.dateType === t.key ? '#2563eb' : '#64748b' }}>{t.label}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(editingSchedule.type === 'personal' || editingSchedule.type === 'vacation' || editingSchedule.type === 'briefing' || editingSchedule.type === 'seminar' || editingSchedule.type === 'asq' || editingSchedule.dateType === 'confirmed') && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>일정</label><input type="date" value={editingSchedule.date || ''} onChange={e => setEditingSchedule({...editingSchedule, date: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>시간</label>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <select 
+                            value={editingSchedule.time || ''} 
+                            onChange={e => setEditingSchedule({...editingSchedule, time: e.target.value})} 
+                            style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }}
+                          >
+                            <option value="">선택</option>
+                            {Array.from({length: 28}, (_, i) => {
+                              const hour = Math.floor(i / 2) + 8;
+                              const min = (i % 2) * 30;
+                              return `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+                            }).map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                          <input 
+                            type="text" 
+                            value={editingSchedule.time || ''} 
+                            onChange={e => setEditingSchedule({...editingSchedule, time: e.target.value})} 
+                            placeholder="00:00" 
+                            style={{ width: '70px', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box', textAlign: 'center' }} 
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {editingSchedule.type === 'pt' && editingSchedule.dateType === 'monthOnly' && (
+                    <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>예정월</label><input type="month" value={editingSchedule.expectedMonth || ''} onChange={e => setEditingSchedule({...editingSchedule, expectedMonth: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>
+                  )}
+
+                  {editingSchedule.type === 'pt' && editingSchedule.dateType === 'pending' && (
+                    <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>일정 메모</label><input type="text" value={editingSchedule.dateNote || ''} onChange={e => setEditingSchedule({...editingSchedule, dateNote: e.target.value})} placeholder="예: 조율중, 협의필요" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>
+                  )}
+
+                  {(editingSchedule.type === 'pt' || editingSchedule.type === 'briefing' || editingSchedule.type === 'asq') && (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>현장명</label><input type="text" value={editingSchedule.siteName || ''} onChange={e => setEditingSchedule({...editingSchedule, siteName: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>
+                        <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>공종</label><input type="text" value={editingSchedule.workType || ''} onChange={e => setEditingSchedule({...editingSchedule, workType: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>
+                      </div>
+                      <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>주소</label><input type="text" value={editingSchedule.address || ''} onChange={e => setEditingSchedule({...editingSchedule, address: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>
+                      {(editingSchedule.type === 'pt' || editingSchedule.type === 'asq') ? (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                          <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>요청사</label><input type="text" value={editingSchedule.requester || ''} onChange={e => setEditingSchedule({...editingSchedule, requester: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: editingSchedule.requester && !checkPourAgreement(editingSchedule.requester).isAgreement ? '1px solid #ef4444' : '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} />{editingSchedule.requester && (() => { const chk = checkPourAgreement(editingSchedule.requester); return !chk.isAgreement ? <div style={{ fontSize: '10px', color: '#ef4444', fontWeight: '600', marginTop: '2px' }}>POUR공법 협약업체 아닙니다, 확인바랍니다</div> : chk.grade ? <div style={{ fontSize: '10px', color: '#2563eb', fontWeight: '600', marginTop: '2px' }}>협약업체 ({chk.grade}등급)</div> : null; })()}</div>
+                          <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>참여인원</label><input type="text" value={editingSchedule.participants || ''} onChange={e => setEditingSchedule({...editingSchedule, participants: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>
+                        </div>
+                      ) : (
+                        <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>요청사</label><input type="text" value={editingSchedule.requester || ''} onChange={e => setEditingSchedule({...editingSchedule, requester: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: editingSchedule.requester && !checkPourAgreement(editingSchedule.requester).isAgreement ? '1px solid #ef4444' : '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} />{editingSchedule.requester && (() => { const chk = checkPourAgreement(editingSchedule.requester); return !chk.isAgreement ? <div style={{ fontSize: '10px', color: '#ef4444', fontWeight: '600', marginTop: '2px' }}>POUR공법 협약업체 아닙니다, 확인바랍니다</div> : chk.grade ? <div style={{ fontSize: '10px', color: '#2563eb', fontWeight: '600', marginTop: '2px' }}>협약업체 ({chk.grade}등급)</div> : null; })()}</div>
+                      )}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        {(editingSchedule.type === 'pt' || editingSchedule.type === 'asq') && <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>경쟁사</label><input type="text" value={editingSchedule.competitor || ''} onChange={e => setEditingSchedule({...editingSchedule, competitor: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>}
+                        {editingSchedule.type === 'pt' && <div>
+                          <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>공고문 공법</label>
+                          <input type="text" value={editingSchedule.announcementMethods || ''} onChange={e => setEditingSchedule({...editingSchedule, announcementMethods: e.target.value})} placeholder="POUR, 4A, DO" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} />
+                          {editingSchedule.announcementMethods && (() => {
+                            const methods = editingSchedule.announcementMethods.split(',').map(m => m.trim()).filter(Boolean);
+                            const autoResult = judgeResult(methods);
+                            if (!autoResult) return null;
+                            const rColor = autoResult === '승' ? '#3b82f6' : autoResult === '무' ? '#f59e0b' : '#ef4444';
+                            const rLabel = autoResult === '승' ? '승리' : autoResult === '무' ? '무승부' : '패배';
+                            return <div style={{ fontSize: '10px', fontWeight: '600', color: rColor, marginTop: '3px' }}>자동판정: {rLabel}</div>;
+                          })()}
+                        </div>}
+                        {editingSchedule.type === 'briefing' && <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>입찰마감</label><input type="date" value={editingSchedule.bidDeadline || ''} onChange={e => setEditingSchedule({...editingSchedule, bidDeadline: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>}
+                        {editingSchedule.type === 'briefing' && <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>요청서류</label><input type="text" value={editingSchedule.requiredDocs || ''} onChange={e => setEditingSchedule({...editingSchedule, requiredDocs: e.target.value})} placeholder="견적서, 시방서 등" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>}
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>{editingSchedule.type === 'pt' ? 'PT담당자' : editingSchedule.type === 'asq' ? '담당자' : '담당자'} (복수 선택 가능)</label>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                          {((editingSchedule.type === 'pt' || editingSchedule.type === 'asq') ? assigneeList : briefingAssigneeList).map(a => {
+                            const currentAssignees = (editingSchedule.type === 'pt' || editingSchedule.type === 'asq')
+                              ? (editingSchedule.ptAssignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x)
+                              : (editingSchedule.assignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                            const isSelected = currentAssignees.includes(a);
+                            const bgColor = editingSchedule.type === 'asq' ? '#BDE0FE' : editingSchedule.type === 'pt' ? '#A7D8F0' : '#A8E6CF';
+                            return (
+                              <label key={a} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', background: isSelected ? bgColor : '#f8fafc', border: isSelected ? `2px solid ${bgColor}` : '1px solid #e2e8f0', fontSize: '12px' }}>
+                                <input type="checkbox" checked={isSelected} onChange={e => {
+                                  const field = (editingSchedule.type === 'pt' || editingSchedule.type === 'asq') ? 'ptAssignee' : 'assignee';
+                                  const current = (editingSchedule[field] || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                                  let updated;
+                                  if (e.target.checked) {
+                                    updated = [...current, a];
+                                  } else {
+                                    updated = current.filter(x => x !== a);
+                                  }
+                                  setEditingSchedule({...editingSchedule, [field]: updated.join('/')});
+                                }} style={{ display: 'none' }} />
+                                <span style={{ fontWeight: isSelected ? '600' : '400', color: isSelected ? '#1e293b' : '#64748b' }}>{a}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        {editingSchedule.type === 'briefing' && (
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '12px', color: '#64748b' }}>기타:</span>
+                            <input type="text" value={customBriefingAssignee} onChange={e => setCustomBriefingAssignee(e.target.value)} placeholder="직접 입력" style={{ flex: 1, padding: '8px 10px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px' }} />
+                            <button type="button" onClick={() => {
+                              if (customBriefingAssignee.trim()) {
+                                const current = (editingSchedule.assignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                                if (!current.includes(customBriefingAssignee.trim())) {
+                                  setEditingSchedule({...editingSchedule, assignee: [...current, customBriefingAssignee.trim()].join('/')});
+                                }
+                                setCustomBriefingAssignee('');
+                              }
+                            }} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#A8E6CF', color: '#1e293b', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>추가</button>
+                          </div>
+                        )}
+                        {editingSchedule.type === 'briefing' && editingSchedule.assignee && (
+                          <div style={{ marginTop: '4px' }}>
+                            <span style={{ fontSize: '12px', color: '#64748b' }}>선택됨: </span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                              {(editingSchedule.assignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x).map((name, idx) => (
+                                <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', background: '#A8E6CF', color: '#1e293b', borderRadius: '4px', fontSize: '12px', fontWeight: '500' }}>
+                                  {name}
+                                  <span onClick={() => {
+                                    const current = (editingSchedule.assignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                                    const updated = current.filter(x => x !== name);
+                                    setEditingSchedule({...editingSchedule, assignee: updated.join('/')});
+                                  }} style={{ cursor: 'pointer', marginLeft: '2px', color: '#64748b', fontWeight: '700' }}>×</span>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {(editingSchedule.type === 'pt' || editingSchedule.type === 'asq') && (
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '12px', color: '#64748b' }}>기타:</span>
+                            <input type="text" value={customPtAssignee} onChange={e => setCustomPtAssignee(e.target.value)} placeholder="직접 입력" style={{ flex: 1, padding: '8px 10px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px' }} />
+                            <button type="button" onClick={() => {
+                              if (customPtAssignee.trim()) {
+                                const current = (editingSchedule.ptAssignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                                if (!current.includes(customPtAssignee.trim())) {
+                                  setEditingSchedule({...editingSchedule, ptAssignee: [...current, customPtAssignee.trim()].join('/')});
+                                }
+                                setCustomPtAssignee('');
+                              }
+                            }} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: editingSchedule.type === 'asq' ? '#BDE0FE' : '#A7D8F0', color: '#1e293b', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>추가</button>
+                          </div>
+                        )}
+                        {(editingSchedule.type === 'pt' || editingSchedule.type === 'asq') && editingSchedule.ptAssignee && (
+                          <div style={{ marginTop: '4px' }}>
+                            <span style={{ fontSize: '12px', color: '#64748b' }}>선택됨: </span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                              {(editingSchedule.ptAssignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x).map((name, idx) => (
+                                <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', background: editingSchedule.type === 'asq' ? '#BDE0FE' : '#A7D8F0', color: '#1e293b', borderRadius: '4px', fontSize: '12px', fontWeight: '500' }}>
+                                  {name}
+                                  <span onClick={() => {
+                                    const current = (editingSchedule.ptAssignee || '').split(/[\/,]/).map(x => x.trim()).filter(x => x);
+                                    const updated = current.filter(x => x !== name);
+                                    setEditingSchedule({...editingSchedule, ptAssignee: updated.join('/')});
+                                  }} style={{ cursor: 'pointer', marginLeft: '2px', color: '#64748b', fontWeight: '700' }}>×</span>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {(editingSchedule.type === 'personal' || editingSchedule.type === 'vacation') && (
+                    <>
+                      <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>일정명</label><input type="text" value={editingSchedule.title || ''} onChange={e => setEditingSchedule({...editingSchedule, title: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>담당자</label>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                          {assigneeList.map(a => (
+                            <label key={a} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', background: editingSchedule.assignees?.includes(a) ? (editingSchedule.type === 'vacation' ? '#C1E8C1' : '#FFD4B8') : '#f8fafc', border: editingSchedule.assignees?.includes(a) ? `2px solid ${editingSchedule.type === 'vacation' ? '#C1E8C1' : '#FFD4B8'}` : '1px solid #e2e8f0', fontSize: '12px' }}>
+                              <input type="checkbox" checked={editingSchedule.assignees?.includes(a) || false} onChange={e => {
+                                const current = editingSchedule.assignees || [];
+                                if (e.target.checked) { setEditingSchedule({...editingSchedule, assignees: [...current, a]}); } 
+                                else { setEditingSchedule({...editingSchedule, assignees: current.filter(x => x !== a)}); }
+                              }} style={{ display: 'none' }} />
+                              <span style={{ fontWeight: editingSchedule.assignees?.includes(a) ? '600' : '400', color: editingSchedule.assignees?.includes(a) ? '#1e293b' : '#64748b' }}>{a}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      {editingSchedule.type === 'personal' && <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>장소</label><input type="text" value={editingSchedule.location || ''} onChange={e => setEditingSchedule({...editingSchedule, location: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>}
+                    </>
+                  )}
+
+                  {editingSchedule.type === 'seminar' && (
+                    <>
+                      <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>일정명</label><input type="text" value={editingSchedule.title || ''} onChange={e => setEditingSchedule({...editingSchedule, title: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>담당자</label>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                          {assigneeList.map(a => (
+                            <label key={a} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', background: editingSchedule.assignees?.includes(a) ? '#E8D0F5' : '#f8fafc', border: editingSchedule.assignees?.includes(a) ? '2px solid #E8D0F5' : '1px solid #e2e8f0', fontSize: '12px' }}>
+                              <input type="checkbox" checked={editingSchedule.assignees?.includes(a) || false} onChange={e => {
+                                const current = editingSchedule.assignees || [];
+                                if (e.target.checked) { setEditingSchedule({...editingSchedule, assignees: [...current, a]}); } 
+                                else { setEditingSchedule({...editingSchedule, assignees: current.filter(x => x !== a)}); }
+                              }} style={{ display: 'none' }} />
+                              <span style={{ fontWeight: editingSchedule.assignees?.includes(a) ? '600' : '400', color: editingSchedule.assignees?.includes(a) ? '#1e293b' : '#64748b' }}>{a}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>장소</label><input type="text" value={editingSchedule.location || ''} onChange={e => setEditingSchedule({...editingSchedule, location: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} /></div>
+                    </>
+                  )}
+
+                  <div><label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>비고</label><textarea value={editingSchedule.note || ''} onChange={e => setEditingSchedule({...editingSchedule, note: e.target.value})} placeholder="연락처, 특이사항 등" rows={2} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box', resize: 'vertical' }} /></div>
+                  
+                  {/* 첨부파일 */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>첨부파일</label>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '8px' }}>
+                      <label style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
+                        파일 선택
+                        <input type="file" accept=".pdf,.doc,.docx,.hwp,.jpg,.jpeg,.png" onChange={e => handleFileUpload(e, true)} style={{ display: 'none' }} />
+                      </label>
+                      {editingSchedule?.attachmentUrl ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '12px', color: '#1e293b', fontWeight: '500' }}>{editingSchedule.attachmentName || '첨부파일'}</span>
+                          <button type="button" onClick={() => setEditingSchedule({...editingSchedule, attachmentUrl: '', attachmentName: ''})} style={{ padding: '4px 8px', borderRadius: '4px', border: 'none', background: '#fee2e2', color: '#dc2626', fontSize: '11px', cursor: 'pointer' }}>삭제</button>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: '12px', color: '#94a3b8' }}>파일 없음</span>
+                      )}
+                    </div>
+                    {/* 미리보기 */}
+                    {editingSchedule?.attachmentUrl && (
+                      <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', background: '#f8fafc' }}>
+                        {editingSchedule.attachmentName?.match(/\.(jpg|jpeg|png|gif)$/i) ? (
+                          <img src={editingSchedule.attachmentUrl} alt="첨부파일" style={{ width: '100%', maxHeight: '300px', objectFit: 'contain' }} />
+                        ) : editingSchedule.attachmentName?.match(/\.pdf$/i) ? (
+                          isMobile ? (
+                            <div style={{ padding: '20px', textAlign: 'center' }}>
+                              <a href={editingSchedule.attachmentUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', padding: '12px 24px', background: '#2563eb', color: 'white', borderRadius: '8px', textDecoration: 'none', fontSize: '14px', fontWeight: '600' }}>PDF 열기</a>
+                            </div>
+                          ) : (
+                            <iframe src={editingSchedule.attachmentUrl} style={{ width: '100%', height: '400px', border: 'none' }} title="첨부파일" />
+                          )
+                        ) : (
+                          <div style={{ padding: '20px', textAlign: 'center' }}>
+                            <a href={editingSchedule.attachmentUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', textDecoration: 'underline', fontSize: '13px' }}>파일 다운로드</a>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
+                  <button onClick={() => setShowEditModal(false)} style={{ flex: 1, padding: '12px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', fontWeight: '600', color: '#64748b', cursor: 'pointer' }}>취소</button>
+                  <button onClick={handleSaveEdit} style={{ flex: 1, padding: '12px', border: 'none', borderRadius: '8px', background: '#2563eb', fontSize: '14px', fontWeight: '600', color: 'white', cursor: 'pointer' }}>저장</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 중복 관리 모달 */}
+          {showDuplicateModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowDuplicateModal(false)}>
+              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '600px', maxWidth: '90%', maxHeight: '80vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+                <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '20px' }}>중복 일정 관리 ({duplicateSchedules.length}건)</h2>
+                <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '16px' }}>같은 날짜 + 같은 현장명 + 같은 타입의 일정이 중복으로 감지되었습니다.</p>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {duplicateSchedules.map(s => {
+                    const ts = getTypeStyle(s.type);
+                    return (
+                      <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '14px', background: '#fef2f2', borderRadius: '10px', border: '1px solid #fecaca' }}>
+                        <div style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', background: ts.bg, color: ts.color }}>{ts.label}</div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b' }}>{s.siteName || s.title}</div>
+                          <div style={{ fontSize: '12px', color: '#64748b' }}>{s.date || '날짜 미정'} {s.time && `/ ${s.time}`}</div>
+                          <div style={{ fontSize: '10px', color: '#94a3b8' }}>ID: {s.id}</div>
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#2563eb', fontWeight: '600' }}>{s.ptAssignee || s.assignee || '-'}</div>
+                        <button onClick={() => handleDeleteDuplicate(s)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#dc2626', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>삭제</button>
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                {duplicateSchedules.length === 0 && (
+                  <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
+                    <div style={{ fontSize: '32px', marginBottom: '8px' }}>완료</div>
+                    <p>중복된 일정이 없습니다!</p>
+                  </div>
+                )}
+                
+                <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
+                  {duplicateSchedules.length > 0 && (
+                    <button onClick={() => {
+                      if (!confirm(`중복된 ${Math.floor(duplicateSchedules.length / 2)}건을 자동 정리하시겠습니까?\n(각 중복 쌍에서 하나씩 삭제됩니다)`)) return;
+                      
+                      // 중복 그룹별로 하나만 남기고 삭제
+                      const seen = new Map();
+                      const toDelete = [];
+                      
+                      allSchedules.forEach(s => {
+                        const key = `${s.date || ''}_${s.siteName || s.title || ''}_${s.type}`;
+                        if (seen.has(key)) {
+                          toDelete.push(s);
+                        } else {
+                          seen.set(key, s);
+                        }
+                      });
+                      
+                      toDelete.forEach(s => {
+                        if (s.type === 'pt') deletePtSchedule(s.id);
+                        else if (s.type === 'briefing') deleteBriefingSchedule(s.id);
+                        else if (s.type === 'personal') deletePersonalSchedule(s.id);
+                      });
+                      
+                      alert(`${toDelete.length}건 삭제 완료!`);
+                      setShowDuplicateModal(false);
+                    }} style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: '#dc2626', fontSize: '13px', fontWeight: '600', color: 'white', cursor: 'pointer' }}>중복 자동 정리</button>
+                  )}
+                  <button onClick={() => setShowDuplicateModal(false)} style={{ padding: '10px 20px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', fontSize: '13px', fontWeight: '600', color: '#64748b', cursor: 'pointer', marginLeft: 'auto' }}>닫기</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 접속 시 일정 알림 팝업 */}
+          {showScheduleAlert && myUpcomingSchedules.length > 0 && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001 }}>
+              <div style={{ background: 'white', borderRadius: '16px', padding: '20px', width: '400px', maxWidth: '90%', maxHeight: '80vh', overflow: 'auto' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                  <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>일정 알림</h2>
+                  <button onClick={() => setShowScheduleAlert(false)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#94a3b8' }}>✕</button>
+                </div>
+                
+                <div style={{ marginBottom: '16px' }}>
+                  {/* 날짜별로 그룹핑 - 동적으로 고유 라벨 추출 */}
+                  {[...new Set(myUpcomingSchedules.map(s => s.dateLabel))].map(label => {
+                    const items = myUpcomingSchedules.filter(s => s.dateLabel === label);
+                    if (items.length === 0) return null;
+                    const isToday = label.startsWith('오늘');
+                    const isWeekend = label.includes('주말') || label.includes('토요일') || label.includes('일요일');
+                    return (
+                      <div key={label} style={{ marginBottom: '12px' }}>
+                        <div style={{ 
+                          fontSize: '13px', 
+                          fontWeight: '700', 
+                          color: isToday ? '#dc2626' : isWeekend ? '#7c3aed' : '#2563eb', 
+                          marginBottom: '8px', 
+                          padding: '6px 10px', 
+                          background: isToday ? '#fef2f2' : isWeekend ? '#f5f3ff' : '#eff6ff', 
+                          borderRadius: '6px' 
+                        }}>
+                          {isToday ? '' : isWeekend ? '' : ''} {label} ({items.length}건)
+                        </div>
+                        {items.map((s, i) => (
+                          <div key={i} style={{ 
+                            padding: '10px 12px', 
+                            background: isToday ? '#fff7ed' : isWeekend ? '#faf5ff' : '#f8fafc', 
+                            borderRadius: '8px', 
+                            marginBottom: '6px', 
+                            border: isToday ? '1px solid #fed7aa' : isWeekend ? '1px solid #e9d5ff' : '1px solid #e2e8f0' 
+                          }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <span style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b' }}>{s.siteName || s.title}</span>
+                              <span style={{ fontSize: '12px', fontWeight: '600', color: isToday ? '#ea580c' : isWeekend ? '#7c3aed' : '#2563eb' }}>{s.time || ''}</span>
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#64748b' }}>
+                              <span style={{ padding: '2px 6px', borderRadius: '4px', background: s.type === 'pt' ? '#dbeafe' : '#dcfce7', color: s.type === 'pt' ? '#1d4ed8' : '#16a34a', marginRight: '6px' }}>{s.type === 'pt' ? 'PT' : '현설'}</span>
+                              {s.workType || s.location || ''}
+                            </div>
+                            {/* 실제 일정 날짜 표시 */}
+                            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>
+                              {s.date}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button onClick={dismissScheduleAlert} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#64748b', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>오늘 다시 알리지 않음</button>
+                  <button onClick={() => setShowScheduleAlert(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>확인</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 로그인 모달 */}
+          {showLoginModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowLoginModal(false)}>
+              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '360px', maxWidth: '90%' }} onClick={e => e.stopPropagation()}>
+                <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '20px', textAlign: 'center' }}>로그인</h2>
+                
+                {loginError && (
+                  <div style={{ padding: '10px', background: '#fee2e2', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', color: '#dc2626', textAlign: 'center' }}>{loginError}</div>
+                )}
+                
+                <div style={{ display: 'grid', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>아이디</label>
+                    <input type="text" value={loginId} onChange={e => setLoginId(e.target.value)} placeholder="아이디 입력" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', boxSizing: 'border-box' }} onKeyPress={e => e.key === 'Enter' && handleLogin()} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>비밀번호</label>
+                    <input type="password" value={loginPw} onChange={e => setLoginPw(e.target.value)} placeholder="비밀번호 입력" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', boxSizing: 'border-box' }} onKeyPress={e => e.key === 'Enter' && handleLogin()} />
+                  </div>
+                </div>
+                
+                <button onClick={handleLogin} style={{ width: '100%', marginTop: '20px', padding: '14px', border: 'none', borderRadius: '8px', background: '#2563eb', color: 'white', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>로그인</button>
+                
+                <p style={{ marginTop: '16px', fontSize: '12px', color: '#94a3b8', textAlign: 'center' }}>계정 정보는 관리자에게 문의하세요.</p>
+              </div>
+            </div>
+          )}
+
+          {/* 비밀번호 관리 모달 */}
+          {showPasswordModal && currentUser?.canManagePasswords && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowPasswordModal(false)}>
+              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '480px', maxWidth: '90%', maxHeight: '80vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+                <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '8px' }}>비밀번호 관리</h2>
+                <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px' }}>각 사용자의 비밀번호를 변경할 수 있습니다.</p>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {Object.entries(userAccounts).map(([id, account]) => (
+                    <div key={id} style={{ padding: '14px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b' }}>{account.name}</span>
+                          <span style={{ fontSize: '11px', color: '#94a3b8', background: '#e2e8f0', padding: '2px 8px', borderRadius: '4px' }}>ID: {id}</span>
+                          {account.isAdmin && <span style={{ fontSize: '10px', color: 'white', background: '#2563eb', padding: '2px 6px', borderRadius: '4px' }}>관리자</span>}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ display: 'block', fontSize: '11px', color: '#64748b', marginBottom: '4px' }}>현재 비밀번호</label>
+                          <input type="text" value={account.password} disabled style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '13px', background: '#f1f5f9', color: '#64748b', boxSizing: 'border-box' }} />
+                        </div>
+                        <div style={{ width: '20px', textAlign: 'center', paddingTop: '18px', color: '#94a3b8' }}>→</div>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ display: 'block', fontSize: '11px', color: '#2563eb', marginBottom: '4px' }}>새 비밀번호</label>
+                          <input 
+                            type="text" 
+                            value={passwordChanges[id] || ''} 
+                            onChange={e => setPasswordChanges({...passwordChanges, [id]: e.target.value})}
+                            placeholder="변경할 비밀번호"
+                            style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #2563eb', fontSize: '13px', boxSizing: 'border-box' }} 
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                
+                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                  <button onClick={() => { setShowPasswordModal(false); setPasswordChanges({}); }} style={{ flex: 1, padding: '12px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', fontWeight: '600', color: '#64748b', cursor: 'pointer' }}>취소</button>
+                  <button onClick={handleSavePasswords} style={{ flex: 1, padding: '12px', border: 'none', borderRadius: '8px', background: '#2563eb', fontSize: '14px', fontWeight: '600', color: 'white', cursor: 'pointer' }}>비밀번호 저장</button>
+                </div>
+                
+                <div style={{ marginTop: '16px', padding: '12px', background: '#dcfce7', borderRadius: '8px', fontSize: '12px', color: '#166534' }}>
+                  Firebase DB에 저장되어 영구 보존됩니다.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 내 비밀번호 변경 모달 */}
+          {showMyPasswordModal && currentUser && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => { setShowMyPasswordModal(false); setPasswordError(''); setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); }}>
+              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '400px', maxWidth: '90%' }} onClick={e => e.stopPropagation()}>
+                <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '8px' }}>비밀번호 변경</h2>
+                <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px' }}>{currentUser.name}님의 비밀번호를 변경합니다.</p>
+                
+                {passwordError && (
+                  <div style={{ padding: '10px', background: '#fee2e2', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', color: '#dc2626', textAlign: 'center' }}>{passwordError}</div>
+                )}
+                
+                <div style={{ display: 'grid', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>현재 비밀번호</label>
+                    <input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} placeholder="현재 비밀번호 입력" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>새 비밀번호</label>
+                    <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="새 비밀번호 (4자 이상)" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>새 비밀번호 확인</label>
+                    <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="새 비밀번호 다시 입력" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', boxSizing: 'border-box' }} onKeyPress={e => e.key === 'Enter' && handleChangeMyPassword()} />
+                  </div>
+                </div>
+                
+                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                  <button onClick={() => { setShowMyPasswordModal(false); setPasswordError(''); setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); }} style={{ flex: 1, padding: '12px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', fontWeight: '600', color: '#64748b', cursor: 'pointer' }}>취소</button>
+                  <button onClick={handleChangeMyPassword} style={{ flex: 1, padding: '12px', border: 'none', borderRadius: '8px', background: '#2563eb', fontSize: '14px', fontWeight: '600', color: 'white', cursor: 'pointer' }}>변경하기</button>
+                </div>
+                
+                <p style={{ marginTop: '16px', fontSize: '12px', color: '#94a3b8', textAlign: 'center' }}>비밀번호를 잊어버린 경우 관리자에게 문의하세요.</p>
+              </div>
+            </div>
+          )}
+
+          {/* 현설 이미지 내보내기 모달 */}
+          {showBriefingExport && briefingExportData && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001 }} onClick={() => setShowBriefingExport(false)}>
+              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '500px', maxWidth: '90%' }} onClick={e => e.stopPropagation()}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0 }}>현설 이미지 내보내기</h2>
+                  <button onClick={() => {
+                    const element = document.getElementById('briefing-export-card');
+                    if (!element) return;
+                    html2canvas(element, { backgroundColor: '#ffffff', scale: 2 }).then(canvas => {
+                      const link = document.createElement('a');
+                      link.download = `현설_${briefingExportData.siteName || '일정'}_${briefingExportData.date || 'unknown'}.png`;
+                      link.href = canvas.toDataURL('image/png');
+                      link.click();
+                    });
+                  }} style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>저장</button>
+                </div>
+                
+                {/* 내보내기용 카드 */}
+                <div id="briefing-export-card" style={{ background: 'white', padding: '20px', borderRadius: '8px' }}>
+                  {/* 헤더 - 현장명 */}
+                  <div style={{ background: '#1e40af', color: 'white', padding: '14px 20px', textAlign: 'center', fontSize: '18px', fontWeight: '700', borderRadius: '4px 4px 0 0' }}>
+                    {briefingExportData.siteName}
+                  </div>
+                  
+                  {/* 테이블 */}
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                    <tbody>
+                      <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
+                        <td style={{ padding: '12px 16px', background: '#f8fafc', fontWeight: '600', color: '#475569', width: '100px', borderRight: '1px solid #e2e8f0' }}>공사명</td>
+                        <td style={{ padding: '12px 16px', color: '#1e293b' }}>{briefingExportData.workType || '-'}</td>
+                      </tr>
+                      <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
+                        <td style={{ padding: '12px 16px', background: '#f8fafc', fontWeight: '600', color: '#dc2626', width: '100px', borderRight: '1px solid #e2e8f0' }}>★ 소재지</td>
+                        <td style={{ padding: '12px 16px', color: '#1e293b' }}>{briefingExportData.address || '-'}</td>
+                      </tr>
+                      <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
+                        <td style={{ padding: '12px 16px', background: '#fef3c7', fontWeight: '600', color: '#92400e', width: '100px', borderRight: '1px solid #e2e8f0' }}>일시</td>
+                        <td style={{ padding: '12px 16px', color: '#1e293b', fontWeight: '600' }}>
+                          {briefingExportData.date ? `${briefingExportData.date.replace(/-/g, '년 ').replace(/년 (\d+)$/, '월 $1일')} (${getDayOfWeekFromStr(briefingExportData.date)})` : '-'}
+                          {briefingExportData.time && ` ${formatTimeWithAmPm(briefingExportData.time).replace('오전 ', '').replace('오후 ', '')}시`}
+                        </td>
+                      </tr>
+                      <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
+                        <td style={{ padding: '12px 16px', background: '#f8fafc', fontWeight: '600', color: '#475569', width: '100px', borderRight: '1px solid #e2e8f0' }}>제출서류</td>
+                        <td style={{ padding: '12px 16px', color: '#1e293b' }}>{briefingExportData.requiredDocs || '0'}</td>
+                      </tr>
+                      {briefingExportData.bidDeadline && (
+                        <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
+                          <td style={{ padding: '12px 16px', background: '#fee2e2', fontWeight: '600', color: '#dc2626', width: '100px', borderRight: '1px solid #e2e8f0' }}>입찰마감</td>
+                          <td style={{ padding: '12px 16px', color: '#dc2626', fontWeight: '600' }}>{briefingExportData.bidDeadline}</td>
+                        </tr>
+                      )}
+                      {briefingExportData.assignee && (
+                        <tr>
+                          <td style={{ padding: '12px 16px', background: '#dbeafe', fontWeight: '600', color: '#1d4ed8', width: '100px', borderRight: '1px solid #e2e8f0' }}>담당자</td>
+                          <td style={{ padding: '12px 16px', color: '#1d4ed8', fontWeight: '600' }}>{briefingExportData.assignee}</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                
+                <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'center' }}>
+                  <button onClick={() => setShowBriefingExport(false)} style={{ padding: '10px 30px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', fontSize: '14px', fontWeight: '600', color: '#64748b', cursor: 'pointer' }}>닫기</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 단가표 모달 */}
+          {showPriceTable && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 1001, padding: '20px 0', overflowY: 'auto' }} onClick={() => setShowPriceTable(false)}>
+              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '700px', maxWidth: '95%', margin: 'auto' }} onClick={e => e.stopPropagation()}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0 }}>지역별 단가표</h2>
+                  <button onClick={() => setShowPriceTable(false)} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', fontSize: '13px', color: '#64748b', cursor: 'pointer' }}>닫기</button>
+                </div>
+                <div style={{ marginBottom: '16px', fontSize: '12px', color: '#dc2626', fontWeight: '600' }}>※ 2026년 4월 1일부터 신규 단가 적용</div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', fontSize: '12px' }}>
+                  {/* 서울권 */}
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                    <div style={{ background: '#475569', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>서울권 - 80,000원</div>
+                    <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px', fontSize: '11px' }}>
+                      {['강남구', '서초구', '송파구', '강동구', '강북구', '도봉구', '노원구', '강서구', '양천구', '동대문구', '중랑구', '광진구', '성동구', '마포구', '용산구', '종로구', '영등포구', '동작구', '관악구', '구로구', '금천구', '은평구', '서대문구'].map(r => (
+                        <span key={r} style={{ padding: '4px', background: '#f1f5f9', borderRadius: '4px', textAlign: 'center' }}>{r}</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 인천권 */}
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                    <div style={{ background: '#64748b', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>인천권 - 110,000원</div>
+                    <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px', fontSize: '11px' }}>
+                      {['계양구', '남동구', '미추홀구', '부평구', '서구', '연수구'].map(r => (
+                        <span key={r} style={{ padding: '4px', background: '#f1f5f9', borderRadius: '4px', textAlign: 'center' }}>{r}</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 경기권 1분류 */}
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                    <div style={{ background: '#475569', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>경기권 1분류 - 70,000원</div>
+                    <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px', fontSize: '11px' }}>
+                      {['군포시', '안산시', '광주시', '성남시', '광명시', '시흥시', '용인시', '수원시', '화성시', '안양시', '의왕시'].map(r => (
+                        <span key={r} style={{ padding: '4px', background: '#f1f5f9', borderRadius: '4px', textAlign: 'center' }}>{r}</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 경기권 2분류 */}
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                    <div style={{ background: '#64748b', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>경기권 2분류 - 80,000원</div>
+                    <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px', fontSize: '11px' }}>
+                      {['하남시', '이천시', '여주시', '평택시', '안성시', '오산시', '남양주시', '구리시', '부천시'].map(r => (
+                        <span key={r} style={{ padding: '4px', background: '#f1f5f9', borderRadius: '4px', textAlign: 'center' }}>{r}</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 경기권 3분류 */}
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                    <div style={{ background: '#64748b', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>경기권 3분류 - 110,000원</div>
+                    <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px', fontSize: '11px' }}>
+                      {['가평군', '양평군', '고양시', '파주시', '김포시', '의정부시', '포천시', '동두천시', '양주시'].map(r => (
+                        <span key={r} style={{ padding: '4px', background: '#f1f5f9', borderRadius: '4px', textAlign: 'center' }}>{r}</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 충청권 */}
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                    <div style={{ background: '#334155', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>충청권 - 120,000원</div>
+                    <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px', fontSize: '11px' }}>
+                      {['공주시', '계룡시', '당진시', '서산시', '예산군', '홍성군', '증평군', '청주시', '충주시', '제천시'].map(r => (
+                        <span key={r} style={{ padding: '4px', background: '#f1f5f9', borderRadius: '4px', textAlign: 'center' }}>{r}</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 충청권 (일부) - 90,000원 */}
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                    <div style={{ background: '#475569', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>충청권 (일부) - 90,000원</div>
+                    <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px', fontSize: '11px' }}>
+                      {['천안시', '음성군', '아산시'].map(r => (
+                        <span key={r} style={{ padding: '4px', background: '#f1f5f9', borderRadius: '4px', textAlign: 'center' }}>{r}</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 강원권 */}
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                    <div style={{ background: '#334155', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>강원권 - 협의 (원주 130,000원)</div>
+                    <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px', fontSize: '11px' }}>
+                      {['강릉시', '동해시', '삼척시', '속초시', '원주시', '춘천시', '태백시', '평창군'].map(r => (
+                        <span key={r} style={{ padding: '4px', background: '#f1f5f9', borderRadius: '4px', textAlign: 'center' }}>{r}</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 대전/전라권 인접 - 추후논의 */}
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                    <div style={{ background: '#94a3b8', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>대전/전라권 인접 - 추후논의</div>
+                    <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px', fontSize: '11px' }}>
+                      {['논산시', '보령시', '부여군', '대전', '세종', '유성구'].map(r => (
+                        <span key={r} style={{ padding: '4px', background: '#f1f5f9', borderRadius: '4px', textAlign: 'center' }}>{r}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '16px', padding: '12px', background: '#f8fafc', borderRadius: '8px', fontSize: '12px', color: '#475569' }}>
+                  <div style={{ fontWeight: '600', marginBottom: '6px' }}>구역별 요약 (2026.04.01~)</div>
+                  <div>▣ 서울권 = <strong>80,000원</strong></div>
+                  <div>▣ 경기권 1분류 = <strong>70,000원</strong> / 2분류 = <strong>80,000원</strong> / 3분류 = <strong>110,000원</strong></div>
+                  <div>▣ 충청권 = <strong>120,000원</strong> / 충청권 (일부 - 천안/음성/아산) = <strong>90,000원</strong></div>
+                  <div>▣ 인천권 = <strong>110,000원</strong></div>
+                  <div>▣ 강원권 = <strong>협의</strong> (원주 = <strong>130,000원</strong>)</div>
+                  <div>▣ 대전/전라권 인접 = <strong>추후논의</strong></div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 회의 등록 모달 */}
+          {showMeetingModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001, padding: '20px' }} onClick={() => setShowMeetingModal(false)}>
+              <div style={{ background: 'white', borderRadius: '16px', width: '500px', maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+                <div style={{ background: '#4b5563', padding: '20px 24px', borderRadius: '16px 16px 0 0', color: 'white' }}>
+                  <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0 }}> 새 회의 등록</h2>
+                </div>
+                <div style={{ padding: '20px 24px' }}>
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>회의 제목 *</label>
+                    <input type="text" value={newMeeting.title} onChange={e => setNewMeeting({...newMeeting, title: e.target.value})} placeholder="예: 12월 정기 영업회의" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px' }} />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>날짜 *</label>
+                      <input type="date" value={newMeeting.date} onChange={e => setNewMeeting({...newMeeting, date: e.target.value})} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px' }} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>시간</label>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <select 
+                          value={newMeeting.time || ''} 
+                          onChange={e => setNewMeeting({...newMeeting, time: e.target.value})} 
+                          style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px' }}
+                        >
+                          <option value="">선택</option>
+                          {Array.from({length: 28}, (_, i) => {
+                            const hour = Math.floor(i / 2) + 8;
+                            const min = (i % 2) * 30;
+                            return `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+                          }).map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                        <input 
+                          type="text" 
+                          value={newMeeting.time || ''} 
+                          onChange={e => setNewMeeting({...newMeeting, time: e.target.value})} 
+                          placeholder="00:00" 
+                          style={{ width: '80px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', textAlign: 'center' }} 
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>장소</label>
+                    <input type="text" value={newMeeting.location} onChange={e => setNewMeeting({...newMeeting, location: e.target.value})} placeholder="예: 본사 회의실" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px' }} />
+                  </div>
+                  <div style={{ marginBottom: '20px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>참석 대상</label>
+                    {(() => {
+                      // 중복 이름 제거 (name 기준)
+                      const uniqueUsers = [];
+                      const seenNamesList = [];
+                      Object.values(userAccounts).filter(u => !u.isAdmin || u.name !== '관리자').forEach(user => {
+                        if (!seenNamesList.includes(user.name)) {
+                          seenNamesList.push(user.name);
+                          uniqueUsers.push(user);
+                        }
+                      });
+                      const allNames = uniqueUsers.map(u => u.name);
+                      const allSelected = allNames.every(name => newMeeting.attendees.includes(name));
+                      
+                      return (
+                        <>
+                          {/* 전체 선택 버튼 */}
+                          <button 
+                            onClick={() => {
+                              if (allSelected) {
+                                setNewMeeting({...newMeeting, attendees: []});
+                              } else {
+                                setNewMeeting({...newMeeting, attendees: allNames});
+                              }
+                            }}
+                            style={{ 
+                              marginBottom: '10px', padding: '8px 16px', 
+                              background: allSelected ? '#1e3a5f' : '#f1f5f9', 
+                              color: allSelected ? 'white' : '#64748b', 
+                              border: 'none', borderRadius: '6px', 
+                              fontSize: '12px', fontWeight: '600', cursor: 'pointer' 
+                            }}
+                          >{allSelected ? '✓ 전체 선택됨' : '전체 선택'}</button>
+                          
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                            {uniqueUsers.map(user => (
+                              <label key={user.name} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', background: newMeeting.attendees.includes(user.name) ? '#dbeafe' : '#f8fafc', borderRadius: '8px', cursor: 'pointer', border: newMeeting.attendees.includes(user.name) ? '2px solid #3b82f6' : '1px solid #e2e8f0' }}>
+                                <input type="checkbox" checked={newMeeting.attendees.includes(user.name)} onChange={e => {
+                                  if (e.target.checked) {
+                                    setNewMeeting({...newMeeting, attendees: [...newMeeting.attendees, user.name]});
+                                  } else {
+                                    setNewMeeting({...newMeeting, attendees: newMeeting.attendees.filter(n => n !== user.name)});
+                                  }
+                                }} style={{ accentColor: '#3b82f6' }} />
+                                <span style={{ fontSize: '13px', fontWeight: '500' }}>{user.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button onClick={() => setShowMeetingModal(false)} style={{ flex: 1, padding: '12px', background: '#f1f5f9', color: '#64748b', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
+                    <button onClick={() => {
+                      if (!newMeeting.title || !newMeeting.date) {
+                        alert('회의 제목과 날짜는 필수입니다.');
+                        return;
+                      }
+                      addMeetingSchedule(newMeeting);
+                      setNewMeeting({ title: '', date: '', time: '', location: '', attendees: [] });
+                      setShowMeetingModal(false);
+                      alert('회의가 등록되었습니다!');
+                    }} style={{ flex: 1, padding: '12px', background: '#1e3a5f', color: 'white', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>등록</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 회의 상세 모달 */}
+          {showMeetingDetailModal && selectedMeeting && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001, padding: '20px' }} onClick={() => { setShowMeetingDetailModal(false); setSelectedMeeting(null); }}>
+              <div style={{ background: 'white', borderRadius: '16px', width: '600px', maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+                {/* 헤더 */}
+                <div style={{ background: '#4b5563', padding: '20px 24px', borderRadius: '16px 16px 0 0', color: 'white' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <span style={{ padding: '3px 8px', background: 'rgba(255,255,255,0.2)', borderRadius: '4px', fontSize: '11px', fontWeight: '600' }}>회의</span>
+                        {selectedMeeting.date < new Date().toISOString().split('T')[0] && (
+                          <span style={{ padding: '3px 8px', background: 'rgba(255,255,255,0.2)', borderRadius: '4px', fontSize: '11px' }}>종료됨</span>
+                        )}
+                      </div>
+                      <input 
+                        type="text"
+                        value={selectedMeeting.title || ''}
+                        onChange={e => {
+                          const updated = { ...selectedMeeting, title: e.target.value };
+                          setSelectedMeeting(updated);
+                          if (firebaseEnabled && database) {
+                            database.ref(`meetings/${selectedMeeting.id}/title`).set(e.target.value);
+                          }
+                          setMeetings(prev => prev.map(m => m.id === selectedMeeting.id ? updated : m));
+                        }}
+                        style={{ fontSize: '20px', fontWeight: '700', margin: '0 0 8px 0', background: 'transparent', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.3)', color: 'white', width: '100%', padding: '4px 0', outline: 'none' }}
+                      />
+                      <div style={{ fontSize: '13px', opacity: 0.9, display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+                        <span>{selectedMeeting.date}</span>
+                        {selectedMeeting.time && <span>시간: {selectedMeeting.time}</span>}
+                        {selectedMeeting.location && <span>{selectedMeeting.location}</span>}
+                      </div>
+                    </div>
+                    <button onClick={() => { setShowMeetingDetailModal(false); setSelectedMeeting(null); }} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', width: '32px', height: '32px', borderRadius: '8px', fontSize: '16px', cursor: 'pointer' }}>✕</button>
+                  </div>
+                </div>
+
+                <div style={{ padding: '20px 24px' }}>
+                  {/* 회의 정보 수정 */}
+                  <div style={{ background: '#f8fafc', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#1e3a5f', marginBottom: '12px' }}> 회의 정보</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>날짜</label>
+                        <input 
+                          type="date" 
+                          value={selectedMeeting.date || ''} 
+                          onChange={e => {
+                            const updated = { ...selectedMeeting, date: e.target.value };
+                            setSelectedMeeting(updated);
+                            if (firebaseEnabled && database) {
+                              database.ref(`meetings/${selectedMeeting.id}/date`).set(e.target.value);
+                            }
+                            setMeetings(prev => prev.map(m => m.id === selectedMeeting.id ? updated : m));
+                          }}
+                          style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} 
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>시간</label>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <select 
+                            value={selectedMeeting.time || ''} 
+                            onChange={e => {
+                              const updated = { ...selectedMeeting, time: e.target.value };
+                              setSelectedMeeting(updated);
+                              if (firebaseEnabled && database) {
+                                database.ref(`meetings/${selectedMeeting.id}/time`).set(e.target.value);
+                              }
+                              setMeetings(prev => prev.map(m => m.id === selectedMeeting.id ? updated : m));
+                            }}
+                            style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px' }}
+                          >
+                            <option value="">선택</option>
+                            {Array.from({length: 28}, (_, i) => {
+                              const hour = Math.floor(i / 2) + 8;
+                              const min = (i % 2) * 30;
+                              return `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+                            }).map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                          <input 
+                            type="text" 
+                            value={selectedMeeting.time || ''} 
+                            onChange={e => {
+                              const updated = { ...selectedMeeting, time: e.target.value };
+                              setSelectedMeeting(updated);
+                              if (firebaseEnabled && database) {
+                                database.ref(`meetings/${selectedMeeting.id}/time`).set(e.target.value);
+                              }
+                              setMeetings(prev => prev.map(m => m.id === selectedMeeting.id ? updated : m));
+                            }}
+                            placeholder="00:00" 
+                            style={{ width: '70px', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', textAlign: 'center' }} 
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: '12px' }}>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>장소</label>
+                      <input 
+                        type="text" 
+                        value={selectedMeeting.location || ''} 
+                        onChange={e => {
+                          const updated = { ...selectedMeeting, location: e.target.value };
+                          setSelectedMeeting(updated);
+                          if (firebaseEnabled && database) {
+                            database.ref(`meetings/${selectedMeeting.id}/location`).set(e.target.value);
+                          }
+                          setMeetings(prev => prev.map(m => m.id === selectedMeeting.id ? updated : m));
+                        }}
+                        placeholder="예: 본사 회의실"
+                        style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }} 
+                      />
+                    </div>
+                  </div>
+                  
+                  {/* 참석 현황 */}
+                  <div style={{ background: '#f8fafc', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#1e3a5f', marginBottom: '12px' }}>참석 현황</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                      {(selectedMeeting.attendees || []).map(name => {
+                        const responseData = selectedMeeting.responses && selectedMeeting.responses[name];
+                        const status = typeof responseData === 'object' ? responseData.status : (responseData || '미정');
+                        const reason = typeof responseData === 'object' ? (responseData.reason || '') : '';
+                        const bgColor = status === '참석' ? '#e5e7eb' : status === '불참' ? '#fee2e2' : '#f1f5f9';
+                        const textColor = status === '참석' ? '#374151' : status === '불참' ? '#dc2626' : '#64748b';
+                        const icon = status === '참석' ? '✓' : status === '불참' ? '✗' : '';
+                        const isMe = currentUser && currentUser.name === name;
+                        
+                        return (
+                          <div key={name} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ padding: '6px 12px', background: bgColor, color: textColor, borderRadius: '6px', fontSize: '12px', fontWeight: isMe ? '700' : '500', border: isMe ? '2px solid #3b82f6' : 'none' }}>
+                              {icon}{icon ? ' ' : ''}{name}{!icon && status !== '참석' && status !== '불참' ? ' (미응답)' : ''}
+                            </span>
+                            {isMe && (
+                              <select 
+                                value={status} 
+                                onChange={(e) => {
+                                  const newStatus = e.target.value;
+                                  if (newStatus === '불참') {
+                                    const newReason = prompt('불참 사유를 입력해주세요:', reason);
+                                    if (newReason !== null) {
+                                      updateMeetingResponse(selectedMeeting.id, name, newStatus, newReason);
+                                      setSelectedMeeting(prev => ({
+                                        ...prev,
+                                        responses: { ...(prev.responses || {}), [name]: { status: newStatus, reason: newReason } }
+                                      }));
+                                    }
+                                  } else {
+                                    updateMeetingResponse(selectedMeeting.id, name, newStatus, '');
+                                    setSelectedMeeting(prev => ({
+                                      ...prev,
+                                      responses: { ...(prev.responses || {}), [name]: { status: newStatus, reason: '' } }
+                                    }));
+                                  }
+                                }}
+                                style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white' }}
+                              >
+                                <option value="미정">미정</option>
+                                <option value="참석">참석</option>
+                                <option value="불참">불참</option>
+                              </select>
+                            )}
+                            {status === '불참' && reason && (
+                              <span style={{ fontSize: '11px', color: '#dc2626', fontStyle: 'italic' }}>({reason})</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 회의 안건 */}
+                  <div style={{ background: '#dbeafe', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: '600', color: '#1e3a5f' }}>회의 안건</span>
+                      <button onClick={() => {
+                        const agenda = prompt('회의 안건을 입력하세요:', selectedMeeting.agenda || '');
+                        if (agenda !== null) {
+                          const updated = { ...selectedMeeting, agenda };
+                          updateMeetingSchedule(updated);
+                          setSelectedMeeting(updated);
+                        }
+                      }} style={{ padding: '5px 12px', background: '#1e3a5f', color: 'white', border: 'none', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
+                        {selectedMeeting.agenda ? '수정' : '작성'}
+                      </button>
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#374151', whiteSpace: 'pre-wrap', lineHeight: '1.7', background: 'white', padding: '14px', borderRadius: '8px', minHeight: '50px' }}>
+                      {selectedMeeting.agenda || '등록된 안건이 없습니다.'}
+                    </div>
+                  </div>
+
+                  {/* 회의록 */}
+                  <div 
+                    style={{ background: '#eff6ff', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}
+                    onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.background = '#dbeafe'; e.currentTarget.style.border = '2px dashed #3b82f6'; }}
+                    onDragLeave={(e) => { e.currentTarget.style.background = '#eff6ff'; e.currentTarget.style.border = 'none'; }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.currentTarget.style.background = '#eff6ff';
+                      e.currentTarget.style.border = 'none';
+                      const file = e.dataTransfer.files[0];
+                      if (!file) return;
+                      if (file.name.endsWith('.txt')) {
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                          const text = event.target.result;
+                          const updated = { ...selectedMeeting, minutes: text, minutesFileName: file.name, minutesUpdatedAt: new Date().toISOString() };
+                          updateMeetingSchedule(updated);
+                          setSelectedMeeting(updated);
+                          alert('회의록이 등록되었습니다.');
+                        };
+                        reader.readAsText(file, 'UTF-8');
+                      } else {
+                        alert('txt 파일만 업로드 가능합니다.');
+                      }
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: '600', color: '#1e3a5f' }}> 회의록</span>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <label style={{ padding: '5px 12px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
+                          파일
+                          <input 
+                            type="file" 
+                            accept=".txt"
+                            style={{ display: 'none' }}
+                            onChange={(e) => {
+                              const file = e.target.files[0];
+                              if (!file) return;
+                              if (file.name.endsWith('.txt')) {
+                                const reader = new FileReader();
+                                reader.onload = (event) => {
+                                  const text = event.target.result;
+                                  const updated = { ...selectedMeeting, minutes: text, minutesFileName: file.name, minutesUpdatedAt: new Date().toISOString() };
+                                  updateMeetingSchedule(updated);
+                                  setSelectedMeeting(updated);
+                                  alert('회의록이 등록되었습니다.');
+                                };
+                                reader.readAsText(file, 'UTF-8');
+                              } else {
+                                alert('txt 파일만 업로드 가능합니다.');
+                              }
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                        <button onClick={() => {
+                          const minutes = prompt('회의록을 입력하세요:', selectedMeeting.minutes || '');
+                          if (minutes !== null) {
+                            const updated = { ...selectedMeeting, minutes, minutesFileName: null, minutesUpdatedAt: new Date().toISOString() };
+                            updateMeetingSchedule(updated);
+                            setSelectedMeeting(updated);
+                          }
+                        }} style={{ padding: '5px 12px', background: '#1e3a5f', color: 'white', border: 'none', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
+                           입력
+                        </button>
+                      </div>
+                    </div>
+                    {selectedMeeting.minutesFileName && (
+                      <div style={{ fontSize: '11px', color: '#3b82f6', marginBottom: '8px' }}>{selectedMeeting.minutesFileName}</div>
+                    )}
+                    <div 
+                      onClick={() => { if (selectedMeeting.minutes) setShowMinutesViewer(true); }}
+                      style={{ 
+                        fontSize: '13px', color: '#374151', whiteSpace: 'pre-wrap', lineHeight: '1.7', 
+                        background: 'white', padding: '14px', borderRadius: '8px', minHeight: '80px', maxHeight: '200px', 
+                        overflowY: 'auto', position: 'relative', cursor: selectedMeeting.minutes ? 'pointer' : 'default',
+                        transition: 'all 0.2s'
+                      }}
+                      onMouseOver={e => { if (selectedMeeting.minutes) e.currentTarget.style.background = '#f8fafc'; }}
+                      onMouseOut={e => { e.currentTarget.style.background = 'white'; }}
+                    >
+                      {selectedMeeting.minutes ? (
+                        <>
+                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical' }}>
+                            {selectedMeeting.minutes}
+                          </div>
+                          <div style={{ marginTop: '12px', textAlign: 'center', color: '#3b82f6', fontSize: '12px', fontWeight: '600' }}>
+                            클릭하여 전체보기
+                          </div>
+                        </>
+                      ) : (
+                        <div style={{ color: '#94a3b8', textAlign: 'center', padding: '20px 0' }}>
+                          <div>파일을 여기에 끌어다 놓거나</div>
+                          <div>위 버튼으로 업로드하세요</div>
+                          <div style={{ fontSize: '11px', marginTop: '4px' }}>(txt 파일)</div>
+                        </div>
+                      )}
+                    </div>
+                    {selectedMeeting.minutesUpdatedAt && (
+                      <div style={{ fontSize: '10px', color: '#64748b', marginTop: '8px', textAlign: 'right' }}>
+                        수정: {new Date(selectedMeeting.minutesUpdatedAt).toLocaleString('ko-KR')}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 다음 회의 안건 */}
+                  <div style={{ background: '#e0e7ff', borderRadius: '12px', padding: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: '600', color: '#1e3a5f' }}>다음 회의 안건</span>
+                      <button onClick={() => {
+                        const nextAgenda = prompt('다음 회의 안건을 입력하세요:', selectedMeeting.nextAgenda || '');
+                        if (nextAgenda !== null) {
+                          const updated = { ...selectedMeeting, nextAgenda };
+                          updateMeetingSchedule(updated);
+                          setSelectedMeeting(updated);
+                        }
+                      }} style={{ padding: '5px 12px', background: '#1e3a5f', color: 'white', border: 'none', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
+                        {selectedMeeting.nextAgenda ? '수정' : '작성'}
+                      </button>
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#374151', whiteSpace: 'pre-wrap', lineHeight: '1.7', background: 'white', padding: '14px', borderRadius: '8px', minHeight: '50px' }}>
+                      {selectedMeeting.nextAgenda || '등록된 다음 회의 안건이 없습니다.'}
+                    </div>
+                  </div>
+
+                  {/* 하단 버튼 */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #e2e8f0' }}>
+                    <button onClick={() => {
+                      if (confirm('이 회의를 삭제하시겠습니까?')) {
+                        deleteMeetingSchedule(selectedMeeting.id);
+                        setShowMeetingDetailModal(false);
+                        setSelectedMeeting(null);
+                      }
+                    }} style={{ padding: '10px 20px', background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
+                      삭제
+                    </button>
+                    <button onClick={() => { setShowMeetingDetailModal(false); setSelectedMeeting(null); }} style={{ padding: '10px 24px', background: '#1e3a5f', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
+                      확인
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 회의록 전체화면 뷰어 */}
+          {showMinutesViewer && selectedMeeting && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1002, padding: '20px' }} onClick={() => setShowMinutesViewer(false)}>
+              <div style={{ background: 'white', borderRadius: '16px', width: '900px', maxWidth: '95%', maxHeight: '95vh', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+                {/* 헤더 */}
+                <div style={{ background: '#4b5563', padding: '16px 24px', borderRadius: '16px 16px 0 0', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                  <div>
+                    <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0 }}> {selectedMeeting.title} - 회의록</h2>
+                    <div style={{ fontSize: '13px', opacity: 0.9, marginTop: '4px' }}>
+                      {selectedMeeting.date} {selectedMeeting.time && `${selectedMeeting.time}`} {selectedMeeting.location && `· ${selectedMeeting.location}`}
+                    </div>
+                  </div>
+                  <button onClick={() => setShowMinutesViewer(false)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', width: '36px', height: '36px', borderRadius: '8px', fontSize: '18px', cursor: 'pointer' }}>✕</button>
+                </div>
+                
+                {/* 내용 */}
+                <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+                  {selectedMeeting.minutesFileName && (
+                    <div style={{ fontSize: '12px', color: '#3b82f6', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span>{selectedMeeting.minutesFileName}</span>
+                      {selectedMeeting.minutesUpdatedAt && (
+                        <span style={{ color: '#64748b' }}>· {new Date(selectedMeeting.minutesUpdatedAt).toLocaleString('ko-KR')}</span>
+                      )}
+                    </div>
+                  )}
+                  <div style={{ 
+                    fontSize: '14px', 
+                    color: '#374151', 
+                    whiteSpace: 'pre-wrap', 
+                    lineHeight: '1.8',
+                    fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif"
+                  }}>
+                    {selectedMeeting.minutes || '등록된 회의록이 없습니다.'}
+                  </div>
+                </div>
+                
+                {/* 푸터 */}
+                <div style={{ padding: '16px 24px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', gap: '8px', flexShrink: 0 }}>
+                  <button onClick={() => {
+                    const text = `${selectedMeeting.title} - 회의록\n${selectedMeeting.date}\n\n${selectedMeeting.minutes || ''}`;
+                    navigator.clipboard.writeText(text);
+                    alert('회의록이 복사되었습니다.');
+                  }} style={{ padding: '10px 20px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>복사</button>
+                  <button onClick={() => setShowMinutesViewer(false)} style={{ padding: '10px 24px', background: '#1e3a5f', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>닫기</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 실적요약 Drill-down 모달 */}
+          {showDrilldownModal && (() => {
+            const viewUser = drilldownUser || currentUser?.name;
+            const allUserPts = ptSchedules.filter(s => {
+              if (!s.ptAssignee) return false;
+              return s.ptAssignee.split(/[\/,+&]/).map(a => a.trim()).some(a => a === viewUser);
+            });
+            const getUserResult = (s) => {
+              if (s.results && s.results[viewUser] !== undefined) return s.results[viewUser];
+              const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+              if (assignees.length <= 1) return s.result || null;
+              return null;
+            };
+            const currentMonthStr2 = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
+            let drillPts = [];
+            if (drilldownFilter === 'completed') {
+              drillPts = allUserPts.filter(s => ['승','패','무'].includes(getUserResult(s)));
+            } else if (drilldownFilter === '승') {
+              drillPts = allUserPts.filter(s => getUserResult(s) === '승');
+            } else if (drilldownFilter === '패') {
+              drillPts = allUserPts.filter(s => getUserResult(s) === '패');
+            } else if (drilldownFilter === '무') {
+              drillPts = allUserPts.filter(s => getUserResult(s) === '무');
+            } else if (drilldownFilter === 'month') {
+              drillPts = allUserPts.filter(s => s.date && s.date.startsWith(currentMonthStr2));
+            } else if (drilldownFilter === 'settlement') {
+              drillPts = allUserPts.filter(s => {
+                const r = getUserResult(s);
+                if (!r || s.selfPT) return false;
+                const stl = s.settlement?.[viewUser] || {};
+                if (stl.selfSales) return false;
+                return ['승', '무', '지원'].includes(r);
+              });
+            } else {
+              drillPts = allUserPts;
+            }
+            drillPts.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+            const resultColor = { '승': '#3b82f6', '패': '#ef4444', '무': '#f59e0b', '자체진행': '#6b7280' };
+            const resultLabel = { '승': '승리', '패': '패배', '무': '무승부', '자체진행': '본인PT', '지원': '지원' };
+            return (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isMobile ? 0 : 20 }}
+                onClick={() => setShowDrilldownModal(false)}>
+                <div style={{ background: 'white', borderRadius: isMobile ? 0 : 16, width: isMobile ? '100%' : 600, maxWidth: '100%', height: isMobile ? '100%' : '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+                  onClick={e => e.stopPropagation()}>
+                  {/* Header */}
+                  <div style={{ padding: '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                    <div>
+                      <div style={{ fontSize: 16, fontWeight: 800, color: '#1a1a2e' }}>{drilldownTitle}</div>
+                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{viewUser} / {drillPts.length}건</div>
+                    </div>
+                    <span onClick={() => setShowDrilldownModal(false)} style={{ fontSize: 18, color: '#94a3b8', cursor: 'pointer', padding: '4px 8px' }}>✕</span>
+                  </div>
+                  {/* Filter tabs */}
+                  <div style={{ padding: '10px 16px', display: 'flex', gap: 6, flexWrap: 'wrap', borderBottom: '1px solid #f1f5f9', flexShrink: 0 }}>
+                    {[
+                      { label: '전체', value: 'all', color: '#3b82f6' },
+                      { label: '승리', value: '승', color: '#3b82f6' },
+                      { label: '무승부', value: '무', color: '#f59e0b' },
+                      { label: '패배', value: '패', color: '#ef4444' },
+                      { label: `${new Date().getMonth()+1}월`, value: 'month', color: '#8b5cf6' },
+                      { label: '정산', value: 'settlement', color: '#f97316' },
+                    ].map(f => (
+                      <button key={f.value} onClick={() => { setDrilldownFilter(f.value); setDrilldownTitle(f.value === 'all' ? '전체 PT 목록' : f.value === 'month' ? `${new Date().getMonth()+1}월 PT 목록` : f.value === 'settlement' ? '정산 대상 PT 목록' : f.value === '승' ? '승리 PT 목록' : f.value === '패' ? '패배 PT 목록' : '무승부 PT 목록'); }}
+                        style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid ' + (drilldownFilter === f.value ? f.color : '#e2e8f0'), background: drilldownFilter === f.value ? f.color + '15' : 'white', color: drilldownFilter === f.value ? f.color : '#64748b', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Table header */}
+                  <div style={{ display: 'grid', gridTemplateColumns: drilldownFilter === 'settlement' ? '2fr 1fr 0.7fr 0.8fr' : '2fr 1fr 1fr 1fr', padding: '8px 16px', background: '#f8fafc', fontSize: 10, fontWeight: 700, color: '#64748b', borderBottom: '1px solid #e2e8f0', flexShrink: 0 }}>
+                    <span>현장명</span>
+                    <span>PT일자</span>
+                    <span>결과</span>
+                    <span>{drilldownFilter === 'settlement' ? '정산금액' : '확정일'}</span>
+                  </div>
+                  {/* List */}
+                  <div style={{ flex: 1, overflow: 'auto' }}>
+                    {drillPts.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94a3b8' }}>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>해당 조건의 PT가 없습니다</div>
+                      </div>
+                    ) : drillPts.map((pt, idx) => {
+                      const r = getUserResult(pt);
+                      const rc = resultColor[r] || '#94a3b8';
+                      const rl = resultLabel[r] || (r || '-');
+                      const confirmDate = pt.resultConfirmDate?.[viewUser] || '';
+                      const reason = pt.resultReasons?.[viewUser];
+                      return (
+                        <div key={pt.id + '_' + idx} onClick={() => handleEditClick(pt)}
+                          style={{ display: 'grid', gridTemplateColumns: drilldownFilter === 'settlement' ? '2fr 1fr 0.7fr 0.8fr' : '2fr 1fr 1fr 1fr', padding: '10px 16px', borderBottom: '1px solid #f5f6f8', cursor: 'pointer', alignItems: 'center', transition: 'background 0.1s' }}
+                          onMouseOver={e => e.currentTarget.style.background = '#f8fafc'}
+                          onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: '#1a1a2e', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{pt.siteName || '-'}</div>
+                            {reason?.text && reason.text !== '-' && (
+                              <div style={{ fontSize: 9, color: '#94a3b8', marginTop: 2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{reason.text}</div>
+                            )}
+                          </div>
+                          <span style={{ fontSize: 11, color: '#64748b' }}>{pt.date || '-'}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: rc }}>{rl}</span>
+                          {drilldownFilter === 'settlement' ? (
+                            <span style={{ fontSize: 11, fontWeight: 700, color: '#f97316' }}>
+                              {r === '승' ? '50만' : (r === '무' || r === '지원') ? '25만' : '-'}
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: 11, color: '#94a3b8' }}>{confirmDate || '-'}</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* Footer summary */}
+                  <div style={{ padding: '12px 16px', borderTop: '1px solid #e2e8f0', background: '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                    <div style={{ display: 'flex', gap: 12, fontSize: 11, fontWeight: 600 }}>
+                      <span style={{ color: '#3b82f6' }}>승 {drillPts.filter(s => getUserResult(s) === '승').length}</span>
+                      <span style={{ color: '#f59e0b' }}>무 {drillPts.filter(s => getUserResult(s) === '무').length}</span>
+                      <span style={{ color: '#ef4444' }}>패 {drillPts.filter(s => getUserResult(s) === '패').length}</span>
+                      <span style={{ color: '#94a3b8' }}>미확정 {drillPts.filter(s => !getUserResult(s)).length}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {drilldownFilter === 'settlement' && (() => {
+                        const totalSettlement = drillPts.reduce((sum, s) => {
+                          const r2 = getUserResult(s);
+                          if (r2 === '승') return sum + 500000;
+                          if (r2 === '무' || r2 === '지원') return sum + 250000;
+                          return sum;
+                        }, 0);
+                        return <span style={{ fontSize: 12, fontWeight: 800, color: '#f97316' }}>{(totalSettlement / 10000).toLocaleString()}만원</span>;
+                      })()}
+                      <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>총 {drillPts.length}건</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 미확정 PT 관리 모달 */}
+          {showUnconfirmedPtModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isMobile ? 0 : 20 }}
+              onClick={(e) => { if (e.target === e.currentTarget) { setShowUnconfirmedPtModal(false); setUnconfirmedPtResultDropdown(null); } }}>
+              <div style={{ background: 'white', borderRadius: isMobile ? 0 : 16, width: '100%', maxWidth: 600, height: isMobile ? '100%' : '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                {/* Header */}
+                <div style={{ padding: '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button onClick={() => { setShowUnconfirmedPtModal(false); setUnconfirmedPtResultDropdown(null); }} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#64748b', padding: 0 }}>←</button>
+                    <h3 style={{ fontSize: 17, fontWeight: 700, color: '#1a1a2e', margin: 0 }}>미확정 PT 관리</h3>
+                    {unconfirmedPtAssignee && <span style={{ fontSize: 12, fontWeight: 600, color: '#3b82f6', background: '#eff6ff', padding: '2px 8px', borderRadius: 6 }}>{unconfirmedPtAssignee}</span>}
+                  </div>
+                  <button onClick={() => { setShowUnconfirmedPtModal(false); setUnconfirmedPtResultDropdown(null); }} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#94a3b8' }}>×</button>
+                </div>
+
+                {/* Filters */}
+                <div style={{ padding: '12px 16px', borderBottom: '1px solid #f2f4f8', flexShrink: 0 }}>
+                  {/* Quarter filter */}
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+                    {[
+                      { label: '1분기', value: '1' }, { label: '2분기', value: '2' },
+                      { label: '3분기', value: '3' }, { label: '4분기', value: '4' },
+                      { label: '전체', value: 'all' },
+                    ].map(q => (
+                      <button key={q.value} onClick={() => setUnconfirmedPtQuarter(q.value)}
+                        style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid ' + (unconfirmedPtQuarter === q.value ? '#3b82f6' : '#e2e8f0'), background: unconfirmedPtQuarter === q.value ? '#3b82f6' : 'white', color: unconfirmedPtQuarter === q.value ? 'white' : '#64748b', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                        {q.label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Status filter */}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {[
+                      { label: '전체', value: 'all' },
+                      { label: '결과확인중', value: '결과확인중', color: '#f59e0b' },
+                      { label: '연락없음', value: '연락없음', color: '#ef4444' },
+                      { label: '진행보류', value: '진행보류', color: '#f97316' },
+                      { label: '진행중단', value: '진행중단', color: '#6b7280' },
+                    ].map(f => (
+                      <button key={f.value} onClick={() => setUnconfirmedPtFilter(f.value)}
+                        style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid ' + (unconfirmedPtFilter === f.value ? (f.color || '#3b82f6') : '#e2e8f0'), background: unconfirmedPtFilter === f.value ? (f.color || '#3b82f6') + '18' : 'white', color: unconfirmedPtFilter === f.value ? (f.color || '#3b82f6') : '#64748b', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Admin: assignee filter */}
+                  {currentUser?.isAdmin && (
+                    <div style={{ marginTop: 8 }}>
+                      <select value={unconfirmedPtAssignee || 'all'} onChange={(e) => setUnconfirmedPtAssignee(e.target.value === 'all' ? null : e.target.value)}
+                        style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 12, fontWeight: 600, color: '#1a1a2e', background: '#f8fafc' }}>
+                        <option value="all">전체 담당자</option>
+                        {['한준엽', '조재연', '정정훈', '김성민', '이필선', '조현식', '한인규'].map(name => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {/* PT List */}
+                <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
+                  {(() => {
+                    const currentYear = new Date().getFullYear();
+                    const quarterRanges = {
+                      '1': [`${currentYear}-01-01`, `${currentYear}-03-31`],
+                      '2': [`${currentYear}-04-01`, `${currentYear}-06-30`],
+                      '3': [`${currentYear}-07-01`, `${currentYear}-09-30`],
+                      '4': [`${currentYear}-10-01`, `${currentYear}-12-31`],
+                    };
+                    const todayStr = new Date().toISOString().split('T')[0];
+
+                    // Determine which PTs to show
+                    let targetAssignees = unconfirmedPtAssignee ? [unconfirmedPtAssignee] : (currentUser?.isAdmin ? ['한준엽', '조재연', '정정훈', '김성민', '이필선', '조현식', '한인규'] : [currentUser?.name]);
+
+                    let filteredPts = [];
+                    targetAssignees.forEach(assigneeName => {
+                      ptSchedules.forEach(s => {
+                        if (!s.ptAssignee || !s.date || s.dateType !== 'confirmed') return;
+                        if (s.date >= todayStr) return;
+                        if (!s.ptAssignee.split(/[\/,+&]/).map(a => a.trim()).some(a => a === assigneeName)) return;
+
+                        const status = getPtTrackingStatus(s, assigneeName);
+                        if (!['결과확인중', '연락없음', '진행보류', '진행중단'].includes(status)) return;
+
+                        // Quarter filter
+                        if (unconfirmedPtQuarter !== 'all' && unconfirmedPtQuarter !== 'current') {
+                          const range = quarterRanges[unconfirmedPtQuarter];
+                          if (range && (s.date < range[0] || s.date > range[1])) return;
+                        }
+
+                        // Status filter
+                        if (unconfirmedPtFilter !== 'all' && status !== unconfirmedPtFilter) return;
+
+                        // Avoid duplicates
+                        if (!filteredPts.find(fp => fp.id === s.id && fp._assignee === assigneeName)) {
+                          filteredPts.push({ ...s, _assignee: assigneeName, _status: status, _days: getDaysSincePt(s) });
+                        }
+                      });
+                    });
+
+                    // Sort by days elapsed (most urgent first)
+                    filteredPts.sort((a, b) => b._days - a._days);
+
+                    const statusColors = {
+                      '결과확인중': { color: '#f59e0b', bg: '#fffbeb', border: '#fed7aa' },
+                      '연락없음': { color: '#ef4444', bg: '#fef2f2', border: '#fecaca' },
+                      '진행보류': { color: '#f97316', bg: '#fff7ed', border: '#fed7aa' },
+                      '진행중단': { color: '#6b7280', bg: '#f9fafb', border: '#e5e7eb' },
+                    };
+
+                    if (filteredPts.length === 0) {
+                      return (
+                        <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94a3b8' }}>
+                          <div style={{ fontSize: 36, marginBottom: 8 }}>✅</div>
+                          <div style={{ fontSize: 14, fontWeight: 600 }}>미확정 PT가 없습니다</div>
+                        </div>
+                      );
+                    }
+
+                    return filteredPts.map((pt, idx) => {
+                      const sc = statusColors[pt._status] || statusColors['결과확인중'];
+                      const lastCheck = pt.lastCheckDate?.[pt._assignee];
+                      const isDropdownOpen = unconfirmedPtResultDropdown === `${pt.id}_${pt._assignee}`;
+
+                      return (
+                        <div key={`${pt.id}_${pt._assignee}_${idx}`} style={{ background: 'white', borderRadius: 12, border: '1px solid #e2e8f0', padding: '14px 16px', marginBottom: 8, position: 'relative' }}>
+                          {/* Top row: site name + date */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: '#1a1a2e', flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{pt.siteName || '-'}</div>
+                            <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, flexShrink: 0, marginLeft: 8 }}>{pt.date}</span>
+                          </div>
+                          {/* Status + meta row */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: sc.color, background: sc.bg, border: `1px solid ${sc.border}`, borderRadius: 6, padding: '2px 8px' }}>{pt._status}</span>
+                            {lastCheck && <span style={{ fontSize: 10, color: '#94a3b8' }}>확인: {lastCheck}</span>}
+                            {(currentUser?.isAdmin || targetAssignees.length > 1) && <span style={{ fontSize: 10, color: '#64748b', fontWeight: 600 }}>담당: {pt._assignee}</span>}
+                            {pt._days >= 90 ? (
+                              <span style={{ fontSize: 10, fontWeight: 700, color: '#ef4444', background: '#fef2f2', borderRadius: 4, padding: '1px 6px' }}>🔴 {pt._days}일</span>
+                            ) : pt._days >= 30 ? (
+                              <span style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b', background: '#fffbeb', borderRadius: 4, padding: '1px 6px' }}>⚠ {pt._days}일</span>
+                            ) : (
+                              <span style={{ fontSize: 10, color: '#94a3b8' }}>{pt._days}일</span>
+                            )}
+                          </div>
+                          {/* Action buttons */}
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {/* 결과입력 버튼 → 공법 선택 모달 */}
+                            <button onClick={() => {
+                              setShowMethodSelectionModal(true);
+                              setMethodSelectionData({ scheduleId: pt.id, assignee: pt._assignee, selectedMethods: [], customMethod: '', recommendedResult: null, step: 1 });
+                            }}
+                              style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #3b82f6', background: '#eff6ff', color: '#3b82f6', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                              결과입력 ▾
+                            </button>
+                            {pt._status !== '연락없음' && (
+                              <button onClick={() => updatePtStatus(pt.id, pt._assignee, '연락없음')}
+                                style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #fecaca', background: '#fef2f2', color: '#ef4444', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                                연락없음
+                              </button>
+                            )}
+                            {pt._status !== '진행보류' && (
+                              <button onClick={() => updatePtStatus(pt.id, pt._assignee, '진행보류')}
+                                style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #fed7aa', background: '#fff7ed', color: '#f97316', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                                진행보류
+                              </button>
+                            )}
+                            {pt._status !== '진행중단' && (
+                              <button onClick={() => updatePtStatus(pt.id, pt._assignee, '진행중단')}
+                                style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#f9fafb', color: '#6b7280', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                                진행중단
+                              </button>
+                            )}
+                            {pt._status !== '결과확인중' && (
+                              <button onClick={() => updatePtStatus(pt.id, pt._assignee, '결과확인중')}
+                                style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #fed7aa', background: '#fffbeb', color: '#f59e0b', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                                확인중
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+
+                {/* 분기 확인 완료 Footer */}
+                {(() => {
+                  const now = new Date();
+                  const year = now.getFullYear();
+                  const month = now.getMonth() + 1;
+                  const qNum = Math.ceil(month / 3);
+                  const qKey = `${year}-Q${qNum}`;
+                  const quarterEnd2 = { 1: `${year}-03-31`, 2: `${year}-06-30`, 3: `${year}-09-30`, 4: `${year}-12-31` };
+                  const daysLeft = Math.ceil((new Date(quarterEnd2[qNum]) - now) / (1000 * 60 * 60 * 24));
+                  const isLastWeek = daysLeft <= 7 && daysLeft >= 0;
+
+                  // 현재 필터된 담당자
+                  const targetUser = unconfirmedPtAssignee || currentUser?.name;
+                  const todayStr2 = now.toISOString().split('T')[0];
+                  const qStart2 = `${year}-${String((qNum-1)*3+1).padStart(2,'0')}-01`;
+
+                  // 해당 분기의 미확정 PT 수
+                  const qUnconfirmed = ptSchedules.filter(s => {
+                    if (!s.ptAssignee || !s.date || s.dateType !== 'confirmed') return false;
+                    if (s.date >= todayStr2) return false;
+                    if (s.date < qStart2 || s.date > quarterEnd2[qNum]) return false;
+                    if (!s.ptAssignee.split(/[\/,+&]/).map(a => a.trim()).some(a => a === targetUser)) return false;
+                    const status = getPtTrackingStatus(s, targetUser);
+                    return ['결과확인중', '연락없음', '진행보류', '진행중단'].includes(status);
+                  }).length;
+
+                  const isConfirmed = quarterConfirmations[qKey]?.[targetUser]?.confirmed === true;
+
+                  if (!isLastWeek) return null;
+
+                  if (isConfirmed) {
+                    return (
+                      <div style={{ padding: '12px 16px', borderTop: '1px solid #e2e8f0', flexShrink: 0, background: '#ecfdf5' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                          <span style={{ fontSize: 14 }}>&#10004;</span>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: '#059669' }}>{qNum}분기 확인 완료</span>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div style={{ padding: '12px 16px', borderTop: '1px solid #e2e8f0', flexShrink: 0 }}>
+                      {qUnconfirmed === 0 ? (
+                        <button onClick={() => {
+                          if (database) {
+                            const confirmData = { confirmed: true, date: new Date().toISOString().split('T')[0], by: currentUser?.name || targetUser };
+                            database.ref(`quarterConfirmations/${qKey}/${targetUser}`).update(confirmData);
+                            setQuarterConfirmations(prev => ({ ...prev, [qKey]: { ...prev[qKey], [targetUser]: confirmData } }));
+                          }
+                        }} style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', background: '#059669', color: 'white', fontSize: 14, fontWeight: 700, cursor: 'pointer', transition: 'background 0.15s' }}
+                          onMouseOver={e => e.currentTarget.style.background = '#047857'}
+                          onMouseOut={e => e.currentTarget.style.background = '#059669'}>
+                          {qNum}분기 PT 실적 확인 완료
+                        </button>
+                      ) : (
+                        <div style={{ textAlign: 'center', padding: '4px 0' }}>
+                          <span style={{ fontSize: 12, color: '#94a3b8', fontWeight: 600 }}>미확정 PT {qUnconfirmed}건을 모두 처리하면 확인 완료할 수 있습니다</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
+          {/* 공법 선택 + 판정 추천 2단계 모달 */}
+          {showMethodSelectionModal && (() => {
+            const msPt = ptSchedules.find(s => s.id === methodSelectionData.scheduleId);
+            if (!msPt) return null;
+            const msAssignee = methodSelectionData.assignee;
+            const presetMethods = ['POUR', '4A', 'DO', 'CNC', 'PMC', 'ABT', 'KCC'];
+            const allSelected = [...methodSelectionData.selectedMethods, ...(methodSelectionData.customMethod.trim() ? methodSelectionData.customMethod.split(',').map(m => m.trim()).filter(Boolean) : [])];
+            const recommended = judgeResult(allSelected);
+
+            return (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10001, padding: 20 }}
+                onClick={() => setShowMethodSelectionModal(false)}>
+                <div style={{ background: 'white', borderRadius: 16, width: 340, maxWidth: '95%', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', overflow: 'hidden' }}
+                  onClick={e => e.stopPropagation()}>
+
+                  {/* 헤더 */}
+                  <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid #f0f0f0' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>
+                        {methodSelectionData.step === 1 ? '공고문 공법 선택' : '판정 결과 선택'}
+                      </div>
+                      <div style={{ fontSize: 12, color: '#94a3b8', fontWeight: 600 }}>
+                        {methodSelectionData.step}/2
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{msPt.siteName} · {msAssignee}</div>
+                  </div>
+
+                  {methodSelectionData.step === 1 ? (
+                    /* Step 1: 공법 선택 */
+                    <div style={{ padding: '16px 20px' }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 10 }}>공고문에 올라온 공법을 선택하세요</div>
+
+                      {/* 프리셋 공법 칩 */}
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+                        {presetMethods.map(method => {
+                          const isSelected = methodSelectionData.selectedMethods.includes(method);
+                          const isPour = ['POUR', 'DO', 'CNC'].includes(method);
+                          return (
+                            <button key={method} onClick={() => {
+                              setMethodSelectionData(prev => ({
+                                ...prev,
+                                selectedMethods: isSelected
+                                  ? prev.selectedMethods.filter(m => m !== method)
+                                  : [...prev.selectedMethods, method]
+                              }));
+                            }}
+                              style={{
+                                padding: '7px 14px', borderRadius: 20, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                                border: isSelected ? 'none' : `1.5px solid ${isPour ? '#93c5fd' : '#e2e8f0'}`,
+                                background: isSelected ? (isPour ? '#3b82f6' : '#475569') : (isPour ? '#eff6ff' : 'white'),
+                                color: isSelected ? 'white' : (isPour ? '#3b82f6' : '#475569'),
+                                transition: 'all 0.15s'
+                              }}>
+                              {method}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* 기타 공법 입력 */}
+                      <div style={{ marginBottom: 14 }}>
+                        <input
+                          type="text"
+                          value={methodSelectionData.customMethod}
+                          onChange={e => setMethodSelectionData(prev => ({ ...prev, customMethod: e.target.value }))}
+                          placeholder="기타 공법 (쉼표 구분)"
+                          style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 13, boxSizing: 'border-box', outline: 'none' }}
+                          onFocus={e => e.target.style.borderColor = '#3b82f6'}
+                          onBlur={e => e.target.style.borderColor = '#e2e8f0'}
+                        />
+                      </div>
+
+                      {/* 실시간 추천 판정 미리보기 */}
+                      {allSelected.length > 0 && (
+                        <div style={{
+                          padding: '10px 14px', borderRadius: 10, marginBottom: 14,
+                          background: recommended === '승' ? '#eff6ff' : recommended === '무' ? '#fffbeb' : '#fef2f2',
+                          border: `1px solid ${recommended === '승' ? '#93c5fd' : recommended === '무' ? '#fde68a' : '#fecaca'}`
+                        }}>
+                          <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>자동 추천 판정</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: recommended === '승' ? '#3b82f6' : recommended === '무' ? '#f59e0b' : '#ef4444' }}>
+                            {recommended === '승' ? '승리' : recommended === '무' ? '무승부' : '패배'}
+                            <span style={{ fontSize: 11, fontWeight: 400, color: '#94a3b8', marginLeft: 8 }}>
+                              ({allSelected.join(', ')})
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 버튼 */}
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button onClick={() => setShowMethodSelectionModal(false)}
+                          style={{ flex: 1, padding: '11px', borderRadius: 10, border: '1px solid #e2e8f0', background: '#f8fafc', color: '#64748b', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                          취소
+                        </button>
+                        <button onClick={() => {
+                          if (allSelected.length === 0) return;
+                          setMethodSelectionData(prev => ({ ...prev, step: 2, recommendedResult: recommended }));
+                        }}
+                          style={{
+                            flex: 2, padding: '11px', borderRadius: 10, border: 'none', fontSize: 13, fontWeight: 700, cursor: allSelected.length > 0 ? 'pointer' : 'not-allowed',
+                            background: allSelected.length > 0 ? '#3b82f6' : '#e2e8f0', color: allSelected.length > 0 ? 'white' : '#94a3b8',
+                            transition: 'background 0.15s'
+                          }}>
+                          다음 →
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Step 2: 판정 결과 선택 */
+                    <div style={{ padding: '12px 16px 16px' }}>
+                      {/* 공법 요약 */}
+                      <div style={{ padding: '10px 14px', borderRadius: 10, background: '#f8fafc', border: '1px solid #e2e8f0', marginBottom: 12 }}>
+                        <div style={{ fontSize: 11, color: '#64748b', marginBottom: 3 }}>선택된 공법</div>
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                          {allSelected.map((m, i) => (
+                            <span key={i} style={{
+                              fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+                              background: ['POUR', 'DO', 'CNC'].includes(m.toUpperCase()) ? '#dbeafe' : '#f3f4f6',
+                              color: ['POUR', 'DO', 'CNC'].includes(m.toUpperCase()) ? '#2563eb' : '#475569'
+                            }}>{m}</span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* 추천 판정 결과 */}
+                      {methodSelectionData.recommendedResult && (
+                        <div style={{
+                          textAlign: 'center', padding: '12px', borderRadius: 10, marginBottom: 12,
+                          background: methodSelectionData.recommendedResult === '승' ? '#eff6ff' : methodSelectionData.recommendedResult === '무' ? '#fffbeb' : '#fef2f2'
+                        }}>
+                          <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>공법 기반 추천</div>
+                          <div style={{
+                            fontSize: 20, fontWeight: 800,
+                            color: methodSelectionData.recommendedResult === '승' ? '#3b82f6' : methodSelectionData.recommendedResult === '무' ? '#f59e0b' : '#ef4444'
+                          }}>
+                            {methodSelectionData.recommendedResult === '승' ? '승리' : methodSelectionData.recommendedResult === '무' ? '무승부' : '패배'}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 판정 선택 버튼 */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                        {[
+                          { result: '승', label: '승리', color: '#3b82f6', bg: '#eff6ff', hoverBg: '#dbeafe' },
+                          { result: '무', label: '무승부', color: '#f59e0b', bg: '#fffbeb', hoverBg: '#fef3c7' },
+                          { result: '패', label: '패배', color: '#ef4444', bg: '#fef2f2', hoverBg: '#fee2e2' }
+                        ].map(opt => {
+                          const isRecommended = methodSelectionData.recommendedResult === opt.result;
+                          return (
+                            <button key={opt.result} onClick={() => {
+                              // announcementMethods 저장
+                              const methodStr = allSelected.join(',');
+                              const updateMethods = { announcementMethods: methodStr };
+                              if (database) { database.ref(`pt/${msPt.id}`).update(updateMethods); }
+                              setPtSchedules(prev => prev.map(s => s.id === msPt.id ? { ...s, ...updateMethods } : s));
+                              setShowMethodSelectionModal(false);
+                              handleResultClick(msPt, opt.result, msAssignee);
+                            }}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '12px 16px',
+                                border: isRecommended ? `2px solid ${opt.color}` : '1px solid #e2e8f0',
+                                background: isRecommended ? opt.bg : 'white', borderRadius: 12,
+                                fontSize: 14, fontWeight: 700, color: opt.color, cursor: 'pointer',
+                                transition: 'all 0.15s', position: 'relative'
+                              }}
+                              onMouseOver={e => e.currentTarget.style.background = opt.hoverBg}
+                              onMouseOut={e => e.currentTarget.style.background = isRecommended ? opt.bg : 'white'}>
+                              <span style={{ width: 28, height: 28, borderRadius: 8, background: opt.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <span style={{ width: 10, height: 10, borderRadius: '50%', background: opt.color }} />
+                              </span>
+                              {opt.label}
+                              {isRecommended && (
+                                <span style={{
+                                  marginLeft: 'auto', fontSize: 10, fontWeight: 700, color: 'white',
+                                  background: opt.color, borderRadius: 4, padding: '2px 6px'
+                                }}>추천</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* 구분선 */}
+                      <div style={{ height: 1, background: '#e2e8f0', margin: '6px 0' }} />
+
+                      {/* 본인PT 버튼 */}
+                      <button onClick={() => {
+                        // announcementMethods 저장 + 본인PT 처리
+                        const methodStr = allSelected.join(',');
+                        const todayDate = new Date().toISOString().split('T')[0];
+                        const nowTime = new Date().toISOString().replace('T', ' ').substring(0, 16);
+                        const newResults = { ...(msPt.results || {}), [msAssignee]: '승' };
+                        const newConfirmDate = { ...(msPt.resultConfirmDate || {}), [msAssignee]: todayDate };
+                        const newPtStatus = { ...(msPt.ptStatus || {}), [msAssignee]: '승리' };
+                        const newLastCheck = { ...(msPt.lastCheckDate || {}), [msAssignee]: todayDate };
+                        const newLog = [...(msPt.statusLog || []), { date: nowTime, assignee: msAssignee, from: getPtTrackingStatus(msPt, msAssignee) || '없음', to: '본인PT승리', by: currentUser?.name || '알 수 없음' }];
+                        const updateData = { results: newResults, resultConfirmDate: newConfirmDate, ptStatus: newPtStatus, lastCheckDate: newLastCheck, statusLog: newLog, selfPT: true, announcementMethods: methodStr };
+                        if (database) { database.ref(`pt/${msPt.id}`).update(updateData); }
+                        setPtSchedules(prev => prev.map(s => s.id === msPt.id ? { ...s, ...updateData } : s));
+                        setShowMethodSelectionModal(false);
+                      }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '12px 16px', marginTop: 6,
+                          border: '1px solid #e2e8f0', background: 'white', borderRadius: 12,
+                          fontSize: 13, fontWeight: 600, color: '#6b7280', cursor: 'pointer', transition: 'background 0.15s'
+                        }}
+                        onMouseOver={e => e.currentTarget.style.background = '#f9fafb'}
+                        onMouseOut={e => e.currentTarget.style.background = 'white'}>
+                        <span style={{ width: 28, height: 28, borderRadius: 8, background: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#9ca3af' }} />
+                        </span>
+                        <div>
+                          <div>본인PT</div>
+                          <div style={{ fontSize: 10, fontWeight: 400, color: '#9ca3af', marginTop: 1 }}>정산대상 X</div>
+                        </div>
+                      </button>
+
+                      {/* 이전/취소 */}
+                      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                        <button onClick={() => setMethodSelectionData(prev => ({ ...prev, step: 1 }))}
+                          style={{ flex: 1, padding: '10px', borderRadius: 10, border: '1px solid #e2e8f0', background: '#f8fafc', color: '#64748b', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                          ← 이전
+                        </button>
+                        <button onClick={() => setShowMethodSelectionModal(false)}
+                          style={{ flex: 1, padding: '10px', borderRadius: 10, border: '1px solid #e2e8f0', background: '#f8fafc', color: '#64748b', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                          취소
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 실적 사유 입력 모달 */}
+          {showResultReasonModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10002, padding: '20px' }} onClick={() => setShowResultReasonModal(false)}>
+              <div style={{ background: 'white', borderRadius: '16px', width: '500px', maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+                {/* 헤더 */}
+                <div style={{ background: '#f1f5f9', padding: '16px 20px', borderRadius: '16px 16px 0 0', color: '#475569' }}>
+                  <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0 }}>
+                    {resultReasonData.result === '승' ? '승리' : resultReasonData.result === '패' ? '패배' : '무승부'} 사유 입력
+                  </h2>
+                  <div style={{ fontSize: '13px', opacity: 0.9, marginTop: '4px' }}>{resultReasonData.assignee}</div>
+                  {resultReasonData.isResultChange && (
+                    <div style={{ fontSize: '11px', color: '#d97706', background: '#fefce8', padding: '4px 10px', borderRadius: '6px', marginTop: '6px', fontWeight: '700', border: '1px solid #fef08a', display: 'inline-block' }}>
+                      결과 변경: {resultReasonData.previousResult} → {resultReasonData.result}
+                    </div>
+                  )}
+                  {/* 공고문 공법 표시 */}
+                  {(() => {
+                    const reasonPt = ptSchedules.find(s => s.id === resultReasonData.scheduleId);
+                    if (!reasonPt?.announcementMethods) return null;
+                    return (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>공고문 공법:</span>
+                        {reasonPt.announcementMethods.split(',').map((m, i) => (
+                          <span key={i} style={{
+                            fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+                            background: ['POUR', 'DO', 'CNC'].includes(m.trim().toUpperCase()) ? '#dbeafe' : '#e2e8f0',
+                            color: ['POUR', 'DO', 'CNC'].includes(m.trim().toUpperCase()) ? '#2563eb' : '#475569'
+                          }}>{m.trim()}</span>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div style={{ padding: '20px' }}>
+                  {/* 사유 입력 */}
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>
+                      {resultReasonData.result === '승' ? '승리 원인분석' : resultReasonData.result === '패' ? '패배 원인분석' : '무승부 원인분석'}
+                    </label>
+                    <textarea 
+                      value={resultReasonData.reason}
+                      onChange={e => setResultReasonData(prev => ({ ...prev, reason: e.target.value }))}
+                      placeholder={resultReasonData.result === '승' ? '승리 원인분석, 접근방식 등' : resultReasonData.result === '패' ? '패배 원인분석' : '무승부 원인분석'}
+                      style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', minHeight: '80px', resize: 'vertical', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  
+                  {/* 패배/무승부 시 추가 정보 */}
+                  {(resultReasonData.result === '패' || resultReasonData.result === '무') && (
+                    <>
+                      {/* 공법사 선택 - 경쟁사 필드에서 동적 로드 */}
+                      <div style={{ marginBottom: '16px' }}>
+                        <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>{resultReasonData.result === '패' ? '패배' : '무승부'} 공법사 선택</label>
+                        
+                        {/* 경쟁사 목록이 있는 경우 */}
+                        {resultReasonData.availableCompetitors && resultReasonData.availableCompetitors.length > 0 ? (
+                          <>
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                              {resultReasonData.availableCompetitors
+                                .filter(comp => !/^\d+개업체$/.test(comp)) // "@개업체" 패턴 제외
+                                .map(comp => (
+                                <button 
+                                  key={comp}
+                                  onClick={() => {
+                                    const currentList = resultReasonData.selectedCompetitors || [];
+                                    const newList = currentList.includes(comp) 
+                                      ? currentList.filter(c => c !== comp)
+                                      : [...currentList, comp];
+                                    setResultReasonData(prev => ({ ...prev, selectedCompetitors: newList }));
+                                  }}
+                                  style={{ 
+                                    padding: '8px 16px', borderRadius: '8px', 
+                                    border: (resultReasonData.selectedCompetitors || []).includes(comp) ? '2px solid #dc2626' : '1px solid #e2e8f0',
+                                    background: (resultReasonData.selectedCompetitors || []).includes(comp) ? '#fee2e2' : 'white',
+                                    color: (resultReasonData.selectedCompetitors || []).includes(comp) ? '#dc2626' : '#64748b',
+                                    fontSize: '13px', fontWeight: '600', cursor: 'pointer'
+                                  }}
+                                >{comp}</button>
+                              ))}
+                              {/* 기타 버튼 (경쟁사에 @개업체 패턴이 있거나, 추가 입력 필요시) */}
+                              <button 
+                                onClick={() => setResultReasonData(prev => ({ ...prev, showCustomCompetitor: !prev.showCustomCompetitor }))}
+                                style={{ 
+                                  padding: '8px 16px', borderRadius: '8px', 
+                                  border: resultReasonData.showCustomCompetitor ? '2px solid #dc2626' : '1px solid #e2e8f0',
+                                  background: resultReasonData.showCustomCompetitor ? '#fee2e2' : 'white',
+                                  color: resultReasonData.showCustomCompetitor ? '#dc2626' : '#64748b',
+                                  fontSize: '13px', fontWeight: '600', cursor: 'pointer'
+                                }}
+                              >기타</button>
+                            </div>
+                            
+                            {/* 기타 처리 패턴이 있으면 안내 */}
+                            {resultReasonData.hasNCompanyPattern && (
+                              <div style={{ fontSize: '12px', color: '#f59e0b', marginBottom: '8px', background: '#fefce8', padding: '8px 12px', borderRadius: '6px' }}>
+                                경쟁사에 "{resultReasonData.originalCompetitorStr.match(/(\d+개업체|\d+곳|\d+개사|\d+개|총\d+개)/)?.[0]}"이(가) 포함되어 있습니다 → 기타에서 직접 입력해주세요
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          /* 경쟁사 목록이 없는 경우 */
+                          <div style={{ padding: '12px', background: '#f8fafc', borderRadius: '8px', fontSize: '13px', color: '#64748b', marginBottom: '12px' }}>
+                            등록된 경쟁사가 없습니다. 아래에서 직접 입력해주세요.
+                          </div>
+                        )}
+                        
+                        {/* 기타 직접 입력 */}
+                        {(resultReasonData.showCustomCompetitor || !resultReasonData.availableCompetitors?.length) && (
+                          <div style={{ background: '#fef2f2', borderRadius: '8px', padding: '12px', marginBottom: '8px' }}>
+                            <div style={{ fontSize: '12px', fontWeight: '600', color: '#991b1b', marginBottom: '8px' }}>기타 공법사 입력</div>
+                            <input 
+                              type="text"
+                              value={resultReasonData.customCompetitor || ''}
+                              onChange={e => setResultReasonData(prev => ({ ...prev, customCompetitor: e.target.value }))}
+                              placeholder="공법사명 직접 입력"
+                              style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #fca5a5', fontSize: '13px', boxSizing: 'border-box' }}
+                            />
+                          </div>
+                        )}
+                        
+                        {/* 선택된 공법사 표시 */}
+                        {((resultReasonData.selectedCompetitors && resultReasonData.selectedCompetitors.length > 0) || resultReasonData.customCompetitor) && (
+                          <div style={{ marginTop: '8px', padding: '8px 12px', background: '#f8fafc', borderRadius: '6px', fontSize: '12px', color: '#475569' }}>
+                            선택됨: <strong>{[...(resultReasonData.selectedCompetitors || []), resultReasonData.customCompetitor].filter(Boolean).join(', ')}</strong>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                  
+                  {/* 버튼 */}
+                  <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                    <button onClick={() => setShowResultReasonModal(false)} style={{ flex: 1, padding: '12px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', fontWeight: '600', color: '#64748b', cursor: 'pointer' }}>취소</button>
+                    <button onClick={saveResultWithReason} style={{ flex: 1, padding: '12px', border: 'none', borderRadius: '8px', background: '#475569', fontSize: '14px', fontWeight: '600', color: 'white', cursor: 'pointer' }}>저장</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 전날 회의 강제 체크 모달 */}
+          {showMeetingForceCheckModal && pendingMeetingsForUser.length > 0 && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '20px' }}>
+              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '450px', maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' }}>
+                <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                  <h2 style={{ fontSize: '20px', fontWeight: '700', color: '#dc2626', marginBottom: '8px' }}>내일 회의! 참석여부 필수</h2>
+                  <p style={{ fontSize: '14px', color: '#64748b' }}>참석/불참을 선택해야 앱을 사용할 수 있습니다.</p>
+                </div>
+                {pendingMeetingsForUser.map(meeting => (
+                  <div key={meeting.id} style={{ background: '#fef2f2', borderRadius: '12px', padding: '16px', marginBottom: '12px', border: '2px solid #fecaca' }}>
+                    <div style={{ fontWeight: '700', fontSize: '16px', color: '#1e293b', marginBottom: '8px' }}>{meeting.title}</div>
+                    <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '12px' }}>
+                      {meeting.date} {meeting.time && `${meeting.time}`}
+                    </div>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      <button 
+                        onClick={() => {
+                          updateMeetingResponse(meeting.id, currentUser.name, '참석', '');
+                          setPendingMeetingsForUser(prev => prev.filter(m => m.id !== meeting.id));
+                          if (pendingMeetingsForUser.length <= 1) setShowMeetingForceCheckModal(false);
+                        }}
+                        style={{ flex: 1, padding: '12px', background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}
+                      >✓ 참석</button>
+                      <button 
+                        onClick={() => {
+                          const reason = prompt('불참 사유를 입력해주세요:');
+                          if (reason !== null) {
+                            updateMeetingResponse(meeting.id, currentUser.name, '불참', reason);
+                            setPendingMeetingsForUser(prev => prev.filter(m => m.id !== meeting.id));
+                            if (pendingMeetingsForUser.length <= 1) setShowMeetingForceCheckModal(false);
+                          }
+                        }}
+                        style={{ flex: 1, padding: '12px', background: '#dc2626', color: 'white', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}
+                      >✗ 불참</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* PWA 설치 안내 배너 - 상단 고정 */}
+          {showInstallBanner && isMobile && (
+            <div style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              background: '#1e293b',
+              color: 'white',
+              padding: '12px 16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              zIndex: 9999
+            }}>
+              <span style={{ fontSize: '13px', opacity: 0.9 }}>홈 화면에 추가하고 빠르게 접속하세요</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button onClick={handleInstall} style={{
+                  background: 'white',
+                  color: '#1e293b',
+                  border: 'none',
+                  padding: '8px 14px',
+                  borderRadius: '6px',
+                  fontWeight: '600',
+                  fontSize: '12px',
+                  cursor: 'pointer'
+                }}>추가</button>
+                <button onClick={handleCloseBanner} style={{
+                  background: 'transparent',
+                  color: 'rgba(255,255,255,0.5)',
+                  border: 'none',
+                  fontSize: '18px',
+                  cursor: 'pointer',
+                  padding: 0,
+                  lineHeight: 1
+                }}>×</button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+export default ScheduleManager;

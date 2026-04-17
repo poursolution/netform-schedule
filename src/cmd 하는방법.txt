@@ -1,0 +1,10 @@
+cmd
+
+cd Desktop\schedule-app-vite
+npm install
+npm run dev
+
+dist 생성
+
+cd Desktop\schedule-app-vite
+npm run build
