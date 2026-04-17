@@ -23,6 +23,17 @@ import {
   extractOurTechnologies,
   matchOurTechnology,
 } from './utils/technologies.js';
+import {
+  EXCEPTION_TYPES,
+  EXCEPTION_STATUSES,
+  createExceptionRequest,
+  approveException,
+  rejectException,
+  listPendingExceptions,
+  buildExceptionRequestMessage,
+  buildExceptionResultMessage,
+} from './utils/exceptions.js';
+import { sendJandiNotification } from './utils/jandi.js';
 
     // 시스템 명칭 상수
     const APP_NAME = 'POUR영업운영시스템';
@@ -545,7 +556,7 @@ import {
       
       // 실적 사유 입력 모달
       const [showResultReasonModal, setShowResultReasonModal] = useState(false);
-      const [resultReasonData, setResultReasonData] = useState({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false, isResultChange: false, previousResult: null });
+      const [resultReasonData, setResultReasonData] = useState({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false, isResultChange: false, previousResult: null, requestException: false, exceptionType: null });
       const [editingAdminNotes, setEditingAdminNotes] = useState({}); // key: scheduleId_assigneeName
       const [editingUserMemos, setEditingUserMemos] = useState({}); // key: scheduleId
       const [expandedRiskRow, setExpandedRiskRow] = useState(null); // 리스크 파이프라인 드롭다운
@@ -587,6 +598,10 @@ import {
       // K-APT 자동 검증 (Cloudflare Worker)
       const [kaptWorkerUrl, setKaptWorkerUrl] = useState('');
       const [kaptEnabled, setKaptEnabled] = useState(true);
+
+      // 예외 신청 승인 큐 (admin)
+      const [showExceptionQueueModal, setShowExceptionQueueModal] = useState(false);
+      const [exceptionReviewNote, setExceptionReviewNote] = useState({}); // { scheduleId_assignee: '검토사유' }
 
       // 공법 선택 모달
       const [showMethodSelectionModal, setShowMethodSelectionModal] = useState(false);
@@ -2504,8 +2519,31 @@ import {
         // 로컬 상태 업데이트
         setPtSchedules(prev => prev.map(s => s.id === scheduleId ? updatedSchedule : s));
 
+        // === 예외 신청 처리 (영업적 승리 / 공고문 없는 현장) ===
+        if (resultReasonData.requestException && resultReasonData.exceptionType && targetAssignee) {
+          const exceptionReq = createExceptionRequest({
+            type: resultReasonData.exceptionType,
+            reason: resultReasonData.reason || '',
+            requestedBy: currentUser?.name || targetAssignee,
+          });
+          if (firebaseEnabled && database) {
+            database.ref(`pt/${scheduleId}/exceptionRequests/${targetAssignee}`).set(exceptionReq);
+          }
+          setPtSchedules(prev => prev.map(s => s.id === scheduleId
+            ? { ...s, exceptionRequests: { ...(s.exceptionRequests || {}), [targetAssignee]: exceptionReq } }
+            : s));
+          // 잔디 알림 (admin에게 승인 요청)
+          sendJandiNotification(buildExceptionRequestMessage({
+            assignee: targetAssignee,
+            siteName: updatedSchedule.siteName,
+            type: resultReasonData.exceptionType,
+            reason: resultReasonData.reason,
+            by: currentUser?.name,
+          }));
+        }
+
         setShowResultReasonModal(false);
-        setResultReasonData({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false });
+        setResultReasonData({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false, requestException: false, exceptionType: null });
 
         // === 결과 = 승 → 자동 정산요청 + K-APT 검증 ===
         if (result === '승' && targetAssignee) {
@@ -5390,6 +5428,16 @@ import {
                     style={{ background: '#7c3aed', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
                     title="김유림에게 분기 종합 보고서 발송 (PT 정산 + 주말출근)"
                   >📊 분기보고서</button>
+                  {(() => {
+                    const pendingCount = listPendingExceptions(ptSchedules).length;
+                    return (
+                      <button
+                        onClick={() => setShowExceptionQueueModal(true)}
+                        style={{ background: pendingCount > 0 ? '#f59e0b' : '#94a3b8', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer', position: 'relative' }}
+                        title="PT 결과 예외 승인 (영업적 승리 / 공고문 없는 현장)"
+                      >📋 예외 {pendingCount}건</button>
+                    );
+                  })()}
                   <button
                     onClick={() => setShowJandiModal(true)}
                     style={{ background: jandiUrl ? (jandiEnabled ? '#fbbf24' : '#94a3b8') : '#dc2626', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
@@ -13797,13 +13845,65 @@ import {
                     <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>
                       {resultReasonData.result === '승' ? '승리 원인분석' : resultReasonData.result === '패' ? '패배 원인분석' : '무승부 원인분석'}
                     </label>
-                    <textarea 
+                    <textarea
                       value={resultReasonData.reason}
                       onChange={e => setResultReasonData(prev => ({ ...prev, reason: e.target.value }))}
                       placeholder={resultReasonData.result === '승' ? '승리 원인분석, 접근방식 등' : resultReasonData.result === '패' ? '패배 원인분석' : '무승부 원인분석'}
                       style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', minHeight: '80px', resize: 'vertical', boxSizing: 'border-box' }}
                     />
                   </div>
+
+                  {/* 예외 신청 (영업적 승리 / 공고문 없는 현장) */}
+                  {(resultReasonData.result === '무' || resultReasonData.result === '패') && (
+                    <div style={{ marginBottom: '16px', padding: '12px 14px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px' }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e', marginBottom: 8 }}>
+                        📋 승리 예외 신청 (admin 승인 후 적용)
+                      </div>
+                      <div style={{ fontSize: 11, color: '#a16207', marginBottom: 10, lineHeight: 1.5 }}>
+                        결과는 일단 [{resultReasonData.result}]로 저장되며, admin 승인 시 자동으로 [승]으로 변경됩니다.
+                      </div>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', background: '#fff', borderRadius: 6, cursor: 'pointer', marginBottom: 6 }}>
+                        <input
+                          type="radio"
+                          name="exceptionType"
+                          checked={resultReasonData.requestException && resultReasonData.exceptionType === 'tie_to_win'}
+                          onChange={() => setResultReasonData(prev => ({ ...prev, requestException: true, exceptionType: 'tie_to_win' }))}
+                          style={{ marginTop: 2 }}
+                        />
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: '#1e293b' }}>영업적 승리 신청</div>
+                          <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>입찰은 무승부였으나 영업적 조건으로 승리 인정 필요</div>
+                        </div>
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', background: '#fff', borderRadius: 6, cursor: 'pointer', marginBottom: 6 }}>
+                        <input
+                          type="radio"
+                          name="exceptionType"
+                          checked={resultReasonData.requestException && resultReasonData.exceptionType === 'no_bid_to_win'}
+                          onChange={() => setResultReasonData(prev => ({ ...prev, requestException: true, exceptionType: 'no_bid_to_win' }))}
+                          style={{ marginTop: 2 }}
+                        />
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: '#1e293b' }}>공고문 없는 현장</div>
+                          <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>K-APT에 공고가 없는 현장 (교회 · 일반건물 등)</div>
+                        </div>
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 11, color: '#a16207' }}>
+                        <input
+                          type="radio"
+                          name="exceptionType"
+                          checked={!resultReasonData.requestException}
+                          onChange={() => setResultReasonData(prev => ({ ...prev, requestException: false, exceptionType: null }))}
+                        />
+                        예외 신청 안 함
+                      </label>
+                      {resultReasonData.requestException && (
+                        <div style={{ marginTop: 8, padding: '8px 10px', background: '#fef3c7', borderRadius: 6, fontSize: 11, color: '#92400e' }}>
+                          ⚠️ 위 사유 입력칸에 신청 사유를 자세히 기재해주세요. 사유는 admin 검토에 사용됩니다.
+                        </div>
+                      )}
+                    </div>
+                  )}
                   
                   {/* 패배/무승부 시 추가 정보 */}
                   {(resultReasonData.result === '패' || resultReasonData.result === '무') && (
@@ -13978,6 +14078,111 @@ import {
               </div>
             </div>
           )}
+
+          {/* 예외 승인 큐 모달 (admin) */}
+          {showExceptionQueueModal && (() => {
+            const pending = listPendingExceptions(ptSchedules);
+            const handleApprove = (item) => {
+              const note = exceptionReviewNote[`${item.scheduleId}_${item.assignee}`] || '';
+              const updated = approveException(
+                { type: item.type, reason: item.reason, requestedBy: item.requestedBy, requestedAt: item.requestedAt, status: 'pending', reviewedBy: '', reviewedAt: '', reviewNote: '' },
+                { reviewedBy: currentUser?.name || 'admin', reviewNote: note }
+              );
+              if (firebaseEnabled && database) {
+                database.ref(`pt/${item.scheduleId}/exceptionRequests/${item.assignee}`).set(updated);
+              }
+              setPtSchedules(prev => prev.map(s => s.id === item.scheduleId
+                ? { ...s, exceptionRequests: { ...(s.exceptionRequests || {}), [item.assignee]: updated } }
+                : s));
+              sendJandiNotification(buildExceptionResultMessage({
+                assignee: item.assignee, siteName: item.siteName, type: item.type,
+                status: 'approved', reviewedBy: currentUser?.name, reviewNote: note,
+              }));
+              setExceptionReviewNote(prev => ({ ...prev, [`${item.scheduleId}_${item.assignee}`]: '' }));
+            };
+            const handleReject = (item) => {
+              const note = exceptionReviewNote[`${item.scheduleId}_${item.assignee}`] || '';
+              if (!note.trim()) { alert('거절 사유를 입력해주세요.'); return; }
+              const updated = rejectException(
+                { type: item.type, reason: item.reason, requestedBy: item.requestedBy, requestedAt: item.requestedAt, status: 'pending', reviewedBy: '', reviewedAt: '', reviewNote: '' },
+                { reviewedBy: currentUser?.name || 'admin', reviewNote: note }
+              );
+              if (firebaseEnabled && database) {
+                database.ref(`pt/${item.scheduleId}/exceptionRequests/${item.assignee}`).set(updated);
+              }
+              setPtSchedules(prev => prev.map(s => s.id === item.scheduleId
+                ? { ...s, exceptionRequests: { ...(s.exceptionRequests || {}), [item.assignee]: updated } }
+                : s));
+              sendJandiNotification(buildExceptionResultMessage({
+                assignee: item.assignee, siteName: item.siteName, type: item.type,
+                status: 'rejected', reviewedBy: currentUser?.name, reviewNote: note,
+              }));
+              setExceptionReviewNote(prev => ({ ...prev, [`${item.scheduleId}_${item.assignee}`]: '' }));
+            };
+            return (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 16 }}>
+                <div style={{ background: 'white', borderRadius: 12, maxWidth: 800, width: '100%', maxHeight: '90vh', overflow: 'auto' }}>
+                  <div style={{ padding: 24, borderBottom: '1px solid #e2e8f0', position: 'sticky', top: 0, background: '#fff', zIndex: 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#1e293b' }}>📋 PT 결과 예외 승인 큐</h2>
+                      <button onClick={() => setShowExceptionQueueModal(false)} style={{ background: 'transparent', border: 'none', fontSize: 24, cursor: 'pointer', color: '#64748b' }}>×</button>
+                    </div>
+                    <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>
+                      대기 중 <strong>{pending.length}건</strong> · 승인 시 자동으로 결과가 [승]으로 변경됩니다.
+                    </div>
+                  </div>
+                  <div style={{ padding: 24 }}>
+                    {pending.length === 0 ? (
+                      <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8', fontSize: 14 }}>
+                        대기 중인 예외 신청이 없습니다.
+                      </div>
+                    ) : (
+                      pending.map((item) => {
+                        const meta = EXCEPTION_TYPES[item.type] || { label: item.type, badge: { bg: '#f1f5f9', text: '#475569' } };
+                        const key = `${item.scheduleId}_${item.assignee}`;
+                        return (
+                          <div key={key} style={{ marginBottom: 16, padding: 16, border: '1px solid #e2e8f0', borderRadius: 10, background: '#f8fafc' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                              <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                  <span style={{ display: 'inline-block', padding: '2px 8px', background: meta.badge.bg, color: meta.badge.text, borderRadius: 6, fontSize: 11, fontWeight: 700 }}>{meta.label}</span>
+                                  <span style={{ fontSize: 14, fontWeight: 700, color: '#1e293b' }}>{item.siteName || '단지명 미입력'}</span>
+                                  <span style={{ fontSize: 12, color: '#64748b' }}>· {item.assignee} 담당</span>
+                                </div>
+                                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
+                                  PT일: {item.ptDate} · 공고번호: {item.bidNo || '-'} · 신청: {item.requestedAt?.slice(0, 16).replace('T', ' ')}
+                                </div>
+                              </div>
+                            </div>
+                            <div style={{ background: '#fff', padding: 10, borderRadius: 6, marginBottom: 10, fontSize: 12, color: '#475569', lineHeight: 1.6 }}>
+                              <strong style={{ color: '#1e293b' }}>신청 사유</strong><br />
+                              {item.reason || '(사유 미입력)'}
+                            </div>
+                            <textarea
+                              value={exceptionReviewNote[key] || ''}
+                              onChange={e => setExceptionReviewNote(prev => ({ ...prev, [key]: e.target.value }))}
+                              placeholder="검토 사유 (거절 시 필수, 승인 시 선택)"
+                              style={{ width: '100%', padding: 8, border: '1px solid #cbd5e1', borderRadius: 6, fontSize: 12, minHeight: 50, resize: 'vertical', boxSizing: 'border-box', marginBottom: 8 }}
+                            />
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <button
+                                onClick={() => handleApprove(item)}
+                                style={{ flex: 1, padding: 10, background: '#16a34a', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                              >✅ 승인 (승리 처리)</button>
+                              <button
+                                onClick={() => handleReject(item)}
+                                style={{ flex: 1, padding: 10, background: '#dc2626', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                              >❌ 거절</button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* 잔디 웹훅 설정 모달 */}
           {showJandiModal && (

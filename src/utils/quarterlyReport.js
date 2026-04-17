@@ -4,6 +4,7 @@
 
 import * as XLSX from 'xlsx';
 import { OUR_TECHNOLOGIES, extractOurTechnologies, TECHNOLOGY_COLORS } from './technologies.js';
+import { isExceptionApproved, EXCEPTION_TYPES } from './exceptions.js';
 
 // 정산 대상 담당자 (7명)
 // 이 명단에 포함된 담당자의 데이터만 보고서 집계에 사용
@@ -83,10 +84,10 @@ function isSettlementRequested(s, assignee) {
   return s.settlement?.[assignee]?.requested || false;
 }
 
-function getSettlementAmount(s, assignee) {
+function getSettlementAmount(s, assignee, overrideResult = null) {
   if (s.selfPT) return 0;
   if (isSelfSales(s, assignee)) return 0;
-  const r = getPtResult(s, assignee);
+  const r = overrideResult || getPtResult(s, assignee);
   if (r === '승') return 500000;
   if (r === '무') return 250000;
   if (r === '지원') return 250000;
@@ -163,8 +164,12 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
     const assignees = parseAssignees(s.ptAssignee);
     assignees.forEach(a => {
       if (!SETTLEMENT_ASSIGNEES_SET.has(a)) return;
-      const result = getPtResult(s, a);
-      if (!SETTLEMENT_RESULTS.has(result)) return; // 패·미입력 제외
+      const rawResult = getPtResult(s, a);
+      // === 예외 승인 적용 (무→승, 공고문 없음→승) ===
+      const exceptionApproved = isExceptionApproved(s, a);
+      const exceptionReq = exceptionApproved ? s.exceptionRequests[a] : null;
+      const effectiveResult = exceptionApproved ? '승' : rawResult;
+      if (!SETTLEMENT_RESULTS.has(effectiveResult)) return; // 패·미입력 제외
       // 정산 기준일: resultConfirmDate (없으면 s.date fallback)
       const confirmDate = (s.resultConfirmDate && s.resultConfirmDate[a]) || s.date;
       if (!inRange(confirmDate, range)) return;
@@ -176,15 +181,19 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
         bidNo: s.bidNo || '',
         siteName: s.siteName || '',
         assignee: a,
-        result,
+        result: effectiveResult,
+        rawResult,
+        isException: exceptionApproved,
+        exceptionType: exceptionReq ? exceptionReq.type : null,
+        exceptionReason: exceptionReq ? exceptionReq.reason : '',
         settlementStatus: isSettlementCompleted(s, a) ? '정산완료'
           : (isSettlementRequested(s, a) ? '정산요청' : '미정산'),
-        amount: getSettlementAmount(s, a),
+        amount: getSettlementAmount(s, a, effectiveResult),
         selfPT: !!s.selfPT,
         note: s.note || '',
         verifyReason: getVerifyReason(s, a),
         announcementMethods: s.announcementMethods || '',
-        ourTechs, // 매칭된 우리 공법 배열 (예: ['POUR', 'CNC'])
+        ourTechs,
       };
       if (verified) ptVerified.push(row);
       else ptUnverified.push(row);
@@ -499,11 +508,18 @@ export function buildReportHTML(report) {
     const rows = items.map(r => {
       const resultColor = r.result === '승' ? '#16a34a' : r.result === '무' ? '#2563eb' : '#7c3aed';
       const resultBg = r.result === '승' ? '#dcfce7' : r.result === '무' ? '#dbeafe' : '#ede9fe';
+      // 예외 승인 배지
+      const exceptionBadge = r.isException
+        ? (() => {
+            const meta = EXCEPTION_TYPES[r.exceptionType] || { label: '예외', badge: { bg: '#fef3c7', text: '#92400e' } };
+            return `<span style="display:inline-block;margin-left:4px;padding:1px 6px;background:${meta.badge.bg};color:${meta.badge.text};border-radius:6px;font-size:10px;font-weight:600;">예외승인 · ${meta.label}</span>`;
+          })()
+        : '';
       return `
         <tr style="border-bottom:1px solid #f1f5f9;">
           <td style="padding:8px 12px;font-family:'Consolas',monospace;color:#475569;font-size:12px;">${r.date}</td>
           <td style="padding:8px 12px;font-family:'Consolas',monospace;color:#64748b;font-size:11px;">${escapeHtml(r.bidNo) || '-'}</td>
-          <td style="padding:8px 12px;color:#1e293b;font-weight:500;font-size:12px;">${escapeHtml(r.siteName)}</td>
+          <td style="padding:8px 12px;color:#1e293b;font-weight:500;font-size:12px;">${escapeHtml(r.siteName)}${exceptionBadge}</td>
           <td style="padding:8px 12px;text-align:center;"><span style="display:inline-block;padding:2px 8px;background:${resultBg};color:${resultColor};border-radius:8px;font-size:11px;font-weight:700;">${r.result}</span></td>
           <td style="padding:8px 12px;text-align:right;color:${r.amount > 0 ? '#1e293b' : '#94a3b8'};font-weight:600;font-size:12px;">${r.amount.toLocaleString()}원</td>
           <td style="padding:8px 12px;text-align:center;font-size:11px;color:#64748b;">${r.settlementStatus}</td>
