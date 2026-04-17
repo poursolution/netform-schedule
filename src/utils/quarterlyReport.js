@@ -459,96 +459,87 @@ export function buildReportHTML(report) {
   return `
 <div style="width:1100px;background:#ffffff;font-family:-apple-system,'Pretendard','Malgun Gothic',sans-serif;color:#1e293b;line-height:1.5;">
 
-  <!-- ===== 표지 ===== -->
-  <div style="background:linear-gradient(135deg,#1e293b 0%,#334155 100%);color:#fff;padding:48px 56px;">
+  <!-- ===== 표지 (라이트 톤, 기존 앱 스타일) ===== -->
+  <div style="background:#ffffff;padding:40px 48px 28px;border-bottom:1px solid #e2e8f0;">
     <div style="display:flex;justify-content:space-between;align-items:flex-end;">
       <div>
-        <div style="font-size:13px;letter-spacing:2px;color:#94a3b8;font-weight:600;margin-bottom:8px;">QUARTERLY REPORT</div>
-        <div style="font-size:44px;font-weight:800;letter-spacing:-1px;">${year}년 ${range.label}</div>
-        <div style="font-size:18px;color:#cbd5e1;margin-top:4px;">종합 보고서</div>
+        <div style="font-size:12px;color:#64748b;font-weight:600;margin-bottom:6px;">POUR영업운영시스템</div>
+        <div style="font-size:28px;font-weight:700;color:#1e293b;letter-spacing:-0.5px;">${year}년 ${range.label} 종합 보고서</div>
       </div>
-      <div style="text-align:right;font-size:12px;color:#94a3b8;">
-        <div style="margin-bottom:4px;">POUR영업운영시스템</div>
+      <div style="text-align:right;font-size:12px;color:#64748b;">
         <div>발송일 ${today}</div>
       </div>
     </div>
-    <div style="margin-top:32px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.15);display:flex;justify-content:space-between;font-size:13px;">
-      <div><span style="color:#94a3b8;">기간 ·</span> <span style="color:#fff;font-weight:600;">${range.start} ~ ${range.end}</span></div>
-      <div><span style="color:#94a3b8;">수신 ·</span> <span style="color:#fff;font-weight:600;">김유림 (yurim@netformrnd.com)</span></div>
+    <div style="margin-top:18px;display:flex;gap:24px;font-size:13px;color:#475569;">
+      <div><span style="color:#94a3b8;">기간</span> <span style="font-weight:600;color:#1e293b;margin-left:6px;">${range.start} ~ ${range.end}</span></div>
+      <div><span style="color:#94a3b8;">수신</span> <span style="font-weight:600;color:#1e293b;margin-left:6px;">김유림 (yurim@netformrnd.com)</span></div>
     </div>
   </div>
 
-  <!-- ===== KPI 카드 ===== -->
-  <div style="padding:36px 56px;background:#f8fafc;">
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px;">
-      <div style="background:#fff;border-radius:14px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.06);border-top:3px solid #7c3aed;">
-        <div style="font-size:11px;color:#7c3aed;font-weight:700;letter-spacing:0.5px;">WEEKEND</div>
-        <div style="font-size:14px;color:#475569;margin-top:6px;">주말 출근 환산일수</div>
-        <div style="font-size:36px;font-weight:800;color:#1e293b;margin-top:8px;letter-spacing:-1px;">${totals.weekendWeighted.toFixed(1)}<span style="font-size:18px;color:#94a3b8;font-weight:600;margin-left:4px;">일</span></div>
-        <div style="font-size:12px;color:#64748b;margin-top:8px;">실제 ${totals.weekendDays}일 × 1.5배</div>
+  <!-- ===== KPI 카드 (기존 앱 스타일) ===== -->
+  <div style="padding:24px 48px;background:#f8fafc;">
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:18px;">
+        <div style="font-size:13px;color:#64748b;font-weight:600;">주말 출근 환산일수</div>
+        <div style="font-size:28px;font-weight:700;color:#2563eb;margin-top:8px;">${totals.weekendWeighted.toFixed(1)}<span style="font-size:14px;color:#94a3b8;font-weight:500;margin-left:4px;">일</span></div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:6px;">실제 ${totals.weekendDays}일 × 1.5배</div>
       </div>
-      <div style="background:#fff;border-radius:14px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.06);border-top:3px solid #2563eb;">
-        <div style="font-size:11px;color:#2563eb;font-weight:700;letter-spacing:0.5px;">PT</div>
-        <div style="font-size:14px;color:#475569;margin-top:6px;">정산 PT 건수 (검증완료)</div>
-        <div style="font-size:36px;font-weight:800;color:#1e293b;margin-top:8px;letter-spacing:-1px;">${totals.ptCount}<span style="font-size:18px;color:#94a3b8;font-weight:600;margin-left:4px;">건</span></div>
-        <div style="font-size:12px;color:#64748b;margin-top:8px;">승 ${totals.ptWin} · 무 ${totals.ptDraw} · 패 ${totals.ptLose} · 지원 ${totals.ptSupport}</div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:18px;">
+        <div style="font-size:13px;color:#64748b;font-weight:600;">정산 PT 건수</div>
+        <div style="font-size:28px;font-weight:700;color:#2563eb;margin-top:8px;">${totals.ptCount}<span style="font-size:14px;color:#94a3b8;font-weight:500;margin-left:4px;">건</span></div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:6px;">승 ${totals.ptWin} · 무 ${totals.ptDraw} · 패 ${totals.ptLose} · 지원 ${totals.ptSupport}</div>
       </div>
-      <div style="background:#fff;border-radius:14px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.06);border-top:3px solid #16a34a;">
-        <div style="font-size:11px;color:#16a34a;font-weight:700;letter-spacing:0.5px;">SETTLEMENT</div>
-        <div style="font-size:14px;color:#475569;margin-top:6px;">정산금액 합계</div>
-        <div style="font-size:30px;font-weight:800;color:#1e293b;margin-top:8px;letter-spacing:-1px;">${totals.settlementAmount.toLocaleString()}<span style="font-size:16px;color:#94a3b8;font-weight:600;margin-left:4px;">원</span></div>
-        <div style="font-size:12px;color:#64748b;margin-top:8px;">전체 일정 ${totals.scheduleTotal}건</div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:18px;">
+        <div style="font-size:13px;color:#64748b;font-weight:600;">정산금액 합계</div>
+        <div style="font-size:24px;font-weight:700;color:#2563eb;margin-top:8px;">${totals.settlementAmount.toLocaleString()}<span style="font-size:14px;color:#94a3b8;font-weight:500;margin-left:4px;">원</span></div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:6px;">전체 일정 ${totals.scheduleTotal}건</div>
       </div>
     </div>
   </div>
 
   <!-- ===== 담당자 요약 ===== -->
-  <div style="padding:36px 56px;">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
-      <div style="width:4px;height:24px;background:#1e293b;border-radius:2px;"></div>
-      <div style="font-size:18px;font-weight:700;color:#1e293b;">담당자별 분기 요약</div>
-    </div>
-    <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+  <div style="padding:24px 48px 8px;">
+    <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:12px;">담당자별 분기 요약</div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
       <thead>
-        <tr style="background:#1e293b;color:#fff;">
-          <th style="padding:14px;text-align:left;font-weight:600;font-size:12px;letter-spacing:0.3px;">담당자</th>
-          <th style="padding:14px;text-align:center;font-weight:600;font-size:12px;">주말출근</th>
-          <th style="padding:14px;text-align:center;font-weight:600;font-size:12px;color:#c4b5fd;">환산(×1.5)</th>
-          <th style="padding:14px;text-align:center;font-weight:600;font-size:12px;">PT 건수</th>
-          <th style="padding:14px;text-align:right;font-weight:600;font-size:12px;color:#86efac;">정산금액</th>
-          <th style="padding:14px;text-align:center;font-weight:600;font-size:12px;">전체일정</th>
+        <tr style="background:#f1f5f9;color:#475569;border-bottom:1px solid #e2e8f0;">
+          <th style="padding:12px 14px;text-align:left;font-weight:600;font-size:12px;">담당자</th>
+          <th style="padding:12px 14px;text-align:center;font-weight:600;font-size:12px;">주말출근</th>
+          <th style="padding:12px 14px;text-align:center;font-weight:600;font-size:12px;">환산(×1.5)</th>
+          <th style="padding:12px 14px;text-align:center;font-weight:600;font-size:12px;">PT 건수</th>
+          <th style="padding:12px 14px;text-align:right;font-weight:600;font-size:12px;">정산금액</th>
+          <th style="padding:12px 14px;text-align:center;font-weight:600;font-size:12px;">전체일정</th>
         </tr>
       </thead>
       <tbody>${summaryRowsHtml}</tbody>
       ${summary.length > 0 ? `
       <tfoot>
-        <tr style="background:#f1f5f9;border-top:2px solid #1e293b;">
-          <td style="padding:14px;font-weight:700;color:#1e293b;">합계</td>
-          <td style="padding:14px;text-align:center;font-weight:700;color:#475569;">${totals.weekendDays}일</td>
-          <td style="padding:14px;text-align:center;font-weight:800;color:#7c3aed;">${totals.weekendWeighted.toFixed(1)}일</td>
-          <td style="padding:14px;text-align:center;font-weight:700;color:#475569;">${totals.ptCount}건</td>
-          <td style="padding:14px;text-align:right;font-weight:800;color:#16a34a;">${totals.settlementAmount.toLocaleString()}원</td>
-          <td style="padding:14px;text-align:center;font-weight:700;color:#475569;">${totals.scheduleTotal}건</td>
+        <tr style="background:#f8fafc;border-top:1px solid #cbd5e1;">
+          <td style="padding:12px 14px;font-weight:700;color:#1e293b;">합계</td>
+          <td style="padding:12px 14px;text-align:center;font-weight:700;color:#475569;">${totals.weekendDays}일</td>
+          <td style="padding:12px 14px;text-align:center;font-weight:700;color:#2563eb;">${totals.weekendWeighted.toFixed(1)}일</td>
+          <td style="padding:12px 14px;text-align:center;font-weight:700;color:#475569;">${totals.ptCount}건</td>
+          <td style="padding:12px 14px;text-align:right;font-weight:700;color:#2563eb;">${totals.settlementAmount.toLocaleString()}원</td>
+          <td style="padding:12px 14px;text-align:center;font-weight:700;color:#475569;">${totals.scheduleTotal}건</td>
         </tr>
       </tfoot>` : ''}
     </table>
   </div>
 
   <!-- ===== 주말 출근 상세 ===== -->
-  <div style="padding:0 56px 36px;">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
-      <div style="width:4px;height:24px;background:#7c3aed;border-radius:2px;"></div>
-      <div style="font-size:18px;font-weight:700;color:#1e293b;">주말 출근 상세</div>
-      <div style="font-size:12px;color:#64748b;background:#f1f5f9;padding:3px 10px;border-radius:10px;">연차 지급 기준 · 1일 = 1.5일</div>
+  <div style="padding:16px 48px 8px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <div style="font-size:15px;font-weight:700;color:#1e293b;">주말 출근 상세</div>
+      <div style="font-size:11px;color:#64748b;background:#f1f5f9;padding:2px 8px;border-radius:8px;">연차 지급 기준 · 1일 = 1.5일</div>
     </div>
-    <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
       <thead>
-        <tr style="background:#475569;color:#fff;">
-          <th style="padding:12px 14px;text-align:left;font-weight:600;font-size:12px;">날짜</th>
-          <th style="padding:12px 14px;text-align:center;font-weight:600;font-size:12px;">구분</th>
-          <th style="padding:12px 14px;text-align:left;font-weight:600;font-size:12px;">현장/일정명</th>
-          <th style="padding:12px 14px;text-align:left;font-weight:600;font-size:12px;">담당자</th>
-          <th style="padding:12px 14px;text-align:center;font-weight:600;font-size:12px;color:#c4b5fd;">환산</th>
+        <tr style="background:#f1f5f9;color:#475569;border-bottom:1px solid #e2e8f0;">
+          <th style="padding:10px 14px;text-align:left;font-weight:600;font-size:12px;">날짜</th>
+          <th style="padding:10px 14px;text-align:center;font-weight:600;font-size:12px;">구분</th>
+          <th style="padding:10px 14px;text-align:left;font-weight:600;font-size:12px;">현장/일정명</th>
+          <th style="padding:10px 14px;text-align:left;font-weight:600;font-size:12px;">담당자</th>
+          <th style="padding:10px 14px;text-align:center;font-weight:600;font-size:12px;">환산</th>
         </tr>
       </thead>
       <tbody>${weekendRowsHtml}</tbody>
@@ -556,22 +547,21 @@ export function buildReportHTML(report) {
   </div>
 
   <!-- ===== PT 정산 상세 ===== -->
-  <div style="padding:0 56px 36px;">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
-      <div style="width:4px;height:24px;background:#16a34a;border-radius:2px;"></div>
-      <div style="font-size:18px;font-weight:700;color:#1e293b;">PT 정산 상세 (검증 완료)</div>
-      <div style="font-size:12px;color:#64748b;background:#f1f5f9;padding:3px 10px;border-radius:10px;">상위 30건 · 전체는 Excel 참조</div>
+  <div style="padding:16px 48px 8px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <div style="font-size:15px;font-weight:700;color:#1e293b;">PT 정산 상세 (검증 완료)</div>
+      <div style="font-size:11px;color:#64748b;background:#f1f5f9;padding:2px 8px;border-radius:8px;">상위 30건 · 전체는 Excel 참조</div>
     </div>
-    <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
       <thead>
-        <tr style="background:#16a34a;color:#fff;">
-          <th style="padding:12px 14px;text-align:left;font-weight:600;font-size:12px;">날짜</th>
-          <th style="padding:12px 14px;text-align:left;font-weight:600;font-size:12px;">공고번호</th>
-          <th style="padding:12px 14px;text-align:left;font-weight:600;font-size:12px;">단지명</th>
-          <th style="padding:12px 14px;text-align:left;font-weight:600;font-size:12px;">담당자</th>
-          <th style="padding:12px 14px;text-align:center;font-weight:600;font-size:12px;">결과</th>
-          <th style="padding:12px 14px;text-align:right;font-weight:600;font-size:12px;">정산금액</th>
-          <th style="padding:12px 14px;text-align:center;font-weight:600;font-size:12px;">상태</th>
+        <tr style="background:#f1f5f9;color:#475569;border-bottom:1px solid #e2e8f0;">
+          <th style="padding:10px 14px;text-align:left;font-weight:600;font-size:12px;">날짜</th>
+          <th style="padding:10px 14px;text-align:left;font-weight:600;font-size:12px;">공고번호</th>
+          <th style="padding:10px 14px;text-align:left;font-weight:600;font-size:12px;">단지명</th>
+          <th style="padding:10px 14px;text-align:left;font-weight:600;font-size:12px;">담당자</th>
+          <th style="padding:10px 14px;text-align:center;font-weight:600;font-size:12px;">결과</th>
+          <th style="padding:10px 14px;text-align:right;font-weight:600;font-size:12px;">정산금액</th>
+          <th style="padding:10px 14px;text-align:center;font-weight:600;font-size:12px;">상태</th>
         </tr>
       </thead>
       <tbody>${ptRowsHtml}</tbody>
@@ -579,38 +569,50 @@ export function buildReportHTML(report) {
   </div>
 
   <!-- ===== 승리 판정 기준 ===== -->
-  <div style="padding:0 56px 36px;">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
-      <div style="width:4px;height:24px;background:#475569;border-radius:2px;"></div>
-      <div style="font-size:18px;font-weight:700;color:#1e293b;">PT 결과 판정 기준</div>
-      <div style="font-size:12px;color:#64748b;background:#f1f5f9;padding:3px 10px;border-radius:10px;">참고 정의</div>
+  <div style="padding:16px 48px 8px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <div style="font-size:15px;font-weight:700;color:#1e293b;">PT 결과 판정 기준</div>
+      <div style="font-size:11px;color:#64748b;background:#f1f5f9;padding:2px 8px;border-radius:8px;">참고 정의</div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
-      <div style="padding:12px 16px;background:#dcfce7;border-radius:10px;border-left:4px solid #16a34a;">
-        <div style="font-weight:700;color:#16a34a;font-size:14px;margin-bottom:4px;">🏆 승리</div>
-        <div style="font-size:12px;color:#475569;">POUR 공법 단독 입찰 (경쟁 공법 없음)</div>
-      </div>
-      <div style="padding:12px 16px;background:#dbeafe;border-radius:10px;border-left:4px solid #2563eb;">
-        <div style="font-weight:700;color:#2563eb;font-size:14px;margin-bottom:4px;">🤝 무승부</div>
-        <div style="font-size:12px;color:#475569;">POUR 공법 + 타공법 동시 입찰 (예: 4A시스템 등)</div>
-      </div>
-      <div style="padding:12px 16px;background:#fee2e2;border-radius:10px;border-left:4px solid #dc2626;">
-        <div style="font-weight:700;color:#dc2626;font-size:14px;margin-bottom:4px;">❌ 패배</div>
-        <div style="font-size:12px;color:#475569;">POUR 공법으로 안올라온 공고 (입찰 미참여)</div>
-      </div>
-      <div style="padding:12px 16px;background:#ede9fe;border-radius:10px;border-left:4px solid #7c3aed;">
-        <div style="font-weight:700;color:#7c3aed;font-size:14px;margin-bottom:4px;">🤲 지원</div>
-        <div style="font-size:12px;color:#475569;">한 현장 2명 이상 — 1명 승리(주영업), 나머지 지원</div>
-      </div>
-    </div>
-    <div style="margin-top:12px;padding:12px 16px;background:#fefce8;border-radius:8px;border:1px solid #fde047;font-size:12px;color:#713f12;">
-      💰 <strong>정산 단가</strong>: 승 500,000원 · 무 250,000원 · 지원 250,000원 · 패 0원<br />
-      ※ 협약사 자체PT(selfPT) 및 본인영업 건은 정산 대상에서 제외 (0원 처리)
+    <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <thead>
+        <tr style="background:#f1f5f9;color:#475569;border-bottom:1px solid #e2e8f0;">
+          <th style="padding:10px 14px;text-align:center;font-weight:600;font-size:12px;width:80px;">결과</th>
+          <th style="padding:10px 14px;text-align:left;font-weight:600;font-size:12px;">기준</th>
+          <th style="padding:10px 14px;text-align:right;font-weight:600;font-size:12px;width:120px;">정산 단가</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:10px 14px;text-align:center;"><span style="display:inline-block;padding:2px 10px;background:#dcfce7;color:#16a34a;border-radius:8px;font-size:11px;font-weight:700;">승</span></td>
+          <td style="padding:10px 14px;color:#475569;">POUR 공법 단독 입찰 (경쟁 공법 없음)</td>
+          <td style="padding:10px 14px;text-align:right;color:#1e293b;font-weight:600;">500,000원</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:10px 14px;text-align:center;"><span style="display:inline-block;padding:2px 10px;background:#dbeafe;color:#2563eb;border-radius:8px;font-size:11px;font-weight:700;">무</span></td>
+          <td style="padding:10px 14px;color:#475569;">POUR 공법 + 타공법 동시 입찰 (예: 4A시스템 등)</td>
+          <td style="padding:10px 14px;text-align:right;color:#1e293b;font-weight:600;">250,000원</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:10px 14px;text-align:center;"><span style="display:inline-block;padding:2px 10px;background:#fee2e2;color:#dc2626;border-radius:8px;font-size:11px;font-weight:700;">패</span></td>
+          <td style="padding:10px 14px;color:#475569;">POUR 공법으로 안올라온 공고 (입찰 미참여)</td>
+          <td style="padding:10px 14px;text-align:right;color:#94a3b8;font-weight:600;">0원</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 14px;text-align:center;"><span style="display:inline-block;padding:2px 10px;background:#ede9fe;color:#7c3aed;border-radius:8px;font-size:11px;font-weight:700;">지원</span></td>
+          <td style="padding:10px 14px;color:#475569;">한 현장 2명 이상 — 1명 승리(주영업), 나머지 지원</td>
+          <td style="padding:10px 14px;text-align:right;color:#1e293b;font-weight:600;">250,000원</td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="margin-top:8px;font-size:11px;color:#94a3b8;line-height:1.6;">
+      ※ 협약사 자체PT(selfPT) 및 본인영업 건은 정산 대상에서 제외 (0원 처리)<br />
+      ※ 주말 출근 1일 = 환산 1.5일 (보상연차 환산)
     </div>
   </div>
 
   <!-- ===== 푸터 ===== -->
-  <div style="padding:24px 56px;background:#1e293b;color:#94a3b8;font-size:11px;text-align:center;letter-spacing:0.5px;">
+  <div style="padding:20px 48px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:11px;text-align:center;">
     POUR영업운영시스템 · 자동 생성 보고서 · 상세 데이터는 첨부 Excel 파일 참조
   </div>
 
