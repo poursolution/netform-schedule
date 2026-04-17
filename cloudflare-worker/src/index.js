@@ -183,7 +183,9 @@ async function fetchBidEntries(bidNum, serviceKey) {
   const params = new URLSearchParams({
     serviceKey, bidNum, pageNo: '1', numOfRows: '50', type: 'json',
   });
-  const resp = await fetch(`${API_BASE}/getBidEntrpsInfoSearchV2?${params}`);
+  const resp = await fetch(`${API_BASE}/getBidEntrpsInfoSearchV2?${params}`, {
+    headers: { 'User-Agent': 'POUR-KAPT-Verify-Worker/2.0', 'Accept': 'application/json' },
+  });
   if (!resp.ok) throw new Error(`getBidEntrpsInfoSearchV2 HTTP ${resp.status}`);
   const data = await resp.json();
   const items = data?.response?.body?.items;
@@ -197,7 +199,9 @@ async function fetchBidsBySiteName(hsmpNm, year, serviceKey) {
     serviceKey, hsmpNm, srchYear: String(year),
     pageNo: '1', numOfRows: '50', type: 'json',
   });
-  const resp = await fetch(`${API_BASE}/getHsmpNmSearchV2?${params}`);
+  const resp = await fetch(`${API_BASE}/getHsmpNmSearchV2?${params}`, {
+    headers: { 'User-Agent': 'POUR-KAPT-Verify-Worker/2.0', 'Accept': 'application/json' },
+  });
   if (!resp.ok) throw new Error(`getHsmpNmSearchV2 HTTP ${resp.status}`);
   const data = await resp.json();
   const items = data?.response?.body?.items;
