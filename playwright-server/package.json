@@ -1,0 +1,16 @@
+{
+  "name": "kapt-playwright-server",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "install-browsers": "npx playwright install chromium --with-deps"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "playwright": "^1.48.0",
+    "pdf-parse": "^1.1.1",
+    "dotenv": "^16.4.5"
+  }
+}
