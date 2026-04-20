@@ -9126,6 +9126,40 @@ import { sendJandiNotification } from './utils/jandi.js';
                                                       });
                                                       if (r.status === 'verified') {
                                                         alert(`✅ 검증 통과\n\n공법: ${r.matchedValue || r.matchedBy}\n${r.message || ''}`);
+                                                      } else if (r.status === 'needs_review' && r.reason === 'site_not_found') {
+                                                        // 단지명을 못 찾은 경우: 21line/K-APT 직접 검색 유도 + bidNum 수동 입력
+                                                        const brandGuess = (card.siteName || '').replace(/\s+/g, '').replace(/아파트|APT/gi, '').slice(-5);
+                                                        const msg = `⚠ 단지명으로 자동 검색 실패 (site_not_found)\n\n원인: 변형 검색 시도했으나 K-APT·data.go.kr 매칭 0건.\n\n해결 방법:\n1. 확인 버튼 → 21line.co.kr 새 탭 오픈 ("${brandGuess}" 검색)\n2. 공고번호(17자리 숫자 or kg2b_XXX) 찾으면 아래 입력\n3. 취소 → 나중에 PT 수정 모달에서 저장\n\n공고번호 직접 입력하시겠습니까?`;
+                                                        if (window.confirm(msg)) {
+                                                          window.open(`https://www.21line.co.kr/conty/?cd=first`, '_blank');
+                                                          const bidNumInput = window.prompt(`공고번호 입력 (예: 20260401144113799 또는 kg2b_128097)\n\n빈 값이면 취소됩니다.`, s?.bidNo || '');
+                                                          if (bidNumInput && bidNumInput.trim()) {
+                                                            const trimmed = bidNumInput.trim();
+                                                            // PT 데이터에 bidNo 저장 + 재검증
+                                                            setPtSchedules(prev => prev.map(ps => ps.id === card.id ? { ...ps, bidNo: trimmed } : ps));
+                                                            setDirtyScheduleIds(prev => new Set([...prev, card.id]));
+                                                            setHasResultChanges(true);
+                                                            // 입력된 bidNum 으로 즉시 재검증
+                                                            try {
+                                                              const r2 = await verifyKaptForPt({
+                                                                scheduleId: card.id,
+                                                                assignee: card.manager,
+                                                                siteName: card.siteName,
+                                                                workType: s?.workType,
+                                                                bidNo: trimmed,
+                                                                ptDate: card.date,
+                                                                by: currentUser?.name || 'manual',
+                                                              });
+                                                              if (r2.status === 'verified') {
+                                                                alert(`✅ 재검증 통과\n\n공고번호: ${trimmed}\n공법: ${r2.matchedValue || r2.matchedBy}\n${r2.message || ''}`);
+                                                              } else {
+                                                                alert(`⚠ 공고번호 ${trimmed} 검증 실패\n\n사유: ${r2.reason || ''}\n${r2.message || ''}\n\n공고번호가 맞는지 확인해주세요.`);
+                                                              }
+                                                            } catch (e2) {
+                                                              alert(`❌ 재검증 오류: ${e2.message}`);
+                                                            }
+                                                          }
+                                                        }
                                                       } else if (r.status === 'needs_review') {
                                                         alert(`⚠ 확인 필요\n\n사유: ${r.reason || ''}\n${r.message || ''}`);
                                                       } else {
