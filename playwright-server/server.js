@@ -506,6 +506,113 @@ app.post('/verify', requireAuth, async (req, res) => {
   }
 });
 
+// === 잔디 Playwright 로그인 테스트 엔드포인트 ===
+// 사용: POST /admin/jandi-login-test
+// 환경변수 필요: JANDI_EMAIL, JANDI_PASSWORD, JANDI_TEAM
+// 로그인 성공 시 페이지 title, URL 반환
+app.post('/admin/jandi-login-test', requireAuth, async (req, res) => {
+  const email = process.env.JANDI_EMAIL;
+  const password = process.env.JANDI_PASSWORD;
+  const team = process.env.JANDI_TEAM;
+  if (!email || !password || !team) {
+    return res.status(400).json({ error: 'JANDI_EMAIL, JANDI_PASSWORD, JANDI_TEAM env vars required' });
+  }
+  const startedAt = Date.now();
+  let context = null;
+  try {
+    const browser = await getBrowser();
+    context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      locale: 'ko-KR',
+      extraHTTPHeaders: { 'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8' },
+      ignoreHTTPSErrors: true,
+    });
+    const page = await context.newPage();
+    // 1) 팀 주소로 먼저 접근 (team 전용 로그인 URL 로 redirect 됨)
+    const teamUrl = `https://${team}.jandi.com/`;
+    await page.goto(teamUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(2000);
+    const beforeUrl = page.url();
+    // 2) 로그인 폼 탐지 및 입력
+    const loginResult = await page.evaluate(() => {
+      const inputs = [...document.querySelectorAll('input')];
+      const emailInput = inputs.find(el =>
+        el.type === 'email' ||
+        el.name === 'email' ||
+        el.id === 'email' ||
+        /email|이메일/i.test(el.placeholder || '')
+      );
+      const passInput = inputs.find(el =>
+        el.type === 'password' ||
+        el.name === 'password' ||
+        /password|비밀번호/i.test(el.placeholder || '')
+      );
+      return {
+        hasEmailInput: !!emailInput,
+        hasPassInput: !!passInput,
+        totalInputs: inputs.length,
+        inputTypes: inputs.map(i => ({ type: i.type, name: i.name, id: i.id, placeholder: (i.placeholder || '').slice(0, 30) })),
+      };
+    });
+    if (!loginResult.hasEmailInput || !loginResult.hasPassInput) {
+      // 로그인 페이지 form이 없으면 이미 로그인돼있을 가능성
+      const title = await page.title();
+      const pageText = (await page.evaluate(() => document.body?.innerText || '')).slice(0, 300);
+      await context.close();
+      return res.json({
+        status: 'no_login_form',
+        beforeUrl, afterUrl: page.url(), title,
+        pageTextPreview: pageText,
+        inputDetection: loginResult,
+        durationMs: Date.now() - startedAt,
+      });
+    }
+    // 3) 이메일·비밀번호 입력 + 로그인 버튼 클릭
+    await page.evaluate(({ e, p }) => {
+      const inputs = [...document.querySelectorAll('input')];
+      const emailInput = inputs.find(el => el.type === 'email' || el.name === 'email' || el.id === 'email' || /email|이메일/i.test(el.placeholder || ''));
+      const passInput = inputs.find(el => el.type === 'password' || el.name === 'password' || /password|비밀번호/i.test(el.placeholder || ''));
+      if (emailInput) {
+        emailInput.value = e;
+        emailInput.dispatchEvent(new Event('input', { bubbles: true }));
+        emailInput.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      if (passInput) {
+        passInput.value = p;
+        passInput.dispatchEvent(new Event('input', { bubbles: true }));
+        passInput.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }, { e: email, p: password });
+    await page.waitForTimeout(500);
+    // 로그인 버튼 클릭 (form submit 또는 button click)
+    const clicked = await page.evaluate(() => {
+      const btn = document.querySelector('button[type="submit"], input[type="submit"], button.login-btn, button.btn-login, button[class*="login" i]')
+        || [...document.querySelectorAll('button')].find(b => /log\s*in|로그인|sign\s*in/i.test(b.innerText || ''));
+      if (btn) { btn.click(); return 'clicked'; }
+      const form = document.querySelector('form');
+      if (form) { form.submit(); return 'form-submitted'; }
+      return 'no_button';
+    });
+    // 로그인 처리 대기
+    await page.waitForTimeout(4000).catch(() => {});
+    const afterUrl = page.url();
+    const afterTitle = await page.title();
+    const afterText = (await page.evaluate(() => document.body?.innerText || '')).slice(0, 300);
+    // 로그인 성공 판단: URL이 로그인 페이지 벗어나면 성공
+    const loggedIn = !/login|landing/i.test(afterUrl) && !/login|landing/i.test(beforeUrl ? '' : afterUrl);
+    await context.close();
+    return res.json({
+      status: loggedIn ? 'logged_in' : 'login_uncertain',
+      beforeUrl, afterUrl, afterTitle, afterText,
+      clicked,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (e) {
+    if (context) await context.close().catch(() => {});
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
 // === Phase 1: K-APT 전체 공고 리스트 크롤링 (aptName 필터 없이) ===
 // 사용: POST /admin/kapt-list-crawl { startDate, endDate, pageNo, bidGb }
 // 목적: aptName 없어도 bidList.do 가 결과 반환하는지 검증 + 초기 캐시 구축용
