@@ -601,6 +601,8 @@ import { sendJandiNotification } from './utils/jandi.js';
       const [showKaptModal, setShowKaptModal] = useState(false);
       const [kaptBatchBusy, setKaptBatchBusy] = useState(false);
       const [kaptBatchProgress, setKaptBatchProgress] = useState({ done: 0, total: 0, pass: 0, review: 0, err: 0 });
+      // 개별 PT 검증 상태: { [cardId+assignee]: 'busy'|'done' }
+      const [kaptVerifyingId, setKaptVerifyingId] = useState(null);
 
       // 예외 신청 승인 큐 (admin)
       const [showExceptionQueueModal, setShowExceptionQueueModal] = useState(false);
@@ -9100,6 +9102,50 @@ import { sendJandiNotification } from './utils/jandi.js';
                                               return <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}>⚠ 미정산</span>;
                                             })()}
                                             {!isSelfPT && settlement.selfSales && <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#f3e8ff', color: '#7c3aed' }}>본인영업</span>}
+                                            {/* 🔍 K-APT 개별 검증 버튼 (미정산·정산요청, 승 결과, 비자체PT, 중복 제외) */}
+                                            {!isSelfPT && !isSuperseded && currentResult === '승' && !settlement.completed && !settlement.selfSales && kaptWorkerUrl && (() => {
+                                              const vkey = `${card.id}_${card.manager}`;
+                                              const busy = kaptVerifyingId === vkey;
+                                              const kv = s?.kaptVerified;
+                                              const isVerified = kv?.status === 'verified';
+                                              return (
+                                                <button
+                                                  disabled={busy}
+                                                  onClick={async (e) => {
+                                                    e.stopPropagation();
+                                                    if (busy) return;
+                                                    if (isVerified && !window.confirm(`"${card.siteName}" 이미 검증됨 (${kv.matchedValue || kv.matchedBy || ''}). 다시 검증할까요?`)) return;
+                                                    setKaptVerifyingId(vkey);
+                                                    try {
+                                                      const r = await verifyKaptForPt({
+                                                        scheduleId: card.id,
+                                                        assignee: card.manager,
+                                                        siteName: card.siteName,
+                                                        workType: s?.workType,
+                                                        bidNo: s?.bidNo || '',
+                                                        ptDate: card.date,
+                                                        by: currentUser?.name || 'manual',
+                                                      });
+                                                      if (r.status === 'verified') {
+                                                        alert(`✅ 검증 통과\n\n공법: ${r.matchedValue || r.matchedBy}\n${r.message || ''}`);
+                                                      } else if (r.status === 'needs_review') {
+                                                        alert(`⚠ 확인 필요\n\n사유: ${r.reason || ''}\n${r.message || ''}`);
+                                                      } else {
+                                                        alert(`결과: ${r.status}\n${JSON.stringify(r).slice(0, 300)}`);
+                                                      }
+                                                    } catch (err) {
+                                                      alert(`❌ 오류: ${err.message}`);
+                                                    } finally {
+                                                      setKaptVerifyingId(null);
+                                                    }
+                                                  }}
+                                                  style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: busy ? '#e5e7eb' : isVerified ? '#dcfce7' : '#f1f5f9', color: busy ? '#6b7280' : isVerified ? '#166534' : '#475569', border: '1px solid ' + (isVerified ? '#86efac' : '#cbd5e1'), cursor: busy ? 'wait' : 'pointer' }}
+                                                  title={isVerified ? `이미 검증됨: ${kv.matchedValue || ''}` : 'K-APT 개별 검증 실행'}
+                                                >
+                                                  {busy ? '⏳ 검증 중...' : isVerified ? '✓ 재검증' : '🔍 K-APT 검증'}
+                                                </button>
+                                              );
+                                            })()}
                                           </div>
                                           {/* 공종/공사설명 */}
                                           <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '2px' }}>{s?.workType || card.gongong}</div>
