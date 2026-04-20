@@ -278,32 +278,59 @@ app.post('/verify', requireAuth, async (req, res) => {
         if (externalUrl && /kg2b\.co\.kr/i.test(externalUrl)) {
           kg2bFollowed = true;
           await page.goto(externalUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-          await page.waitForTimeout(3000);
+          await page.waitForTimeout(5000); // AJAX·폰트·이미지 대기
+          // 스크롤로 추가 콘텐츠 로드 유도
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+          await page.waitForTimeout(1500);
           // kg2b 페이지 전체 텍스트
           const kg2bPageText = await page.evaluate(() => document.body?.innerText || '');
           combinedText += '\n\n[kg2b page]\n' + kg2bPageText;
-          // 공고서 PDF 링크 탐색 (파일명이 .pdf 이거나 href에 .pdf)
-          const pdfLink = await page.evaluate(() => {
-            const links = [...document.querySelectorAll('a')];
-            const pdfs = links
-              .map(a => ({ href: a.href, text: (a.innerText || '').trim() }))
-              .filter(l => /\.pdf($|\?)/i.test(l.href) || /\.pdf$/i.test(l.text));
-            // 우선순위: 공고서/공고문 포함된 것 먼저
-            const pref = pdfs.find(l => /공고서|공고문|입찰공고/.test(l.text)) || pdfs[0];
-            return pref ? { href: pref.href, text: pref.text } : null;
+          // 공고서 PDF/HWP/DOC 링크 강화 탐색 (<a>, <button>, onclick, HTML 전역)
+          const pdfLinks = await page.evaluate(() => {
+            const out = [];
+            // 1) <a> 태그
+            for (const a of document.querySelectorAll('a')) {
+              const href = a.href || '';
+              const text = (a.innerText || '').trim();
+              const onclick = a.getAttribute('onclick') || '';
+              if (/\.(pdf|hwp|hwpx)($|\?)/i.test(href) ||
+                  /\.(pdf|hwp|hwpx)(\s|$)/i.test(text) ||
+                  /fileDown|fileView|downLoad|attachFile|getFile/i.test(href + ' ' + onclick)) {
+                out.push({ href, text, kind: 'a' });
+              }
+            }
+            // 2) <button>/<span> with onclick (다운로드 버튼)
+            for (const b of document.querySelectorAll('button, span[onclick], div[onclick]')) {
+              const onclick = b.getAttribute('onclick') || '';
+              const text = (b.innerText || '').trim();
+              if (/fileDown|fileView|downLoad|\.pdf|\.hwp/i.test(onclick) ||
+                  /\.(pdf|hwp|hwpx)/i.test(text)) {
+                // onclick 안에서 실제 URL/파일ID 추출
+                const urlMatch = onclick.match(/https?:\/\/[^'"\s)]+/i);
+                const idMatch = onclick.match(/['"](\d+)['"]|fileId=(\d+)|fileSeq=(\d+)/);
+                out.push({ href: urlMatch ? urlMatch[0] : '', text, onclick, fileId: (idMatch && (idMatch[1]||idMatch[2]||idMatch[3])) || '', kind: 'btn' });
+              }
+            }
+            // 3) 전체 HTML에서 .pdf/.hwp URL 정규식 스캔
+            const html = document.documentElement.outerHTML;
+            const urlMatches = [...html.matchAll(/https?:\/\/[^'"\s<>]+\.(?:pdf|hwp|hwpx)/gi)];
+            for (const m of urlMatches) out.push({ href: m[0], text: '(html-scan)', kind: 'html' });
+            return out;
           });
-          if (pdfLink) {
+          // 우선순위: 공고서/공고문/입찰공고 텍스트 있는 것 → 나머지 → 비어있어도 첫번째
+          const pref = pdfLinks.find(l => /공고서|공고문|입찰공고/.test(l.text)) || pdfLinks.find(l => /\.pdf/i.test(l.href)) || pdfLinks[0];
+          if (pref && pref.href) {
             try {
-              const buffer = await page.request.get(pdfLink.href, { timeout: 30000 }).then(r => r.body());
+              const buffer = await page.request.get(pref.href, { timeout: 30000 }).then(r => r.body());
               const data = await pdf(buffer);
               const pdfText = (data.text || '').slice(0, 50000);
-              combinedText += '\n\n[kg2b 공고서 PDF: ' + pdfLink.text + ']\n' + pdfText;
-              kg2bInfo = { url: externalUrl, pdfHref: pdfLink.href, pdfText: pdfLink.text, pdfLength: pdfText.length };
+              combinedText += '\n\n[kg2b 공고서 PDF: ' + pref.text + ']\n' + pdfText;
+              kg2bInfo = { url: externalUrl, pdfHref: pref.href, pdfText: pref.text, pdfLength: pdfText.length, totalLinks: pdfLinks.length };
             } catch (e) {
-              kg2bInfo = { url: externalUrl, pdfError: e.message };
+              kg2bInfo = { url: externalUrl, pdfError: e.message, candidateHref: pref.href, totalLinks: pdfLinks.length };
             }
           } else {
-            kg2bInfo = { url: externalUrl, pdfError: 'no_pdf_link_found' };
+            kg2bInfo = { url: externalUrl, pdfError: 'no_pdf_link_found', totalLinks: pdfLinks.length, linkSamples: pdfLinks.slice(0, 5), pageTextPreview: kg2bPageText.slice(0, 300) };
           }
           // kg2b 컨텐츠 포함해서 재매칭
           matched = findOurInText(combinedText);
