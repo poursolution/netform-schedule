@@ -277,11 +277,15 @@ app.post('/verify', requireAuth, async (req, res) => {
         });
         if (externalUrl && /kg2b\.co\.kr/i.test(externalUrl)) {
           kg2bFollowed = true;
-          await page.goto(externalUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-          await page.waitForTimeout(5000); // AJAX·폰트·이미지 대기
+          // networkidle 까지 대기 (AJAX/lazy-load 완료)
+          await page.goto(externalUrl, { waitUntil: 'networkidle', timeout: 45000 }).catch(async () => {
+            // networkidle 타임아웃이면 domcontentloaded 로 fallback
+            await page.goto(externalUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          });
+          await page.waitForTimeout(3000);
           // 스크롤로 추가 콘텐츠 로드 유도
           await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
-          await page.waitForTimeout(1500);
+          await page.waitForTimeout(2000);
           // kg2b 페이지 전체 텍스트
           const kg2bPageText = await page.evaluate(() => document.body?.innerText || '');
           combinedText += '\n\n[kg2b page]\n' + kg2bPageText;
@@ -330,7 +334,18 @@ app.post('/verify', requireAuth, async (req, res) => {
               kg2bInfo = { url: externalUrl, pdfError: e.message, candidateHref: pref.href, totalLinks: pdfLinks.length };
             }
           } else {
-            kg2bInfo = { url: externalUrl, pdfError: 'no_pdf_link_found', totalLinks: pdfLinks.length, linkSamples: pdfLinks.slice(0, 5), pageTextPreview: kg2bPageText.slice(0, 300) };
+            // 디버그: 페이지에 <iframe> 이 있으면 그 src 확인
+            const iframes = await page.evaluate(() => [...document.querySelectorAll('iframe')].map(f => f.src).filter(Boolean)).catch(() => []);
+            // 디버그: 전체 href 개수 + 특징적인 키워드 등장 위치
+            const hrefStats = await page.evaluate(() => {
+              const allA = [...document.querySelectorAll('a')];
+              const all = allA.map(a => ({ href: a.href, text: (a.innerText || '').trim().slice(0, 50) }));
+              const pdfMentioned = document.body.innerText.includes('.pdf');
+              const 공고서Idx = document.body.innerText.indexOf('공고서');
+              const 공고원문Idx = document.body.innerText.indexOf('공고원문');
+              return { totalAnchors: allA.length, pdfMentioned, 공고서Idx, 공고원문Idx, firstLinks: all.slice(0, 10) };
+            }).catch(() => null);
+            kg2bInfo = { url: externalUrl, pdfError: 'no_pdf_link_found', totalLinks: pdfLinks.length, linkSamples: pdfLinks.slice(0, 5), pageTextPreview: kg2bPageText.slice(0, 800), iframes, hrefStats };
           }
           // kg2b 컨텐츠 포함해서 재매칭
           matched = findOurInText(combinedText);
