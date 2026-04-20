@@ -158,9 +158,60 @@ app.post('/verify', requireAuth, async (req, res) => {
     }
 
     // 우리 공법/특허 매칭
-    const matched = findOurInText(combinedText);
-    const duration = Date.now() - startedAt;
+    let matched = findOurInText(combinedText);
+    let kg2bFollowed = false;
+    let kg2bInfo = null;
 
+    // === kg2b follow: K-APT에서 매칭 실패 시 "해당 공고 가기" 링크 따라가 kg2b 공고서 PDF 파싱 ===
+    if (!matched) {
+      try {
+        const externalUrl = await page.evaluate(() => {
+          const links = [...document.querySelectorAll('a')];
+          const found = links.find(a =>
+            /kg2b\.co\.kr/i.test(a.href || '') ||
+            ((a.innerText || '').trim() === '해당 공고 가기')
+          );
+          return found?.href || null;
+        });
+        if (externalUrl && /kg2b\.co\.kr/i.test(externalUrl)) {
+          kg2bFollowed = true;
+          await page.goto(externalUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          await page.waitForTimeout(3000);
+          // kg2b 페이지 전체 텍스트
+          const kg2bPageText = await page.evaluate(() => document.body?.innerText || '');
+          combinedText += '\n\n[kg2b page]\n' + kg2bPageText;
+          // 공고서 PDF 링크 탐색 (파일명이 .pdf 이거나 href에 .pdf)
+          const pdfLink = await page.evaluate(() => {
+            const links = [...document.querySelectorAll('a')];
+            const pdfs = links
+              .map(a => ({ href: a.href, text: (a.innerText || '').trim() }))
+              .filter(l => /\.pdf($|\?)/i.test(l.href) || /\.pdf$/i.test(l.text));
+            // 우선순위: 공고서/공고문 포함된 것 먼저
+            const pref = pdfs.find(l => /공고서|공고문|입찰공고/.test(l.text)) || pdfs[0];
+            return pref ? { href: pref.href, text: pref.text } : null;
+          });
+          if (pdfLink) {
+            try {
+              const buffer = await page.request.get(pdfLink.href, { timeout: 30000 }).then(r => r.body());
+              const data = await pdf(buffer);
+              const pdfText = (data.text || '').slice(0, 50000);
+              combinedText += '\n\n[kg2b 공고서 PDF: ' + pdfLink.text + ']\n' + pdfText;
+              kg2bInfo = { url: externalUrl, pdfHref: pdfLink.href, pdfText: pdfLink.text, pdfLength: pdfText.length };
+            } catch (e) {
+              kg2bInfo = { url: externalUrl, pdfError: e.message };
+            }
+          } else {
+            kg2bInfo = { url: externalUrl, pdfError: 'no_pdf_link_found' };
+          }
+          // kg2b 컨텐츠 포함해서 재매칭
+          matched = findOurInText(combinedText);
+        }
+      } catch (e) {
+        kg2bInfo = { error: e.message };
+      }
+    }
+
+    const duration = Date.now() - startedAt;
     await context.close();
 
     if (matched) {
@@ -172,10 +223,13 @@ app.post('/verify', requireAuth, async (req, res) => {
         bidNum,
         pageTextLength: pageText.length,
         attachmentCount: attachResults.length,
+        kg2bFollowed,
+        kg2bInfo,
+        source: kg2bFollowed ? 'kapt_with_kg2b_follow' : 'kapt_bid_detail',
         durationMs: duration,
         message: matched.type === 'patent'
-          ? `공고에서 우리 특허 [${matched.value}] 확인됨`
-          : `공고에서 우리 공법 [${matched.value}] 확인됨`,
+          ? `공고에서 우리 특허 [${matched.value}] 확인됨${kg2bFollowed ? ' (kg2b 공고서 경유)' : ''}`
+          : `공고에서 우리 공법 [${matched.value}] 확인됨${kg2bFollowed ? ' (kg2b 공고서 경유)' : ''}`,
       });
     }
 
@@ -186,6 +240,8 @@ app.post('/verify', requireAuth, async (req, res) => {
       pageTextLength: pageText.length,
       attachmentCount: attachResults.length,
       attachments: attachResults,
+      kg2bFollowed,
+      kg2bInfo,
       durationMs: duration,
       pageTextPreview: pageText.slice(0, 500),
     });
@@ -284,10 +340,20 @@ async function searchKaptByAptName(aptName, ptDate, opts = {}) {
     const dateEnd = fmt(new Date(target.getTime() + 90 * 86400000));
     const dateStart = fmt(new Date(target.getTime() - 365 * 86400000));
 
-    // K-APT bidList.do: searchBidGb=bid_gb_1 (입찰공고), searchDateGb=reg (등록일)
-    const listUrl = `https://www.k-apt.go.kr/bid/bidList.do?searchBidGb=bid_gb_1&bidTitle=&aptName=${encodeURIComponent(aptName)}&searchDateGb=reg&dateStart=${dateStart}&dateEnd=${dateEnd}`;
-    await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(3000);
+    // K-APT bidList.do: bid_gb_1(입찰공고) 먼저, 없으면 bid_gb_3(입찰결과) 시도
+    // 기한 지난 건은 결과공고로만 남아있는 경우가 많음
+    const bidGbOrder = ['bid_gb_1', 'bid_gb_3'];
+    let listUrl = '';
+    for (const bidGb of bidGbOrder) {
+      listUrl = `https://www.k-apt.go.kr/bid/bidList.do?searchBidGb=${bidGb}&bidTitle=&aptName=${encodeURIComponent(aptName)}&searchDateGb=reg&dateStart=${dateStart}&dateEnd=${dateEnd}`;
+      await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(3000);
+      const hasData = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll('tbody tr, table tr')].filter(r => r.querySelectorAll('td').length > 1);
+        return rows.length > 0 && document.body.innerText.length > 1500;
+      });
+      if (hasData) break; // 데이터 있으면 여기서 멈춤
+    }
 
     // 3) 검색 form 실제 제출 시도 (aptName input이 있으면 fill + submit)
     const formSubmitted = await page.evaluate((apt) => {
