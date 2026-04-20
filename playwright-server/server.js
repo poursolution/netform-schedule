@@ -490,6 +490,82 @@ app.post('/verify', requireAuth, async (req, res) => {
   }
 });
 
+// === Phase 1: K-APT 전체 공고 리스트 크롤링 (aptName 필터 없이) ===
+// 사용: POST /admin/kapt-list-crawl { startDate, endDate, pageNo, bidGb }
+// 목적: aptName 없어도 bidList.do 가 결과 반환하는지 검증 + 초기 캐시 구축용
+app.post('/admin/kapt-list-crawl', requireAuth, async (req, res) => {
+  const { startDate, endDate, pageNo = 1, bidGb = 'bid_gb_1' } = req.body || {};
+  if (!startDate || !endDate) return res.status(400).json({ error: 'startDate and endDate required (YYYY-MM-DD)' });
+  const startedAt = Date.now();
+  let context = null;
+  try {
+    const browser = await getBrowser();
+    context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      locale: 'ko-KR',
+      extraHTTPHeaders: { 'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8' },
+      ignoreHTTPSErrors: true,
+    });
+    const page = await context.newPage();
+    // 1) 메인 접속 (세션 쿠키)
+    await page.goto('https://www.k-apt.go.kr/', { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(1500);
+    // 2) 리스트 페이지 (aptName 비움)
+    const listUrl = `https://www.k-apt.go.kr/bid/bidList.do?searchBidGb=${bidGb}&bidTitle=&aptName=&searchDateGb=reg&dateStart=${startDate}&dateEnd=${endDate}&pageNo=${pageNo}`;
+    await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(3500);
+    // 3) 차단 여부 먼저 체크
+    const pageText = await page.evaluate(() => document.body?.innerText || '');
+    const blocked = /반복 요청이 차단|차단되었습니다/.test(pageText);
+    if (blocked) {
+      await context.close();
+      return res.json({ status: 'blocked', durationMs: Date.now() - startedAt, pageTextPreview: pageText.slice(0, 200) });
+    }
+    // 4) 공고 row 추출 (표 구조에서 cells + onclick 기반 bidNum)
+    const result = await page.evaluate(() => {
+      const bids = [];
+      const tables = [...document.querySelectorAll('table')];
+      for (const t of tables) {
+        const trs = [...t.querySelectorAll('tbody tr, :scope > tr')];
+        const dataRows = trs.filter(r => r.querySelectorAll('td').length > 2);
+        for (const r of dataRows) {
+          const cells = [...r.querySelectorAll('td')].map(td => td.innerText.trim());
+          const allAttr = [...r.querySelectorAll('a,tr,td')].map(el => (el.getAttribute('onclick') || '') + ' ' + (el.getAttribute('href') || '')).join(' ');
+          const bidMatch = allAttr.match(/['"(]\s*([a-z0-9_]+_\d+|\d{14,18})\s*['")]/i) ||
+                           allAttr.match(/bidNum['"=\s:]+([a-z0-9_]+_\d+|\d{14,18})/i) ||
+                           (cells.join(' ')).match(/(kg\w*_\d+)/i) ||
+                           (cells.join(' ')).match(/(\d{17})/);
+          if (bidMatch) {
+            bids.push({ bidNum: bidMatch[1], cells: cells.map(c => c.slice(0, 80)) });
+          }
+        }
+      }
+      // pagination 정보 추출
+      const pageLinks = [...document.querySelectorAll('a,button')]
+        .map(el => (el.innerText || '').trim())
+        .filter(t => /^\d+$/.test(t) || /다음|이전|처음|끝/.test(t));
+      const bodyLen = (document.body?.innerText || '').length;
+      return { bids, pageLinks: pageLinks.slice(0, 20), bodyLen };
+    });
+    await context.close();
+    return res.json({
+      status: 'ok',
+      listUrl,
+      pageNo,
+      bidGb,
+      dateRange: { startDate, endDate },
+      bidCount: result.bids.length,
+      bids: result.bids,
+      pageLinks: result.pageLinks,
+      bodyLen: result.bodyLen,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (e) {
+    if (context) await context.close().catch(() => {});
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 function findOurInText(text) {
   if (!text) return null;
   for (const tech of OUR_TECHNOLOGIES) {
