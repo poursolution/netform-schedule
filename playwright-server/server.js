@@ -137,6 +137,14 @@ const OUR_PATENTS = [
 ];
 const OUR_PATENT_NUMBERS = new Set(OUR_PATENTS.map(p => p.num));
 
+// 타사 공법/브랜드 (공고문에서 경쟁 언급 탐지용 — 필요시 확장)
+const COMPETITOR_TECHNOLOGIES = [
+  '고어텍스', '고어', 'GORE-TEX', 'Gore-Tex', 'Goretex',
+  '4A', '제오폴리머', 'Geopolymer',
+  '엑스포', 'EXPO',
+  '큐담', '엠포스',
+];
+
 // URL 인코딩 헬퍼: 한글 같은 unescaped char 포함 URL을 Playwright가 처리 가능한 형태로 변환
 // decodeURI 한 번 돌려서 이미 인코딩된 경우 double-encoding 방지
 function safeUrl(u) {
@@ -453,12 +461,20 @@ app.post('/verify', requireAuth, async (req, res) => {
     const duration = Date.now() - startedAt;
     await context.close();
 
+    // 타사 언급 + 우리 특허 전체 리스트 수집 (검증완료 여부 무관)
+    const competitor = findCompetitorInText(combinedText);
+    const ourPatents = findAllOurPatentsInText(combinedText);
+
     if (matched) {
       return res.json({
         status: 'verified',
         isOurAnnouncement: true,
         matchedBy: matched.type,
         matchedValue: matched.value,
+        patentName: matched.patentName,
+        ourPatents,
+        competitorPatents: competitor.patents,
+        competitorTechs: competitor.techs,
         bidNum,
         pageTextLength: pageText.length,
         attachmentCount: attachResults.length,
@@ -565,6 +581,40 @@ app.post('/admin/kapt-list-crawl', requireAuth, async (req, res) => {
     return res.status(500).json({ error: e.message });
   }
 });
+
+// 타사 공법·특허번호 감지 (공고문에 경쟁사 언급 있는지)
+function findCompetitorInText(text) {
+  const result = { patents: [], techs: [] };
+  if (!text) return result;
+  const seen = new Set();
+  for (const m of text.matchAll(/10-\d{7}/g)) {
+    const num = m[0];
+    if (seen.has(num)) continue;
+    seen.add(num);
+    if (!OUR_PATENT_NUMBERS.has(num)) result.patents.push(num);
+  }
+  for (const tech of COMPETITOR_TECHNOLOGIES) {
+    if (containsTechnology(text, tech)) {
+      if (!result.techs.includes(tech)) result.techs.push(tech);
+    }
+  }
+  return result;
+}
+
+// 우리 회사 특허번호 전체 목록 (첫 매칭 뿐만이 아닌 모든 매칭)
+function findAllOurPatentsInText(text) {
+  if (!text) return [];
+  const found = new Set();
+  for (const m of text.matchAll(/10-\d{7}/g)) {
+    if (OUR_PATENT_NUMBERS.has(m[0])) found.add(m[0]);
+  }
+  const normText = text.replace(/\s+/g, ' ');
+  for (const p of OUR_PATENTS) {
+    if (!p.name || p.name.length < 15) continue;
+    if (normText.includes(p.name.replace(/\s+/g, ' ').trim())) found.add(p.num);
+  }
+  return [...found];
+}
 
 function findOurInText(text) {
   if (!text) return null;

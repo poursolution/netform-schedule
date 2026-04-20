@@ -9100,34 +9100,93 @@ import { sendJandiNotification } from './utils/jandi.js';
                                               return <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}>⚠ 미정산</span>;
                                             })()}
                                             {!isSelfPT && settlement.selfSales && <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#f3e8ff', color: '#7c3aed' }}>본인영업</span>}
-                                            {/* ✓ K-APT 검증완료 배지 (matchedBy · matchedValue · bidNum 구체 표시) */}
+                                            {/* ✓ K-APT 검증완료 배지 (클릭시 새창으로 상세) */}
                                             {s?.kaptVerified?.status === 'verified' && (() => {
                                               const kv = s.kaptVerified;
-                                              let label = '';
-                                              if (kv.matchedBy === 'technology') {
-                                                label = `✓ ${kv.matchedValue || ''}공법 확인`;
-                                              } else if (kv.matchedBy === 'patent') {
-                                                label = `✓ 특허 ${kv.matchedValue || ''} 확인`;
-                                              } else if (kv.matchedBy === 'patent_name') {
-                                                label = `✓ 특허명 확인${kv.matchedValue ? ` (${kv.matchedValue})` : ''}`;
-                                              } else {
-                                                label = `✓ 검증완료`;
-                                              }
-                                              const bidNum = kv.bidNum || s?.bidNo || '';
-                                              const tooltip = [
-                                                `검증완료: ${kv.matchedBy || ''} = ${kv.matchedValue || ''}`,
-                                                bidNum ? `공고번호: ${bidNum}` : '',
-                                                kv.bidTitle ? `제목: ${kv.bidTitle}` : '',
-                                                kv.bidKaptname ? `단지명(K-APT): ${kv.bidKaptname}` : '',
-                                                kv.verifiedAt ? `검증시각: ${kv.verifiedAt.slice(0, 19).replace('T', ' ')}` : '',
-                                              ].filter(Boolean).join('\n');
+                                              let shortLabel = '';
+                                              if (kv.matchedBy === 'technology') shortLabel = `✓ ${kv.matchedValue || ''}공법`;
+                                              else if (kv.matchedBy === 'patent') shortLabel = `✓ 특허 ${kv.matchedValue || ''}`;
+                                              else if (kv.matchedBy === 'patent_name') shortLabel = `✓ 특허명 매칭`;
+                                              else shortLabel = `✓ 검증완료`;
+                                              const ourCount = (kv.ourPatents || []).length;
+                                              const compCount = (kv.competitorPatents || []).length + (kv.competitorTechs || []).length;
+                                              if (ourCount > 1) shortLabel += ` +${ourCount - 1}`;
                                               return (
-                                                <span
-                                                  style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#dcfce7', color: '#166534', border: '1px solid #86efac' }}
-                                                  title={tooltip}
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const bidNum = kv.bidNum || s?.bidNo || '';
+                                                    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>K-APT 검증 상세 — ${card.siteName || ''}</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"맑은 고딕",sans-serif;margin:0;padding:20px;background:#f8fafc;color:#1e293b;}
+h1{font-size:18px;margin:0 0 4px;}
+h2{font-size:13px;color:#64748b;margin:0 0 20px;font-weight:500;}
+.sec{background:white;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:12px;}
+.sec h3{font-size:12px;font-weight:700;margin:0 0 8px;color:#475569;text-transform:uppercase;letter-spacing:0.05em;}
+.ok{color:#166534;}
+.warn{color:#92400e;}
+.bad{color:#dc2626;}
+.row{display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px dashed #f1f5f9;}
+.row:last-child{border-bottom:none;}
+.row .k{color:#64748b;}
+.row .v{color:#1e293b;font-weight:600;}
+.chip{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;margin:2px 4px 2px 0;}
+.chip.ok{background:#dcfce7;color:#166534;}
+.chip.warn{background:#fef3c7;color:#92400e;}
+.chip.bad{background:#fee2e2;color:#dc2626;}
+.chip.info{background:#dbeafe;color:#1e40af;}
+.empty{color:#94a3b8;font-size:12px;font-style:italic;}
+.k-apt-link{display:inline-block;margin-top:6px;padding:6px 10px;background:#2563eb;color:white;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600;}
+</style></head><body>
+<h1>🏢 K-APT 검증 상세</h1>
+<h2>${(card.siteName || '').replace(/</g, '&lt;')} · ${card.date || ''} · ${(card.manager || '').replace(/</g, '&lt;')}</h2>
+
+<div class="sec">
+  <h3>✅ 우리 회사 매칭</h3>
+  <div class="row"><span class="k">매칭 유형</span><span class="v ok">${kv.matchedBy || '-'}</span></div>
+  <div class="row"><span class="k">매칭 값</span><span class="v ok">${kv.matchedValue || '-'}</span></div>
+  ${kv.patentName ? `<div class="row"><span class="k">특허명</span><span class="v">${kv.patentName.replace(/</g, '&lt;')}</span></div>` : ''}
+  <div class="row"><span class="k">우리 특허 전체</span><span class="v">${
+    (kv.ourPatents && kv.ourPatents.length)
+      ? kv.ourPatents.map(p => `<span class="chip ok">${p}</span>`).join(' ')
+      : '<span class="empty">없음</span>'
+  }</span></div>
+</div>
+
+<div class="sec">
+  <h3>⚠ 타사 언급 (경쟁사 공법·특허)</h3>
+  <div class="row"><span class="k">타사 공법</span><span class="v">${
+    (kv.competitorTechs && kv.competitorTechs.length)
+      ? kv.competitorTechs.map(t => `<span class="chip warn">${t}</span>`).join(' ')
+      : '<span class="empty">없음</span>'
+  }</span></div>
+  <div class="row"><span class="k">타사 특허</span><span class="v">${
+    (kv.competitorPatents && kv.competitorPatents.length)
+      ? kv.competitorPatents.map(p => `<span class="chip warn">${p}</span>`).join(' ')
+      : '<span class="empty">없음</span>'
+  }</span></div>
+</div>
+
+<div class="sec">
+  <h3>📋 공고 정보</h3>
+  <div class="row"><span class="k">공고번호</span><span class="v">${bidNum || '<span class="empty">없음</span>'}</span></div>
+  <div class="row"><span class="k">공고제목</span><span class="v">${(kv.bidTitle || '').replace(/</g, '&lt;') || '<span class="empty">없음</span>'}</span></div>
+  <div class="row"><span class="k">K-APT 단지명</span><span class="v">${(kv.bidKaptname || '').replace(/</g, '&lt;') || '<span class="empty">없음</span>'}</span></div>
+  <div class="row"><span class="k">검증시각</span><span class="v">${kv.verifiedAt ? kv.verifiedAt.slice(0, 19).replace('T', ' ') : '-'}</span></div>
+  <div class="row"><span class="k">검증 경로</span><span class="v">${kv.source || 'vps'}</span></div>
+  ${bidNum ? `<a class="k-apt-link" href="https://www.k-apt.go.kr/bid/bidDetail.do?bidNum=${encodeURIComponent(bidNum)}" target="_blank">K-APT 원본 페이지 열기 →</a>` : ''}
+</div>
+
+</body></html>`;
+                                                    const w = window.open('', '_blank', 'width=720,height=720,scrollbars=yes');
+                                                    if (w) { w.document.write(html); w.document.close(); }
+                                                    else alert('팝업이 차단되어 있습니다. 이 사이트의 팝업을 허용해주세요.');
+                                                  }}
+                                                  style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#dcfce7', color: '#166534', border: '1px solid #86efac', cursor: 'pointer' }}
+                                                  title="클릭: 검증 상세 새창으로 열기"
                                                 >
-                                                  {label}
-                                                </span>
+                                                  {shortLabel}{compCount > 0 ? ` · 타사 ${compCount}` : ''}
+                                                </button>
                                               );
                                             })()}
                                             {/* 🔍 K-APT 개별 검증 버튼 (모든 결과 - 승·무·패·지원·진행중, 단 승+정산완료는 숨김) */}
