@@ -528,11 +528,16 @@ app.post('/admin/jandi-login-test', requireAuth, async (req, res) => {
       ignoreHTTPSErrors: true,
     });
     const page = await context.newPage();
-    // 1) 팀 주소로 먼저 접근 (team 전용 로그인 URL 로 redirect 됨)
-    const teamUrl = `https://${team}.jandi.com/`;
-    await page.goto(teamUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(2000);
+    // 1) 로그인 페이지 직접 접근 (/login/ko) - jandi.com 공식 로그인 페이지
+    await page.goto('https://www.jandi.com/login/ko', { waitUntil: 'networkidle', timeout: 45000 }).catch(async () => {
+      await page.goto('https://www.jandi.com/login/ko', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    });
+    await page.waitForTimeout(3000); // SPA 렌더 대기
     const beforeUrl = page.url();
+    // 로그인 폼 감지 대기 (최대 10초)
+    try {
+      await page.waitForSelector('input[type="email"], input[type="password"], input[name="email"], input[name="password"]', { timeout: 10000 });
+    } catch (_) {}
     // 2) 로그인 폼 탐지 및 입력
     const loginResult = await page.evaluate(() => {
       const inputs = [...document.querySelectorAll('input')];
