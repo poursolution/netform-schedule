@@ -321,6 +321,58 @@ app.post('/verify', requireAuth, async (req, res) => {
             for (const m of urlMatches) out.push({ href: m[0], text: '(html-scan)', kind: 'html' });
             return out;
           });
+          // 공고원문이 JunjabidView 같은 별도 페이지 링크인 경우 1단계 더 follow
+          if (pdfLinks.length === 0) {
+            const junjaUrl = await page.evaluate(() => {
+              const anchors = [...document.querySelectorAll('a')];
+              const m = anchors.find(a => /JunjabidView|junjabidView|공고원문/i.test((a.href || '') + ' ' + (a.innerText || '')));
+              if (m && m.href && !m.href.endsWith('#')) return m.href;
+              // 버튼 onclick
+              const btns = [...document.querySelectorAll('button, a, span')];
+              const b = btns.find(el => /공고원문/.test(el.innerText || ''));
+              if (b) {
+                const oc = b.getAttribute('onclick') || '';
+                const m2 = oc.match(/['"]([^'"\s)]+JunjabidView[^'"\s)]+)['"]/i);
+                if (m2) return new URL(m2[1], location.href).href;
+              }
+              return null;
+            }).catch(() => null);
+            if (junjaUrl) {
+              try {
+                await page.goto(junjaUrl, { waitUntil: 'networkidle', timeout: 45000 }).catch(async () => {
+                  await page.goto(junjaUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                });
+                await page.waitForTimeout(3000);
+                const junjaText = await page.evaluate(() => document.body?.innerText || '');
+                combinedText += '\n\n[kg2b JunjabidView]\n' + junjaText;
+                // PDF 재탐색 (JunjabidView 페이지에서)
+                const junjaLinks = await page.evaluate(() => {
+                  const out = [];
+                  for (const a of document.querySelectorAll('a')) {
+                    const href = a.href || '', text = (a.innerText || '').trim(), onclick = a.getAttribute('onclick') || '';
+                    if (/\.(pdf|hwp|hwpx)($|\?)/i.test(href) || /\.(pdf|hwp|hwpx)/i.test(text) || /fileDown|fileView|downLoad|attachFile|getFile|board/i.test(href + ' ' + onclick)) {
+                      out.push({ href, text, kind: 'a' });
+                    }
+                  }
+                  for (const b of document.querySelectorAll('button, span[onclick], div[onclick]')) {
+                    const onclick = b.getAttribute('onclick') || '', text = (b.innerText || '').trim();
+                    if (/fileDown|fileView|downLoad|\.pdf|\.hwp/i.test(onclick) || /\.(pdf|hwp|hwpx)/i.test(text)) {
+                      const urlMatch = onclick.match(/https?:\/\/[^'"\s)]+/i);
+                      const idMatch = onclick.match(/['"](\d+)['"]|fileId=(\d+)|fileSeq=(\d+)/);
+                      out.push({ href: urlMatch ? urlMatch[0] : '', text, onclick, fileId: (idMatch && (idMatch[1]||idMatch[2]||idMatch[3])) || '', kind: 'btn' });
+                    }
+                  }
+                  const html = document.documentElement.outerHTML;
+                  for (const m of html.matchAll(/https?:\/\/[^'"\s<>]+\.(?:pdf|hwp|hwpx)/gi)) out.push({ href: m[0], text: '(html-scan)', kind: 'html' });
+                  return out;
+                });
+                pdfLinks.push(...junjaLinks);
+                kg2bInfo = { ...kg2bInfo || {}, junjaUrl, junjaLinksCount: junjaLinks.length };
+              } catch (e) {
+                kg2bInfo = { url: externalUrl, junjaUrl, junjaError: e.message };
+              }
+            }
+          }
           // 우선순위: 공고서/공고문/입찰공고 텍스트 있는 것 → 나머지 → 비어있어도 첫번째
           const pref = pdfLinks.find(l => /공고서|공고문|입찰공고/.test(l.text)) || pdfLinks.find(l => /\.pdf/i.test(l.href)) || pdfLinks[0];
           if (pref && pref.href) {
