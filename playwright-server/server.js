@@ -560,15 +560,25 @@ app.post('/admin/jandi-login-test', requireAuth, async (req, res) => {
       };
     });
     if (!loginResult.hasEmailInput || !loginResult.hasPassInput) {
-      // 로그인 페이지 form이 없으면 이미 로그인돼있을 가능성
+      // 로그인 페이지 form이 없으면 이미 로그인돼있을 가능성 OR 다른 페이지 구조
       const title = await page.title();
-      const pageText = (await page.evaluate(() => document.body?.innerText || '')).slice(0, 300);
+      const pageText = (await page.evaluate(() => document.body?.innerText || '')).slice(0, 500);
+      // 추가 디버그: 모든 버튼/링크 + HTML 스니펫
+      const debug = await page.evaluate(() => {
+        return {
+          links: [...document.querySelectorAll('a')].slice(0, 20).map(a => ({ text: (a.innerText || '').trim().slice(0, 40), href: (a.href || '').slice(0, 100) })).filter(l => l.text),
+          buttons: [...document.querySelectorAll('button')].slice(0, 20).map(b => ({ text: (b.innerText || '').trim().slice(0, 40), onclick: (b.getAttribute('onclick') || '').slice(0, 80) })).filter(b => b.text),
+          iframes: [...document.querySelectorAll('iframe')].map(f => f.src),
+          htmlSnippet: document.body?.innerHTML?.slice(0, 2000) || '',
+        };
+      });
       await context.close();
       return res.json({
         status: 'no_login_form',
         beforeUrl, afterUrl: page.url(), title,
         pageTextPreview: pageText,
         inputDetection: loginResult,
+        debug,
         durationMs: Date.now() - startedAt,
       });
     }
