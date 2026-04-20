@@ -65,11 +65,23 @@ function requireAuth(req, res, next) {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '1.0.0',
+    version: '1.1.0',
     ourTechnologies: OUR_TECHNOLOGIES,
     ourPatentCount: OUR_PATENT_NUMBERS.size,
     hasAuth: AUTH_TOKEN !== 'change-me-in-production',
   });
+});
+
+// 디버그: K-APT 검색 페이지 구조 탐색
+app.get('/debug/kapt-list', requireAuth, async (req, res) => {
+  const { aptName, ptDate } = req.query;
+  if (!aptName) return res.status(400).json({ error: 'aptName required' });
+  try {
+    const info = await searchKaptByAptName(aptName, ptDate, { debug: true });
+    return res.json(info);
+  } catch (e) {
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
 });
 
 // K-APT 공고 상세 페이지 접근 + PDF 파싱 + 우리 공법/특허 매칭
@@ -249,6 +261,127 @@ function similarityScore(name1, name2) {
   return Math.max(0, 1 - dist / maxLen) * 0.6; // 0 ~ 0.6
 }
 
+// === K-APT 직접 검색 (data.go.kr가 놓치는 취소 공고/최신 공고 커버) ===
+// aptName으로 K-APT 목록 페이지 긁어 bidNum 후보 수집
+async function searchKaptByAptName(aptName, ptDate, opts = {}) {
+  const debug = !!opts.debug;
+  const browser = await getBrowser();
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    locale: 'ko-KR',
+    extraHTTPHeaders: { 'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8' },
+  });
+  const page = await context.newPage();
+  try {
+    // 1) 메인 (세션 쿠키)
+    await page.goto('https://www.k-apt.go.kr/', { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(1000);
+
+    // 2) ptDate 기준 ±12개월 범위 검색
+    const target = ptDate ? new Date(ptDate) : new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const dateEnd = fmt(new Date(target.getTime() + 90 * 86400000));
+    const dateStart = fmt(new Date(target.getTime() - 365 * 86400000));
+
+    // K-APT bidList.do: searchBidGb=bid_gb_1 (입찰공고), searchDateGb=reg (등록일)
+    const listUrl = `https://www.k-apt.go.kr/bid/bidList.do?searchBidGb=bid_gb_1&bidTitle=&aptName=${encodeURIComponent(aptName)}&searchDateGb=reg&dateStart=${dateStart}&dateEnd=${dateEnd}`;
+    await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(3000);
+
+    // 3) 검색 form 실제 제출 시도 (aptName input이 있으면 fill + submit)
+    const formSubmitted = await page.evaluate((apt) => {
+      const inputs = [...document.querySelectorAll('input')];
+      const aptInput = inputs.find(el => el.name === 'aptName' || el.id === 'aptName' || el.placeholder?.includes('단지명'));
+      if (aptInput) {
+        aptInput.value = apt;
+        aptInput.dispatchEvent(new Event('input', { bubbles: true }));
+        aptInput.dispatchEvent(new Event('change', { bubbles: true }));
+        // 검색 버튼 찾아 클릭
+        const btn = document.querySelector('button.btn_search, a.btn_search, button[onclick*="search"], a[onclick*="goSearch"], a.btn_srch, #btnSearch');
+        if (btn) { btn.click(); return 'clicked'; }
+        // 폼 직접 submit
+        const form = aptInput.closest('form');
+        if (form) { form.submit(); return 'submitted'; }
+        return 'no_button';
+      }
+      return 'no_input';
+    }, aptName);
+    await page.waitForTimeout(3500);
+
+    // 3b) 결과 행에서 bidNum + bidKaptname + bidTitle + bidRegdate 추출
+    const extraction = await page.evaluate(() => {
+      const out = { candidates: [], tablesFound: [], pageTitle: document.title, bodyPreview: (document.body?.innerText || '').slice(0, 800) };
+      // 모든 table을 수집하고 각 컬럼 개수 + 샘플 row 기록
+      const tables = [...document.querySelectorAll('table')];
+      for (let ti = 0; ti < tables.length; ti++) {
+        const t = tables[ti];
+        const trs = [...t.querySelectorAll('tbody tr'), ...t.querySelectorAll(':scope > tr')];
+        const dataRows = trs.filter(r => r.querySelectorAll('td').length > 1);
+        if (dataRows.length === 0) continue;
+        const sample = dataRows.slice(0, 3).map(r => ({
+          cells: [...r.querySelectorAll('td')].map(td => td.innerText.trim().slice(0, 60)),
+          links: [...r.querySelectorAll('a')].slice(0, 3).map(a => ({
+            text: (a.innerText || '').trim().slice(0, 40),
+            onclick: (a.getAttribute('onclick') || '').slice(0, 120),
+            href: (a.href || '').slice(0, 120),
+          })),
+        }));
+        out.tablesFound.push({
+          index: ti,
+          className: t.className,
+          id: t.id,
+          rowCount: dataRows.length,
+          colCount: dataRows[0]?.querySelectorAll('td').length || 0,
+          sample,
+        });
+        // bidNum 추출 시도
+        for (const r of dataRows) {
+          const cells = [...r.querySelectorAll('td')].map(td => td.innerText.trim());
+          const allAttr = [...r.querySelectorAll('a,tr,td')].map(el => (el.getAttribute('onclick') || '') + ' ' + (el.getAttribute('href') || '')).join(' ');
+          const bidMatch = allAttr.match(/['"(]\s*(\d{14,18})\s*['")]/) || allAttr.match(/bidNum['"=\s:]+(\d{14,18})/) || (cells.join(' ')).match(/(\d{17})/);
+          if (bidMatch) {
+            out.candidates.push({ tableIndex: ti, bidNum: bidMatch[1], cells: cells.map(c => c.slice(0, 60)) });
+          }
+        }
+      }
+      return out;
+    });
+    extraction.formSubmitted = formSubmitted;
+
+    if (debug) {
+      return { aptName, ptDate, listUrl, dateStart, dateEnd, ...extraction };
+    }
+
+    // 셀 배열에서 단지명·공고명·등록일 추정
+    // K-APT 목록 통상 컬럼: [번호, 공고번호, 공고명, 단지명, 주소, 등록일, 상태] 또는 비슷한 변형
+    const parsed = extraction.candidates.map(c => {
+      const datePattern = /\d{4}[-.]\d{2}[-.]\d{2}/;
+      const bidRegdate = (c.cells.find(cel => datePattern.test(cel)) || '').match(datePattern)?.[0]?.replace(/\./g, '-') || '';
+      // 단지명은 aptName과 유사도 가장 높은 셀
+      let bidKaptname = '';
+      let bestScore = 0;
+      for (const cel of c.cells) {
+        if (!cel || datePattern.test(cel) || /^\d+$/.test(cel)) continue;
+        const s = similarityScore(aptName, cel);
+        if (s > bestScore) { bestScore = s; bidKaptname = cel; }
+      }
+      // 공고명은 가장 긴 텍스트 셀 (보통 제목이 길다)
+      const sortedByLen = [...c.cells].filter(cel => cel && !datePattern.test(cel) && !/^\d+$/.test(cel)).sort((a, b) => b.length - a.length);
+      const bidTitle = sortedByLen[0] || '';
+      return {
+        bidNum: c.bidNum,
+        bidKaptname: bidKaptname || aptName,
+        bidTitle,
+        bidRegdate,
+      };
+    });
+    return parsed;
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 // data.go.kr 단지명 검색 → 유사도 1/2/3순위 → K-APT 파싱 시도
 async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey }, res) {
   const startedAt = Date.now();
@@ -283,12 +416,29 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
       } catch (e) { /* continue */ }
     }
 
+    // data.go.kr 0건이면 K-APT 직접 검색 fallback (취소 공고·최신 공고 커버)
+    let kaptFallbackUsed = false;
+    if (allCandidates.length === 0) {
+      try {
+        const kaptCandidates = await searchKaptByAptName(siteName, ptDate);
+        if (kaptCandidates && kaptCandidates.length > 0) {
+          kaptFallbackUsed = true;
+          for (const c of kaptCandidates) {
+            if (!seen.has(c.bidNum)) {
+              seen.add(c.bidNum);
+              allCandidates.push(c);
+            }
+          }
+        }
+      } catch (e) { /* K-APT 검색 실패는 조용히 넘어감 */ }
+    }
+
     if (allCandidates.length === 0) {
       return res.json({
         status: 'needs_review',
         reason: 'site_not_found',
         siteName,
-        searched: { years: [year, year - 1, year - 2] },
+        searched: { years: [year, year - 1, year - 2], kaptFallbackTried: true },
         durationMs: Date.now() - startedAt,
       });
     }
@@ -374,7 +524,7 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
         bidNum: firstMatch.bid.bidNum,
         bidTitle: firstMatch.bid.bidTitle,
         bidKaptname: firstMatch.bid.bidKaptname,
-        source: 'siteName_ranked_search',
+        source: kaptFallbackUsed ? 'kapt_direct_search' : 'siteName_ranked_search',
         rankedAttempts: attempts,
         durationMs: Date.now() - startedAt,
         message: firstMatch.matched.type === 'patent'
