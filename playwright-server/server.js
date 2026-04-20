@@ -162,16 +162,47 @@ app.post('/verify', requireAuth, async (req, res) => {
     let kg2bFollowed = false;
     let kg2bInfo = null;
 
-    // === kg2b follow: K-APT에서 매칭 실패 시 "해당 공고 가기" 링크 따라가 kg2b 공고서 PDF 파싱 ===
+    // === kg2b follow: K-APT에서 매칭 실패 시 kg2b 공고서 PDF 직접 파싱 ===
     if (!matched) {
       try {
-        const externalUrl = await page.evaluate(() => {
-          const links = [...document.querySelectorAll('a')];
-          const found = links.find(a =>
-            /kg2b\.co\.kr/i.test(a.href || '') ||
-            ((a.innerText || '').trim() === '해당 공고 가기')
-          );
-          return found?.href || null;
+        // 0) bidNum이 kg2b_ prefix면 직접 URL 조합 (가장 확실한 경로)
+        let externalUrl = null;
+        const kg2bPrefix = String(bidNum).match(/^kg2b_(\d+)$/i);
+        if (kg2bPrefix) {
+          externalUrl = `https://www.kg2b.co.kr/user/bid_list/KaptBidView?bidcode=${kg2bPrefix[1]}`;
+        }
+        // 1) prefix 아니면 K-APT 페이지에서 링크/버튼/onclick/HTML 전역 탐색
+        if (!externalUrl) externalUrl = await page.evaluate(() => {
+          // 1) <a href="kg2b...">
+          const aTags = [...document.querySelectorAll('a')];
+          let found = aTags.find(a => /kg2b\.co\.kr/i.test(a.href || ''));
+          if (found) return found.href;
+          // 2) <a> 또는 <button> 텍스트가 "해당 공고 가기"
+          const allClickable = [...document.querySelectorAll('a,button,span,div')];
+          const btn = allClickable.find(el => ((el.innerText || '').trim().replace(/\s+/g, ' ')).includes('해당 공고 가기'));
+          if (btn) {
+            // 2a) 같은 element onclick 에서 kg2b URL 추출
+            const oc = btn.getAttribute('onclick') || '';
+            const m = oc.match(/https?:\/\/(?:www\.)?kg2b\.co\.kr[^'"\s)]+/i);
+            if (m) return m[0];
+            // 2b) href 가 있으면 (a 태그)
+            if (btn.href && /kg2b\.co\.kr/i.test(btn.href)) return btn.href;
+            // 2c) parent anchor 탐색
+            const parentA = btn.closest?.('a');
+            if (parentA?.href && /kg2b\.co\.kr/i.test(parentA.href)) return parentA.href;
+          }
+          // 3) 페이지 전체 HTML에서 kg2b URL 또는 KaptBidView?bidcode= 패턴 찾기
+          const html = document.documentElement.outerHTML;
+          const urlMatch = html.match(/https?:\/\/(?:www\.)?kg2b\.co\.kr\/[^'"\s)>]+/i) ||
+                           html.match(/kg2b\.co\.kr\/user\/bid_list\/KaptBidView\?bidcode=\d+/i);
+          if (urlMatch) {
+            const u = urlMatch[0];
+            return u.startsWith('http') ? u : ('https://www.' + u);
+          }
+          // 4) bidcode 값만 있으면 조합해서 kg2b URL 생성
+          const bidcodeMatch = html.match(/bidcode[=:]\s*["']?(\d+)/i) || html.match(/kg2b_(\d+)/i);
+          if (bidcodeMatch) return `https://www.kg2b.co.kr/user/bid_list/KaptBidView?bidcode=${bidcodeMatch[1]}`;
+          return null;
         });
         if (externalUrl && /kg2b\.co\.kr/i.test(externalUrl)) {
           kg2bFollowed = true;
