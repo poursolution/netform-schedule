@@ -775,55 +775,107 @@ async function searchKaptByAptName(aptName, ptDate, opts = {}) {
   }
 }
 
+// 한국 아파트 브랜드 사전 (공백 없는 이름에서 뒤쪽 브랜드 추출용)
+// 자주 등장하는 것 우선 포함. 필요시 확장.
+const APT_BRANDS = [
+  '래미안', '자이', '푸르지오', '힐스테이트', '더샵', '롯데캐슬', '아이파크',
+  '센트레빌', '위브', '스위첸', '하늘채', '데시앙', '금호어울림', '한양수자인',
+  '두산위브', '휴먼시아', '서해그랑블', 'e편한세상', '이편한세상', '에편한세상',
+  '벽산블루밍', '청구', '한솔', '솔파크', '코오롱하늘채', '우성', '삼환', '풍성',
+  '삼부', '럭키', '미래', '동아', '풍림', '남광', '상아', '진흥', '한솔솔파크',
+  '부영', '대우', '현대', '한라비발디', '한신휴', '쌍용스윗닷홈',
+  '이-편한세상', '이편한', '편한세상', '오션파크', '센트럴파크', '그랑블',
+  '더블루', '에코시티', '리버뷰', '파크뷰', '시티파크', '하이츠', '빌리지',
+  '파크리오', '오투', '더시티', '파밀리에', '해모로', '리슈빌', '해피트리',
+  '뜨란채', '숲속마을', '센트레빌시티',
+];
+
 // 단지명 변형 생성 (검색 커버리지 향상)
-// 예) "부산 광안 진로비치 아파트" → ["부산광안진로비치","부산광안","진로비치","부산","광안","부산진로비치"]
+// 예) "성산마을서해그랑블" → ["성산마을서해그랑블","성산마을","서해그랑블","그랑블","성산마을서해그랑블"...]
+// 예) "부산 광안 진로비치 아파트" → ["부산광안진로비치","진로비치","부산","광안",...]
 // 예) "하안주공7단지" → ["하안주공7단지","하안주공","하안","7단지","하안7단지"]
-// 예) "양산2차e편한세상아파트" → ["양산2차e편한세상","양산","2차","양산2차","양산e편한세상"]
 function generateAptNameVariations(name) {
   if (!name) return [];
   const raw = String(name);
   const cleaned = raw.replace(/\s+/g, '').replace(/아파트|APT|apt/gi, '').replace(/[()[\]]/g, '');
   const variations = new Set([cleaned]);
 
-  // 공백 분리 토큰 (각 토큰을 브랜드명 후보로) — "부산 광안 진로비치 아파트" → ["부산", "광안", "진로비치"]
+  // 1) 공백 분리 토큰
   const tokens = raw.split(/\s+/).map(t => t.replace(/아파트|APT|apt/gi, '').replace(/[()[\]]/g, '').trim()).filter(t => t.length >= 2);
   for (const tok of tokens) variations.add(tok);
 
-  // 접두 한글 2~4자 (행정구역 prefix)
+  // 2) 접두 한글 2~4자 (행정구역 prefix)
   const prefixMatch = cleaned.match(/^([가-힣]{2,4})/);
   const prefix = prefixMatch?.[1];
   if (prefix && prefix !== cleaned) variations.add(prefix);
 
-  // "N단지" 패턴
+  // 3) "N단지" 패턴
   const danjiMatch = cleaned.match(/(\d+)\s*단지/);
   if (danjiMatch) {
     variations.add(danjiMatch[1] + '단지');
     if (prefix) variations.add(prefix + danjiMatch[1] + '단지');
   }
-  // "N차" 패턴
+  // 4) "N차" 패턴
   const chaMatch = cleaned.match(/(\d+)차/);
   if (chaMatch && prefix) variations.add(prefix + chaMatch[0]);
 
-  // 숫자·단지·차 제거 한글만
+  // 5) 숫자·단지·차 제거 한글만
   const koreanOnly = cleaned.replace(/\d+|단지|차/g, '').trim();
   if (koreanOnly.length >= 2 && koreanOnly !== cleaned && koreanOnly !== prefix) {
     variations.add(koreanOnly);
   }
 
-  // prefix + 뒷부분(숫자·단지·차 제거)
+  // 6) prefix + 뒷부분
   if (prefix) {
     const afterPrefix = cleaned.slice(prefix.length).replace(/\d+차|\d+단지|\d+/g, '').trim();
     if (afterPrefix.length >= 2) variations.add(prefix + afterPrefix);
   }
 
-  // 브랜드 토큰 (가장 긴 한글 토큰을 브랜드로 간주) — "진로비치" 타입 추출
+  // 7) 공백 분리 토큰 중 가장 긴 한글 토큰 (브랜드)
   const longestKoreanToken = tokens
     .filter(t => /^[가-힣]+$/.test(t))
     .sort((a, b) => b.length - a.length)[0];
   if (longestKoreanToken && longestKoreanToken.length >= 2) {
     variations.add(longestKoreanToken);
     if (prefix && prefix !== longestKoreanToken) {
-      variations.add(prefix + longestKoreanToken); // "부산" + "진로비치" → "부산진로비치"
+      variations.add(prefix + longestKoreanToken);
+    }
+  }
+
+  // 8) ⭐ 브랜드 사전 매칭: cleaned 가 어느 브랜드로 끝나면 그 브랜드 추출
+  //    예) "성산마을서해그랑블" → "서해그랑블"
+  //    예) "양산2차e편한세상" → "e편한세상"
+  for (const brand of APT_BRANDS) {
+    if (cleaned.endsWith(brand)) {
+      variations.add(brand);
+      // prefix(지역) + 브랜드 조합도 추가 (지역 일부 + 브랜드)
+      if (prefix && prefix !== brand) {
+        variations.add(prefix + brand);
+      }
+      break;
+    }
+  }
+  // 8b) 브랜드가 중간에 있는 경우 (ex: "래미안영통파크" 가정)
+  for (const brand of APT_BRANDS) {
+    const idx = cleaned.indexOf(brand);
+    if (idx >= 0 && brand.length >= 3) {
+      variations.add(brand);
+      // 브랜드 뒤 문자열까지 (래미안영통파크 → 래미안영통파크)
+      const fromBrand = cleaned.slice(idx);
+      if (fromBrand.length >= brand.length + 1 && fromBrand.length <= brand.length + 6) {
+        variations.add(fromBrand);
+      }
+    }
+  }
+
+  // 9) ⭐ 접미사 슬라이싱 (브랜드 사전에 없는 아파트 대응)
+  //    cleaned 에서 숫자·단지·차 제거 후 뒤 3-5자 추출
+  const tailBase = cleaned.replace(/\d+(?:차|단지)?$/g, '').trim();
+  for (const len of [5, 4, 3]) {
+    if (tailBase.length > len) {
+      const tail = tailBase.slice(-len);
+      // 순수 한글이어야 의미 있음 (숫자/알파벳은 skip)
+      if (/^[가-힣]+$/.test(tail)) variations.add(tail);
     }
   }
 
