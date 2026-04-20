@@ -9100,8 +9100,8 @@ import { sendJandiNotification } from './utils/jandi.js';
                                               return <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}>⚠ 미정산</span>;
                                             })()}
                                             {!isSelfPT && settlement.selfSales && <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#f3e8ff', color: '#7c3aed' }}>본인영업</span>}
-                                            {/* 🔍 K-APT 개별 검증 버튼 (미정산·정산요청, 승 결과, 비자체PT, 중복 제외) */}
-                                            {!isSelfPT && !isSuperseded && currentResult === '승' && !settlement.completed && !settlement.selfSales && kaptWorkerUrl && (() => {
+                                            {/* 🔍 K-APT 개별 검증 버튼 (모든 결과 - 승·무·패·지원·진행중, 단 승+정산완료는 숨김) */}
+                                            {!isSelfPT && !isSuperseded && kaptWorkerUrl && !(currentResult === '승' && (settlement.completed || settlement.selfSales)) && (() => {
                                               const vkey = `${card.id}_${card.manager}`;
                                               const busy = kaptVerifyingId === vkey;
                                               const kv = s?.kaptVerified;
