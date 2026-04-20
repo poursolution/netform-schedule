@@ -111,6 +111,13 @@ const OUR_PATENTS = [
 ];
 const OUR_PATENT_NUMBERS = new Set(OUR_PATENTS.map(p => p.num));
 
+// URL 인코딩 헬퍼: 한글 같은 unescaped char 포함 URL을 Playwright가 처리 가능한 형태로 변환
+// decodeURI 한 번 돌려서 이미 인코딩된 경우 double-encoding 방지
+function safeUrl(u) {
+  if (!u) return u;
+  try { return encodeURI(decodeURI(u)); } catch (_) { return u; }
+}
+
 // 브라우저 인스턴스 (요청 간 재사용)
 let browserInstance = null;
 async function getBrowser() {
@@ -218,7 +225,7 @@ app.post('/verify', requireAuth, async (req, res) => {
         continue;
       }
       try {
-        const buffer = await page.request.get(att.href, { timeout: 30000 }).then(r => r.body());
+        const buffer = await page.request.get(safeUrl(att.href), { timeout: 30000 }).then(r => r.body());
         const data = await pdf(buffer);
         const pdfText = (data.text || '').slice(0, 30000);
         combinedText += '\n\n[PDF: ' + att.text + ']\n' + pdfText;
@@ -377,7 +384,7 @@ app.post('/verify', requireAuth, async (req, res) => {
           const pref = pdfLinks.find(l => /공고서|공고문|입찰공고/.test(l.text)) || pdfLinks.find(l => /\.pdf/i.test(l.href)) || pdfLinks[0];
           if (pref && pref.href) {
             try {
-              const buffer = await page.request.get(pref.href, { timeout: 30000 }).then(r => r.body());
+              const buffer = await page.request.get(safeUrl(pref.href), { timeout: 30000 }).then(r => r.body());
               const data = await pdf(buffer);
               const pdfText = (data.text || '').slice(0, 50000);
               combinedText += '\n\n[kg2b 공고서 PDF: ' + pref.text + ']\n' + pdfText;
