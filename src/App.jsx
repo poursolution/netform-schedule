@@ -8996,9 +8996,27 @@ import { sendJandiNotification } from './utils/jandi.js';
                                   const settlement = s?.settlement?.[card.manager] || {};
                                   const isSelfPT = !!s?.selfPT;
                                   const isSettled = !isSelfPT && (!!settlement.completed || !!settlement.selfSales);
+                                  // 정산 상태별 카드 배경 — 한눈에 구분
+                                  const isUnsettled = !isSelfPT && currentResult && currentResult !== '패' && !settlement.completed && !settlement.selfSales && !settlement.requested;
+                                  const isRequested = !isSelfPT && currentResult && currentResult !== '패' && !settlement.completed && !settlement.selfSales && !!settlement.requested;
+                                  const cardBg = isSelfPT ? '#faf5ff'
+                                    : isSettled ? '#f1f5f9'
+                                    : isRequested ? '#eff6ff'
+                                    : isUnsettled ? '#fffbeb'
+                                    : 'white';
+                                  const cardBorder = isSelfPT ? '#d8b4fe'
+                                    : isSettled ? '#cbd5e1'
+                                    : isRequested ? '#bfdbfe'
+                                    : isUnsettled ? '#fde68a'
+                                    : '#e2e8f0';
+                                  const cardAccent = isSelfPT ? '#a855f7'
+                                    : isSettled ? '#94a3b8'
+                                    : isRequested ? '#3b82f6'
+                                    : isUnsettled ? '#f59e0b'
+                                    : ss.border;
 
                                   return (
-                                    <div key={card.id + '_ptcard_' + card._type} style={{ padding: isMobile ? '12px' : '16px 20px', background: isSelfPT ? '#faf5ff' : isSettled ? '#f1f5f9' : 'white', borderRadius: '10px', border: `1px solid ${isSelfPT ? '#d8b4fe' : isSettled ? '#cbd5e1' : '#e2e8f0'}`, borderLeft: `4px solid ${isSelfPT ? '#a855f7' : isSettled ? '#94a3b8' : ss.border}`, opacity: isSettled ? 0.7 : 1 }}>
+                                    <div key={card.id + '_ptcard_' + card._type} style={{ padding: isMobile ? '12px' : '16px 20px', background: cardBg, borderRadius: '10px', border: `1px solid ${cardBorder}`, borderLeft: `4px solid ${cardAccent}`, opacity: isSettled ? 0.7 : 1 }}>
                                       {/* 1행: 날짜 + 현장명 + 상태배지 */}
                                       <div style={{ display: 'flex', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? '8px' : '14px', flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
                                         <div style={{ minWidth: isMobile ? 'auto' : '90px', flexShrink: 0 }}>
@@ -9018,12 +9036,27 @@ import { sendJandiNotification } from './utils/jandi.js';
                                             })()}
                                             {/* 협약사자체PT 배지 */}
                                             {isSelfPT && <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#f3e8ff', color: '#7c3aed' }}>협약사자체PT</span>}
-                                            {/* 정산 상태 배지 (본인영업도 정산완료 처리) - 자체PT는 정산 제외 */}
-                                            {!isSelfPT && currentResult && currentResult !== '패' && (
-                                              (settlement.completed || settlement.selfSales) ? <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#dcfce7', color: '#166534' }}>정산완료</span>
-                                              : settlement.requested ? <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#dbeafe', color: '#1e40af' }}>정산요청</span>
-                                              : <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#fef3c7', color: '#92400e' }}>미정산</span>
-                                            )}
+                                            {/* 정산 상태 배지 + 분기 라벨 (본인영업도 정산완료 처리) - 자체PT는 정산 제외 */}
+                                            {!isSelfPT && currentResult && currentResult !== '패' && (() => {
+                                              const toQuarter = (iso) => {
+                                                if (!iso) return '';
+                                                try {
+                                                  const d = new Date(iso);
+                                                  const y = d.getFullYear();
+                                                  const q = Math.floor(d.getMonth() / 3) + 1;
+                                                  return `${y}-Q${q}`;
+                                                } catch (_) { return ''; }
+                                              };
+                                              if (settlement.completed || settlement.selfSales) {
+                                                const q = toQuarter(settlement.completedAt);
+                                                return <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#dcfce7', color: '#166534' }}>✓ 정산완료{q ? ` · ${q}` : ''}</span>;
+                                              }
+                                              if (settlement.requested) {
+                                                const q = toQuarter(settlement.requestedAt);
+                                                return <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#dbeafe', color: '#1e40af' }}>⏳ 정산요청{q ? ` · ${q}` : ''}</span>;
+                                              }
+                                              return <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}>⚠ 미정산</span>;
+                                            })()}
                                             {!isSelfPT && settlement.selfSales && <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#f3e8ff', color: '#7c3aed' }}>본인영업</span>}
                                           </div>
                                           {/* 공종/공사설명 */}
@@ -9066,9 +9099,13 @@ import { sendJandiNotification } from './utils/jandi.js';
                                                   <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer' }}>
                                                     <input type="checkbox" checked={!!aSettlement.requested} onChange={() => {
                                                       const newVal = !aSettlement.requested;
+                                                      const nowISO = new Date().toISOString();
                                                       setPtSchedules(prev => prev.map(ps => {
                                                         if (ps.id !== card.id) return ps;
-                                                        const newSettlement = { ...ps.settlement, [assigneeName]: { ...(ps.settlement?.[assigneeName] || {}), requested: newVal } };
+                                                        const cur = ps.settlement?.[assigneeName] || {};
+                                                        const newEntry = { ...cur, requested: newVal };
+                                                        if (newVal) newEntry.requestedAt = nowISO;
+                                                        const newSettlement = { ...ps.settlement, [assigneeName]: newEntry };
                                                         return { ...ps, settlement: newSettlement };
                                                       }));
                                                       setDirtyScheduleIds(prev => new Set([...prev, card.id]));
@@ -9079,9 +9116,13 @@ import { sendJandiNotification } from './utils/jandi.js';
                                                     <input type="checkbox" checked={!!aSettlement.completed} onChange={() => {
                                                       if (!currentUser?.isAdmin) return;
                                                       const newVal = !aSettlement.completed;
+                                                      const nowISO = new Date().toISOString();
                                                       setPtSchedules(prev => prev.map(ps => {
                                                         if (ps.id !== card.id) return ps;
-                                                        const newSettlement = { ...ps.settlement, [assigneeName]: { ...(ps.settlement?.[assigneeName] || {}), completed: newVal } };
+                                                        const cur = ps.settlement?.[assigneeName] || {};
+                                                        const newEntry = { ...cur, completed: newVal };
+                                                        if (newVal) newEntry.completedAt = nowISO;
+                                                        const newSettlement = { ...ps.settlement, [assigneeName]: newEntry };
                                                         return { ...ps, settlement: newSettlement };
                                                       }));
                                                       setDirtyScheduleIds(prev => new Set([...prev, card.id]));
