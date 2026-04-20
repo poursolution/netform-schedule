@@ -141,7 +141,7 @@ app.post('/verify', requireAuth, async (req, res) => {
     const attachResults = [];
 
     // PDF 다운로드 + 파싱 (세션 쿠키 공유)
-    for (const att of attachments.slice(0, 3)) {
+    for (const att of attachments.slice(0, 10)) {
       if (!/\.pdf/i.test(att.href)) {
         attachResults.push({ href: att.href, text: att.text, skipped: 'non-pdf' });
         continue;
@@ -339,7 +339,7 @@ async function searchKaptByAptName(aptName, ptDate, opts = {}) {
         for (const r of dataRows) {
           const cells = [...r.querySelectorAll('td')].map(td => td.innerText.trim());
           const allAttr = [...r.querySelectorAll('a,tr,td')].map(el => (el.getAttribute('onclick') || '') + ' ' + (el.getAttribute('href') || '')).join(' ');
-          const bidMatch = allAttr.match(/['"(]\s*(\d{14,18})\s*['")]/) || allAttr.match(/bidNum['"=\s:]+(\d{14,18})/) || (cells.join(' ')).match(/(\d{17})/);
+          const bidMatch = allAttr.match(/['"(]\s*([a-z0-9_]+_\d+|\d{14,18})\s*['")]/i) || allAttr.match(/bidNum['"=\s:]+([a-z0-9_]+_\d+|\d{14,18})/i) || (cells.join(' ')).match(/(kg\w*_\d+)/i) || (cells.join(' ')).match(/(\d{17})/);
           if (bidMatch) {
             out.candidates.push({ tableIndex: ti, bidNum: bidMatch[1], cells: cells.map(c => c.slice(0, 60)) });
           }
