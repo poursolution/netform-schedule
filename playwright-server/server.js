@@ -12,7 +12,33 @@
 import express from 'express';
 import { chromium } from 'playwright';
 import pdf from 'pdf-parse';
+import { execFile } from 'child_process';
+import { promises as fsp } from 'fs';
+import os from 'os';
+import path from 'path';
+import crypto from 'crypto';
 import 'dotenv/config';
+
+// HWP/HWPX → 텍스트 변환 (LibreOffice CLI 경유)
+function parseHwpBuffer(buffer) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'kapt-hwp-'));
+      const id = crypto.randomBytes(6).toString('hex');
+      const hwpFile = path.join(tmpDir, `doc_${id}.hwp`);
+      await fsp.writeFile(hwpFile, buffer);
+      execFile('libreoffice', ['--headless', '--convert-to', 'txt', '--outdir', tmpDir, hwpFile], { timeout: 60000 }, async (err, stdout, stderr) => {
+        try {
+          if (err) { await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {}); return reject(err); }
+          const txtFile = hwpFile.replace(/\.hwp$/i, '.txt');
+          const text = await fsp.readFile(txtFile, 'utf-8').catch(() => '');
+          await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+          resolve({ text });
+        } catch (e) { reject(e); }
+      });
+    } catch (e) { reject(e); }
+  });
+}
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -218,17 +244,25 @@ app.post('/verify', requireAuth, async (req, res) => {
     let combinedText = pageText;
     const attachResults = [];
 
-    // PDF 다운로드 + 파싱 (세션 쿠키 공유)
+    // 첨부파일 다운로드 + 파싱 (PDF/HWP/HWPX 지원, 세션 쿠키 공유)
     for (const att of attachments.slice(0, 10)) {
-      if (!/\.pdf/i.test(att.href)) {
-        attachResults.push({ href: att.href, text: att.text, skipped: 'non-pdf' });
+      const isPdf = /\.pdf(\?|$)/i.test(att.href) || /\.pdf\b/i.test(att.text);
+      const isHwp = /\.(hwp|hwpx)(\?|$)/i.test(att.href) || /\.(hwp|hwpx)\b/i.test(att.text);
+      if (!isPdf && !isHwp) {
+        attachResults.push({ href: att.href, text: att.text, skipped: 'non-pdf-hwp' });
         continue;
       }
       try {
         const buffer = await page.request.get(safeUrl(att.href), { timeout: 30000 }).then(r => r.body());
-        const data = await pdf(buffer);
+        let data;
+        if (isHwp) {
+          data = await parseHwpBuffer(buffer);
+          combinedText += '\n\n[HWP: ' + att.text + ']\n' + (data.text || '').slice(0, 30000);
+        } else {
+          data = await pdf(buffer);
+          combinedText += '\n\n[PDF: ' + att.text + ']\n' + (data.text || '').slice(0, 30000);
+        }
         const pdfText = (data.text || '').slice(0, 30000);
-        combinedText += '\n\n[PDF: ' + att.text + ']\n' + pdfText;
         attachResults.push({ href: att.href, text: att.text, pdfLength: pdfText.length });
       } catch (e) {
         attachResults.push({ href: att.href, text: att.text, error: e.message });
@@ -385,10 +419,12 @@ app.post('/verify', requireAuth, async (req, res) => {
           if (pref && pref.href) {
             try {
               const buffer = await page.request.get(safeUrl(pref.href), { timeout: 30000 }).then(r => r.body());
-              const data = await pdf(buffer);
-              const pdfText = (data.text || '').slice(0, 50000);
-              combinedText += '\n\n[kg2b 공고서 PDF: ' + pref.text + ']\n' + pdfText;
-              kg2bInfo = { url: externalUrl, pdfHref: pref.href, pdfText: pref.text, pdfLength: pdfText.length, totalLinks: pdfLinks.length };
+              // HWP/HWPX면 LibreOffice로 변환, 아니면 PDF 파싱
+              const isHwp = /\.(hwp|hwpx)(\?|$)/i.test(pref.href) || /\.(hwp|hwpx)\b/i.test(pref.text);
+              const data = isHwp ? await parseHwpBuffer(buffer) : await pdf(buffer);
+              const docText = (data.text || '').slice(0, 50000);
+              combinedText += '\n\n[kg2b 공고서 ' + (isHwp ? 'HWP' : 'PDF') + ': ' + pref.text + ']\n' + docText;
+              kg2bInfo = { url: externalUrl, pdfHref: pref.href, pdfText: pref.text, pdfLength: docText.length, fileType: isHwp ? 'hwp' : 'pdf', totalLinks: pdfLinks.length };
             } catch (e) {
               kg2bInfo = { url: externalUrl, pdfError: e.message, candidateHref: pref.href, totalLinks: pdfLinks.length };
             }
@@ -664,31 +700,57 @@ async function searchKaptByAptName(aptName, ptDate, opts = {}) {
 }
 
 // 단지명 변형 생성 (검색 커버리지 향상)
+// 예) "부산 광안 진로비치 아파트" → ["부산광안진로비치","부산광안","진로비치","부산","광안","부산진로비치"]
 // 예) "하안주공7단지" → ["하안주공7단지","하안주공","하안","7단지","하안7단지"]
 // 예) "양산2차e편한세상아파트" → ["양산2차e편한세상","양산","2차","양산2차","양산e편한세상"]
 function generateAptNameVariations(name) {
   if (!name) return [];
-  const cleaned = String(name).replace(/\s+/g, '').replace(/아파트|APT|apt/gi, '').replace(/[()[\]]/g, '');
+  const raw = String(name);
+  const cleaned = raw.replace(/\s+/g, '').replace(/아파트|APT|apt/gi, '').replace(/[()[\]]/g, '');
   const variations = new Set([cleaned]);
+
+  // 공백 분리 토큰 (각 토큰을 브랜드명 후보로) — "부산 광안 진로비치 아파트" → ["부산", "광안", "진로비치"]
+  const tokens = raw.split(/\s+/).map(t => t.replace(/아파트|APT|apt/gi, '').replace(/[()[\]]/g, '').trim()).filter(t => t.length >= 2);
+  for (const tok of tokens) variations.add(tok);
+
+  // 접두 한글 2~4자 (행정구역 prefix)
   const prefixMatch = cleaned.match(/^([가-힣]{2,4})/);
   const prefix = prefixMatch?.[1];
   if (prefix && prefix !== cleaned) variations.add(prefix);
+
+  // "N단지" 패턴
   const danjiMatch = cleaned.match(/(\d+)\s*단지/);
   if (danjiMatch) {
     variations.add(danjiMatch[1] + '단지');
     if (prefix) variations.add(prefix + danjiMatch[1] + '단지');
   }
+  // "N차" 패턴
   const chaMatch = cleaned.match(/(\d+)차/);
   if (chaMatch && prefix) variations.add(prefix + chaMatch[0]);
+
+  // 숫자·단지·차 제거 한글만
   const koreanOnly = cleaned.replace(/\d+|단지|차/g, '').trim();
   if (koreanOnly.length >= 2 && koreanOnly !== cleaned && koreanOnly !== prefix) {
     variations.add(koreanOnly);
   }
-  // prefix + 브랜드명 (숫자 제거, 차 제거한 경우)
+
+  // prefix + 뒷부분(숫자·단지·차 제거)
   if (prefix) {
     const afterPrefix = cleaned.slice(prefix.length).replace(/\d+차|\d+단지|\d+/g, '').trim();
     if (afterPrefix.length >= 2) variations.add(prefix + afterPrefix);
   }
+
+  // 브랜드 토큰 (가장 긴 한글 토큰을 브랜드로 간주) — "진로비치" 타입 추출
+  const longestKoreanToken = tokens
+    .filter(t => /^[가-힣]+$/.test(t))
+    .sort((a, b) => b.length - a.length)[0];
+  if (longestKoreanToken && longestKoreanToken.length >= 2) {
+    variations.add(longestKoreanToken);
+    if (prefix && prefix !== longestKoreanToken) {
+      variations.add(prefix + longestKoreanToken); // "부산" + "진로비치" → "부산진로비치"
+    }
+  }
+
   return [...variations].filter(v => v.length >= 2);
 }
 
