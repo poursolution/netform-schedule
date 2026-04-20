@@ -9100,6 +9100,36 @@ import { sendJandiNotification } from './utils/jandi.js';
                                               return <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}>⚠ 미정산</span>;
                                             })()}
                                             {!isSelfPT && settlement.selfSales && <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#f3e8ff', color: '#7c3aed' }}>본인영업</span>}
+                                            {/* ✓ K-APT 검증완료 배지 (matchedBy · matchedValue · bidNum 구체 표시) */}
+                                            {s?.kaptVerified?.status === 'verified' && (() => {
+                                              const kv = s.kaptVerified;
+                                              let label = '';
+                                              if (kv.matchedBy === 'technology') {
+                                                label = `✓ ${kv.matchedValue || ''}공법 확인`;
+                                              } else if (kv.matchedBy === 'patent') {
+                                                label = `✓ 특허 ${kv.matchedValue || ''} 확인`;
+                                              } else if (kv.matchedBy === 'patent_name') {
+                                                label = `✓ 특허명 확인${kv.matchedValue ? ` (${kv.matchedValue})` : ''}`;
+                                              } else {
+                                                label = `✓ 검증완료`;
+                                              }
+                                              const bidNum = kv.bidNum || s?.bidNo || '';
+                                              const tooltip = [
+                                                `검증완료: ${kv.matchedBy || ''} = ${kv.matchedValue || ''}`,
+                                                bidNum ? `공고번호: ${bidNum}` : '',
+                                                kv.bidTitle ? `제목: ${kv.bidTitle}` : '',
+                                                kv.bidKaptname ? `단지명(K-APT): ${kv.bidKaptname}` : '',
+                                                kv.verifiedAt ? `검증시각: ${kv.verifiedAt.slice(0, 19).replace('T', ' ')}` : '',
+                                              ].filter(Boolean).join('\n');
+                                              return (
+                                                <span
+                                                  style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#dcfce7', color: '#166534', border: '1px solid #86efac' }}
+                                                  title={tooltip}
+                                                >
+                                                  {label}
+                                                </span>
+                                              );
+                                            })()}
                                             {/* 🔍 K-APT 개별 검증 버튼 (모든 결과 - 승·무·패·지원·진행중, 단 승+정산완료는 숨김) */}
                                             {!isSelfPT && !isSuperseded && kaptWorkerUrl && !(currentResult === '승' && (settlement.completed || settlement.selfSales)) && (() => {
                                               const vkey = `${card.id}_${card.manager}`;
