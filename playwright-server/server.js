@@ -791,10 +791,15 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
       }
     }
 
-    // data.go.kr 0건이면 K-APT 직접 검색 fallback (변형 검색)
+    // data.go.kr 0건이면 K-APT 직접 검색 fallback
+    // Rate-limit 완화: 변형 중 최대 2개만 시도 (cleaned + longestKoreanToken 또는 prefix)
+    // 변형 사이 2초 대기 (K-APT 반복요청 차단 방지)
     let kaptFallbackUsed = false;
     if (allCandidates.length === 0) {
-      for (const variation of variations) {
+      const kaptVariations = variations.slice(0, 2); // 5+ → 2개로 축소
+      for (let vi = 0; vi < kaptVariations.length; vi++) {
+        const variation = kaptVariations[vi];
+        if (vi > 0) await new Promise(r => setTimeout(r, 2000)); // 2초 대기
         try {
           const kaptCandidates = await searchKaptByAptName(variation, ptDate);
           if (kaptCandidates && kaptCandidates.length > 0) {
@@ -805,7 +810,7 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
                 allCandidates.push(c);
               }
             }
-            if (allCandidates.length > 0) break; // 후보 찾으면 추가 변형 시도 중단
+            if (allCandidates.length > 0) break;
           }
         } catch (e) { /* K-APT 검색 실패는 조용히 넘어감 */ }
       }
@@ -852,6 +857,7 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
     const attempts = [];
 
     for (let rank = 0; rank < top3.length; rank++) {
+      if (rank > 0) await new Promise(r => setTimeout(r, 1500)); // rate-limit 완화: 후보간 1.5초 대기
       const bid = top3[rank];
       let context = null;
       try {
