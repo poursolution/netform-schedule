@@ -382,6 +382,35 @@ async function searchKaptByAptName(aptName, ptDate, opts = {}) {
   }
 }
 
+// 단지명 변형 생성 (검색 커버리지 향상)
+// 예) "하안주공7단지" → ["하안주공7단지","하안주공","하안","7단지","하안7단지"]
+// 예) "양산2차e편한세상아파트" → ["양산2차e편한세상","양산","2차","양산2차","양산e편한세상"]
+function generateAptNameVariations(name) {
+  if (!name) return [];
+  const cleaned = String(name).replace(/\s+/g, '').replace(/아파트|APT|apt/gi, '').replace(/[()[\]]/g, '');
+  const variations = new Set([cleaned]);
+  const prefixMatch = cleaned.match(/^([가-힣]{2,4})/);
+  const prefix = prefixMatch?.[1];
+  if (prefix && prefix !== cleaned) variations.add(prefix);
+  const danjiMatch = cleaned.match(/(\d+)\s*단지/);
+  if (danjiMatch) {
+    variations.add(danjiMatch[1] + '단지');
+    if (prefix) variations.add(prefix + danjiMatch[1] + '단지');
+  }
+  const chaMatch = cleaned.match(/(\d+)차/);
+  if (chaMatch && prefix) variations.add(prefix + chaMatch[0]);
+  const koreanOnly = cleaned.replace(/\d+|단지|차/g, '').trim();
+  if (koreanOnly.length >= 2 && koreanOnly !== cleaned && koreanOnly !== prefix) {
+    variations.add(koreanOnly);
+  }
+  // prefix + 브랜드명 (숫자 제거, 차 제거한 경우)
+  if (prefix) {
+    const afterPrefix = cleaned.slice(prefix.length).replace(/\d+차|\d+단지|\d+/g, '').trim();
+    if (afterPrefix.length >= 2) variations.add(prefix + afterPrefix);
+  }
+  return [...variations].filter(v => v.length >= 2);
+}
+
 // data.go.kr 단지명 검색 → 유사도 1/2/3순위 → K-APT 파싱 시도
 async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey }, res) {
   const startedAt = Date.now();
@@ -390,47 +419,53 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
     const year = ptDate ? parseInt(String(ptDate).slice(0, 4), 10) : new Date().getFullYear();
     const allCandidates = [];
     const seen = new Set();
-    for (const y of [year, year - 1, year - 2]) {
-      const params = new URLSearchParams({
-        serviceKey: dataGoKrKey,
-        hsmpNm: siteName,
-        srchYear: String(y),
-        pageNo: '1',
-        numOfRows: '100',
-        type: 'json',
-      });
-      const url = `https://apis.data.go.kr/1613000/ApHusBidResultNoticeInfoOfferServiceV2/getHsmpNmSearchV2?${params}`;
-      try {
-        const resp = await fetch(url, { headers: { 'User-Agent': 'POUR-Verify/1.0', 'Accept': 'application/json' } });
-        if (!resp.ok) continue;
-        const data = await resp.json();
-        const items = data?.response?.body?.items;
-        if (!items) continue;
-        const arr = Array.isArray(items) ? items : [items];
-        for (const it of arr) {
-          if (!seen.has(it.bidNum)) {
-            seen.add(it.bidNum);
-            allCandidates.push(it);
-          }
-        }
-      } catch (e) { /* continue */ }
-    }
-
-    // data.go.kr 0건이면 K-APT 직접 검색 fallback (취소 공고·최신 공고 커버)
-    let kaptFallbackUsed = false;
-    if (allCandidates.length === 0) {
-      try {
-        const kaptCandidates = await searchKaptByAptName(siteName, ptDate);
-        if (kaptCandidates && kaptCandidates.length > 0) {
-          kaptFallbackUsed = true;
-          for (const c of kaptCandidates) {
-            if (!seen.has(c.bidNum)) {
-              seen.add(c.bidNum);
-              allCandidates.push(c);
+    const variations = generateAptNameVariations(siteName);
+    for (const variation of variations) {
+      for (const y of [year, year - 1, year - 2]) {
+        const params = new URLSearchParams({
+          serviceKey: dataGoKrKey,
+          hsmpNm: variation,
+          srchYear: String(y),
+          pageNo: '1',
+          numOfRows: '100',
+          type: 'json',
+        });
+        const url = `https://apis.data.go.kr/1613000/ApHusBidResultNoticeInfoOfferServiceV2/getHsmpNmSearchV2?${params}`;
+        try {
+          const resp = await fetch(url, { headers: { 'User-Agent': 'POUR-Verify/1.0', 'Accept': 'application/json' } });
+          if (!resp.ok) continue;
+          const data = await resp.json();
+          const items = data?.response?.body?.items;
+          if (!items) continue;
+          const arr = Array.isArray(items) ? items : [items];
+          for (const it of arr) {
+            if (!seen.has(it.bidNum)) {
+              seen.add(it.bidNum);
+              allCandidates.push(it);
             }
           }
-        }
-      } catch (e) { /* K-APT 검색 실패는 조용히 넘어감 */ }
+        } catch (e) { /* continue */ }
+      }
+    }
+
+    // data.go.kr 0건이면 K-APT 직접 검색 fallback (변형 검색)
+    let kaptFallbackUsed = false;
+    if (allCandidates.length === 0) {
+      for (const variation of variations) {
+        try {
+          const kaptCandidates = await searchKaptByAptName(variation, ptDate);
+          if (kaptCandidates && kaptCandidates.length > 0) {
+            kaptFallbackUsed = true;
+            for (const c of kaptCandidates) {
+              if (!seen.has(c.bidNum)) {
+                seen.add(c.bidNum);
+                allCandidates.push(c);
+              }
+            }
+            if (allCandidates.length > 0) break; // 후보 찾으면 추가 변형 시도 중단
+          }
+        } catch (e) { /* K-APT 검색 실패는 조용히 넘어감 */ }
+      }
     }
 
     if (allCandidates.length === 0) {
