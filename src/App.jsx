@@ -14413,9 +14413,33 @@ import { sendJandiNotification } from './utils/jandi.js';
                     • 순차 실행 (200ms 간격), 100건 기준 약 20초 소요
                   </div>
                   {(() => {
-                    // 대상 건 수 계산
+                    // 중복 PT 판별: 동일 siteName + workType 다수면 최신(max date,id)만 유효
+                    const supersededIds = new Set();
+                    {
+                      const groups = new Map();
+                      ptSchedules.forEach(s => {
+                        if (s.selfPT) return;
+                        const site = (s.siteName || '').trim();
+                        const work = (s.workType || '').trim();
+                        if (!site || !work) return;
+                        const key = `${site}||${work}`;
+                        if (!groups.has(key)) groups.set(key, []);
+                        groups.get(key).push(s);
+                      });
+                      for (const arr of groups.values()) {
+                        if (arr.length < 2) continue;
+                        const sorted = [...arr].sort((a, b) => {
+                          const dCmp = (b.date || '').localeCompare(a.date || '');
+                          if (dCmp !== 0) return dCmp;
+                          return String(b.id || '').localeCompare(String(a.id || ''));
+                        });
+                        for (let i = 1; i < sorted.length; i++) supersededIds.add(sorted[i].id);
+                      }
+                    }
+                    // 대상 건 수 계산 (중복-구버전 제외)
                     const targets = [];
                     ptSchedules.forEach(s => {
+                      if (supersededIds.has(s.id)) return; // 중복 PT 구버전은 검증 대상에서 제외
                       const results = s.results || {};
                       Object.entries(results).forEach(([assignee, result]) => {
                         if (result !== '승') return;
