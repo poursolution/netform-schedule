@@ -599,8 +599,6 @@ import { sendJandiNotification } from './utils/jandi.js';
       const [kaptWorkerUrl, setKaptWorkerUrl] = useState('');
       const [kaptEnabled, setKaptEnabled] = useState(true);
       const [showKaptModal, setShowKaptModal] = useState(false);
-      const [kaptBatchBusy, setKaptBatchBusy] = useState(false);
-      const [kaptBatchProgress, setKaptBatchProgress] = useState({ done: 0, total: 0, pass: 0, review: 0, err: 0 });
       // 개별 PT 검증 상태: { [cardId+assignee]: 'busy'|'done' }
       const [kaptVerifyingId, setKaptVerifyingId] = useState(null);
 
@@ -14448,110 +14446,7 @@ import { sendJandiNotification } from './utils/jandi.js';
                   💡 Worker 배포: <code style={{ background: '#f1f5f9', padding: '1px 4px', borderRadius: 3 }}>cloudflare-worker/README.md</code> 참조
                 </div>
 
-                {/* === 미정산/정산요청 건 일괄 검증 === */}
-                <div style={{ marginTop: 20, paddingTop: 16, borderTop: '2px dashed #e2e8f0' }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: '#1e293b', marginBottom: 6 }}>
-                    🔁 미정산 · 정산요청 건 일괄 K-APT 검증
-                  </div>
-                  <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10, lineHeight: 1.6 }}>
-                    현재 시스템의 [승] 결과 PT 중 <strong>미정산</strong> 또는 <strong>정산요청</strong> 상태 건들을 모두 K-APT에 검증합니다.<br />
-                    • 데이터는 변경되지 않고, 검증 <strong>실패 건만</strong> 잔디 채널에 알림 발송됩니다.<br />
-                    • 순차 실행 (200ms 간격), 100건 기준 약 20초 소요
-                  </div>
-                  {(() => {
-                    // 중복 PT 판별: 동일 siteName + workType 다수면 최신(max date,id)만 유효
-                    const supersededIds = new Set();
-                    {
-                      const groups = new Map();
-                      ptSchedules.forEach(s => {
-                        if (s.selfPT) return;
-                        const site = (s.siteName || '').trim();
-                        const work = (s.workType || '').trim();
-                        if (!site || !work) return;
-                        const key = `${site}||${work}`;
-                        if (!groups.has(key)) groups.set(key, []);
-                        groups.get(key).push(s);
-                      });
-                      for (const arr of groups.values()) {
-                        if (arr.length < 2) continue;
-                        const sorted = [...arr].sort((a, b) => {
-                          const dCmp = (b.date || '').localeCompare(a.date || '');
-                          if (dCmp !== 0) return dCmp;
-                          return String(b.id || '').localeCompare(String(a.id || ''));
-                        });
-                        for (let i = 1; i < sorted.length; i++) supersededIds.add(sorted[i].id);
-                      }
-                    }
-                    // 대상 건 수 계산 (중복-구버전 제외)
-                    const targets = [];
-                    ptSchedules.forEach(s => {
-                      if (supersededIds.has(s.id)) return; // 중복 PT 구버전은 검증 대상에서 제외
-                      const results = s.results || {};
-                      Object.entries(results).forEach(([assignee, result]) => {
-                        if (result !== '승') return;
-                        if (s.selfPT) return;
-                        const set = s.settlement?.[assignee] || {};
-                        if (set.completed || set.selfSales) return;
-                        targets.push({ scheduleId: s.id, assignee, schedule: s });
-                      });
-                    });
-                    return (
-                      <>
-                        <div style={{ fontSize: 12, color: '#475569', marginBottom: 10 }}>
-                          대상: <strong style={{ color: '#2563eb' }}>{targets.length}건</strong>
-                          {' '}
-                          {kaptBatchBusy && (
-                            <span style={{ marginLeft: 8 }}>
-                              · 진행 {kaptBatchProgress.done}/{kaptBatchProgress.total}
-                              {' '}(통과 {kaptBatchProgress.pass} · 확인필요 {kaptBatchProgress.review} · 오류 {kaptBatchProgress.err})
-                            </span>
-                          )}
-                        </div>
-                        <button
-                          disabled={kaptBatchBusy || targets.length === 0 || !kaptWorkerUrl || !kaptEnabled}
-                          onClick={async () => {
-                            if (!window.confirm(`${targets.length}건의 "승" PT를 K-APT 일괄 검증하시겠습니까?\n\n• 데이터 변경 없음\n• 검증 실패 건만 잔디에 알림 발송\n• 약 ${Math.ceil(targets.length * 0.2)}초 소요`)) return;
-                            setKaptBatchBusy(true);
-                            setKaptBatchProgress({ done: 0, total: targets.length, pass: 0, review: 0, err: 0 });
-                            let pass = 0, review = 0, err = 0;
-                            for (let i = 0; i < targets.length; i++) {
-                              const t = targets[i];
-                              try {
-                                const r = await verifyKaptForPt({
-                                  scheduleId: t.scheduleId,
-                                  assignee: t.assignee,
-                                  siteName: t.schedule.siteName,
-                                  workType: t.schedule.workType,
-                                  bidNo: t.schedule.bidNo,
-                                  ptDate: t.schedule.date,
-                                  by: currentUser?.name || 'batch',
-                                });
-                                if (r?.status === 'verified') pass++;
-                                else review++;
-                              } catch (e) {
-                                err++;
-                                console.warn('[batch] error', t, e);
-                              }
-                              setKaptBatchProgress({ done: i + 1, total: targets.length, pass, review, err });
-                              await new Promise(r => setTimeout(r, 200));
-                            }
-                            setKaptBatchBusy(false);
-                            alert(`일괄 검증 완료\n\n✅ 통과: ${pass}건\n⚠️ 확인 필요: ${review}건 (잔디 알림 발송됨)\n❌ 오류: ${err}건`);
-                          }}
-                          style={{ width: '100%', padding: 12, background: kaptBatchBusy ? '#94a3b8' : (targets.length === 0 || !kaptWorkerUrl ? '#cbd5e1' : '#f97316'), color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: kaptBatchBusy || targets.length === 0 || !kaptWorkerUrl ? 'not-allowed' : 'pointer' }}
-                        >
-                          {kaptBatchBusy ? `진행 중... ${kaptBatchProgress.done}/${kaptBatchProgress.total}` : `🔁 ${targets.length}건 일괄 검증 실행`}
-                        </button>
-                        {!kaptWorkerUrl && (
-                          <div style={{ marginTop: 6, fontSize: 11, color: '#dc2626' }}>⚠️ Worker URL을 먼저 저장해주세요.</div>
-                        )}
-                        {!kaptEnabled && kaptWorkerUrl && (
-                          <div style={{ marginTop: 6, fontSize: 11, color: '#94a3b8' }}>⚠️ 자동 검증이 꺼져 있습니다. 위 체크박스를 활성화해주세요.</div>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
+                {/* 일괄 검증은 K-APT rate-limit 차단으로 제거됨. 실적 탭 각 PT 카드의 🔍 K-APT 검증 버튼으로 개별 실행. */}
               </div>
             </div>
           )}
