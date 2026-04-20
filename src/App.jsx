@@ -8846,9 +8846,39 @@ import { sendJandiNotification } from './utils/jandi.js';
                             }
                             return c;
                           }).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-                          // 정산 상태별 카운트 계산 (본인영업도 정산완료로 처리, 협약사자체PT 제외)
+                          // 중복 PT 판별: 동일 아파트 + 동일 공종 다수 PT 존재 시 최신만 유효
+                          // 기준: siteName(trim) + workType(trim), 최신 = max(date, then id)
+                          const supersededMap = (() => {
+                            const groups = new Map();
+                            for (const c of allRows) {
+                              if (c.rawData?.selfPT) continue;
+                              const site = (c.siteName || '').trim();
+                              const work = (c.rawData?.workType || c.gongong || '').trim();
+                              if (!site || !work) continue;
+                              const key = `${site}||${work}`;
+                              if (!groups.has(key)) groups.set(key, []);
+                              groups.get(key).push(c);
+                            }
+                            const map = new Map();
+                            for (const [, group] of groups) {
+                              if (group.length < 2) continue;
+                              const sorted = [...group].sort((a, b) => {
+                                const dCmp = (b.date || '').localeCompare(a.date || '');
+                                if (dCmp !== 0) return dCmp;
+                                return String(b.id || '').localeCompare(String(a.id || ''));
+                              });
+                              const latest = sorted[0];
+                              for (let i = 1; i < sorted.length; i++) {
+                                map.set(sorted[i].id, { latestDate: latest.date, latestSiteName: latest.siteName });
+                              }
+                            }
+                            return map;
+                          })();
+
+                          // 정산 상태별 카운트 계산 (본인영업도 정산완료로 처리, 협약사자체PT 제외, 중복-구버전 제외)
                           const settlementCounts = allRows.reduce((acc, c) => {
                             if (c.rawData?.selfPT) return acc; // 협약사자체PT 정산 제외
+                            if (supersededMap.has(c.id)) return acc; // 중복 PT 구버전 제외
                             const stl = c.rawData?.settlement?.[c.manager] || {};
                             const result = c._type === 'win' ? '승' : c._type === 'draw' ? '무' : c._type === 'support' ? '지원' : null;
                             if (result && result !== '패') {
@@ -8996,27 +9026,34 @@ import { sendJandiNotification } from './utils/jandi.js';
                                   const settlement = s?.settlement?.[card.manager] || {};
                                   const isSelfPT = !!s?.selfPT;
                                   const isSettled = !isSelfPT && (!!settlement.completed || !!settlement.selfSales);
+                                  // 중복 PT 구버전 판별 (최신 PT가 따로 있음)
+                                  const supersededInfo = supersededMap.get(card.id);
+                                  const isSuperseded = !isSelfPT && !!supersededInfo;
                                   // 정산 상태별 카드 배경 — 한눈에 구분
-                                  const isUnsettled = !isSelfPT && currentResult && currentResult !== '패' && !settlement.completed && !settlement.selfSales && !settlement.requested;
-                                  const isRequested = !isSelfPT && currentResult && currentResult !== '패' && !settlement.completed && !settlement.selfSales && !!settlement.requested;
+                                  const isUnsettled = !isSelfPT && !isSuperseded && currentResult && currentResult !== '패' && !settlement.completed && !settlement.selfSales && !settlement.requested;
+                                  const isRequested = !isSelfPT && !isSuperseded && currentResult && currentResult !== '패' && !settlement.completed && !settlement.selfSales && !!settlement.requested;
                                   const cardBg = isSelfPT ? '#faf5ff'
+                                    : isSuperseded ? '#f1f5f9'
                                     : isSettled ? '#f1f5f9'
                                     : isRequested ? '#eff6ff'
                                     : isUnsettled ? '#fffbeb'
                                     : 'white';
                                   const cardBorder = isSelfPT ? '#d8b4fe'
+                                    : isSuperseded ? '#cbd5e1'
                                     : isSettled ? '#cbd5e1'
                                     : isRequested ? '#bfdbfe'
                                     : isUnsettled ? '#fde68a'
                                     : '#e2e8f0';
                                   const cardAccent = isSelfPT ? '#a855f7'
+                                    : isSuperseded ? '#94a3b8'
                                     : isSettled ? '#94a3b8'
                                     : isRequested ? '#3b82f6'
                                     : isUnsettled ? '#f59e0b'
                                     : ss.border;
+                                  const cardOpacity = (isSettled || isSuperseded) ? 0.6 : 1;
 
                                   return (
-                                    <div key={card.id + '_ptcard_' + card._type} style={{ padding: isMobile ? '12px' : '16px 20px', background: cardBg, borderRadius: '10px', border: `1px solid ${cardBorder}`, borderLeft: `4px solid ${cardAccent}`, opacity: isSettled ? 0.7 : 1 }}>
+                                    <div key={card.id + '_ptcard_' + card._type} style={{ padding: isMobile ? '12px' : '16px 20px', background: cardBg, borderRadius: '10px', border: `1px solid ${cardBorder}`, borderLeft: `4px solid ${cardAccent}`, opacity: cardOpacity }}>
                                       {/* 1행: 날짜 + 현장명 + 상태배지 */}
                                       <div style={{ display: 'flex', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? '8px' : '14px', flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
                                         <div style={{ minWidth: isMobile ? 'auto' : '90px', flexShrink: 0 }}>
@@ -9036,8 +9073,13 @@ import { sendJandiNotification } from './utils/jandi.js';
                                             })()}
                                             {/* 협약사자체PT 배지 */}
                                             {isSelfPT && <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#f3e8ff', color: '#7c3aed' }}>협약사자체PT</span>}
-                                            {/* 정산 상태 배지 + 분기 라벨 (본인영업도 정산완료 처리) - 자체PT는 정산 제외 */}
-                                            {!isSelfPT && currentResult && currentResult !== '패' && (() => {
+                                            {/* 정산 상태 배지 + 분기 라벨 (본인영업도 정산완료 처리) - 자체PT·중복구버전 제외 */}
+                                            {isSuperseded && (
+                                              <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#e2e8f0', color: '#475569' }} title={`최종 PT: ${supersededInfo.latestDate}`}>
+                                                🔁 중복 제외 (최종 {supersededInfo.latestDate})
+                                              </span>
+                                            )}
+                                            {!isSelfPT && !isSuperseded && currentResult && currentResult !== '패' && (() => {
                                               const toQuarter = (iso) => {
                                                 if (!iso) return '';
                                                 try {
