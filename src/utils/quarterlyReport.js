@@ -84,9 +84,16 @@ function isSettlementRequested(s, assignee) {
   return s.settlement?.[assignee]?.requested || false;
 }
 
+// 감리 공종 판별 — workType 에 "감리" 포함 시 true
+function isSupervision(s) {
+  return !!(s && s.workType && /감리/.test(String(s.workType)));
+}
+
 function getSettlementAmount(s, assignee, overrideResult = null) {
   if (s.selfPT) return 0;
   if (isSelfSales(s, assignee)) return 0;
+  // 감리 공종: 승패 무관 건당 80,000원 (지역/결과 무관)
+  if (isSupervision(s)) return 80000;
   const r = overrideResult || getPtResult(s, assignee);
   if (r === '승') return 500000;
   if (r === '무') return 250000;
@@ -95,8 +102,10 @@ function getSettlementAmount(s, assignee, overrideResult = null) {
 }
 
 // === PT 검증 게이트 (Phase 1.6, 단순 룰) ===
+// 감리는 공고문이 없으므로 bidNo 요구 제외
 function isPtVerified(s, assignee) {
   if (s.selfPT) return true;
+  if (isSupervision(s)) return true;
   const r = getPtResult(s, assignee);
   if (!r) return false;
   if (r === '패') return true;
@@ -106,6 +115,7 @@ function isPtVerified(s, assignee) {
 
 function getVerifyReason(s, assignee) {
   if (s.selfPT) return '';
+  if (isSupervision(s)) return '';
   const r = getPtResult(s, assignee);
   if (!r) return '결과 미입력';
   if (r === '패') return '';

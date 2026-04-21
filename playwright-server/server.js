@@ -1834,6 +1834,29 @@ app.post('/admin/jandi-detect-duplicates', requireAuth, async (req, res) => {
       }
     }
 
+    // ------- 추가: evidence 태그들을 연결된 PT.evidenceFiles 에도 복사 (UI 편의) -------
+    // 각 evidence 의 isRevision/hasOlderVersions/supersededByFileId 를 PT evidenceFiles 에도 동기화
+    if (!dryRun) {
+      const evKeys = new Set([
+        ...Object.keys(evidence),
+      ]);
+      // updates 에 방금 넣은 것들 반영 — 재조회 대신 메모리에서 계산
+      for (const [fid, ev] of Object.entries(evidence)) {
+        if (!ev.matchedPtIds) continue;
+        const isRev = updates[`evidence/${fid}/isRevision`] === true || ev.isRevision === true;
+        const hasOlder = updates[`evidence/${fid}/hasOlderVersions`] || ev.hasOlderVersions;
+        const supersededByFileId = updates[`evidence/${fid}/supersededByFileId`] || ev.supersededByFileId;
+        const sameContent = updates[`evidence/${fid}/sameContentAs`] || ev.sameContentAs;
+        if (!isRev && !hasOlder && !supersededByFileId && !sameContent) continue;
+        for (const ptId of Object.keys(ev.matchedPtIds)) {
+          if (isRev !== undefined) updates[`pt/${ptId}/evidenceFiles/${fid}/isRevision`] = !!isRev;
+          if (hasOlder != null) updates[`pt/${ptId}/evidenceFiles/${fid}/hasOlderVersions`] = hasOlder;
+          if (supersededByFileId) updates[`pt/${ptId}/evidenceFiles/${fid}/supersededByFileId`] = supersededByFileId;
+          if (sameContent) updates[`pt/${ptId}/evidenceFiles/${fid}/sameContentAs`] = sameContent;
+        }
+      }
+    }
+
     if (!dryRun && Object.keys(updates).length > 0) {
       await db.ref().update(updates);
     }

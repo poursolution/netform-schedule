@@ -1119,7 +1119,11 @@ import { sendJandiNotification } from './utils/jandi.js';
       const gangwonConsultRegions = ['강릉', '동해', '삼척', '속초', '춘천', '태백', '평창', '강원'];
 
       // 주소에서 지역 추출하여 단가 계산 (2026-04-01 이후 신규 단가 적용)
-      const getRegionPrice = (address, date) => {
+      // 감리 공종은 지역/날짜 무관 건당 80,000원 고정
+      const getRegionPrice = (address, date, workType) => {
+        if (workType && /감리/.test(String(workType))) {
+          return { region: '감리(건당)', price: 80000, zone: 0, isSupervision: true };
+        }
         if (!address) return { region: '미정', price: 0, zone: 0 };
         const isNewPrice = !date || date >= '2026-04-01';
         const priceTable = isNewPrice ? regionPricesNew : regionPricesOld;
@@ -9062,6 +9066,10 @@ import { sendJandiNotification } from './utils/jandi.js';
                                         </div>
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                                            {/* 감리 배지 — workType 에 "감리" 포함 시 단지명 앞에 표시 (건당 80,000원 정산 대상) */}
+                                            {s?.workType && /감리/.test(String(s.workType)) && (
+                                              <span style={{ fontSize: '10px', fontWeight: '800', padding: '2px 8px', borderRadius: '6px', background: '#ddd6fe', color: '#5b21b6', letterSpacing: '0.02em' }} title="감리 공종 · 건당 80,000원">감리</span>
+                                            )}
                                             <span onClick={(e) => { e.stopPropagation(); handleEditClick({ ...card.rawData, type: 'pt' }); }} style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: '700', color: '#1e293b', cursor: 'pointer', textDecoration: 'underline', textDecorationColor: '#cbd5e1', textUnderlineOffset: '2px' }} onMouseOver={e => e.currentTarget.style.color = '#3b82f6'} onMouseOut={e => e.currentTarget.style.color = '#1e293b'}>{card.siteName}</span>
                                             {currentResult && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: ss.badge, color: ss.text }}>{ss.label}</span>}
                                             {card._type === 'inProgress' && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: '#dbeafe', color: '#1d4ed8' }}>진행중</span>}
@@ -9189,10 +9197,17 @@ h2{font-size:13px;color:#64748b;margin:0 0 20px;font-weight:500;}
                                                 </button>
                                               );
                                             })()}
-                                            {/* 📎 잔디 공고문 첨부파일 배지 (Phase 3d) */}
+                                            {/* 📎 잔디 공고문 첨부파일 배지 (Phase 3d + 4 중복감지) */}
                                             {s?.evidenceFiles && Object.keys(s.evidenceFiles).length > 0 && (() => {
                                               const files = Object.entries(s.evidenceFiles).map(([fid, f]) => ({ fid, ...f }));
-                                              const fileCount = files.length;
+                                              // suppressed(구버전 PT)는 파일 수에 포함하되 배지 개수는 primary만
+                                              const activeFiles = files.filter(f => !f.suppressed);
+                                              const fileCount = activeFiles.length;
+                                              const hasRevision = files.some(f => f.isRevision);
+                                              const hasSuppressed = files.some(f => f.suppressed);
+                                              const badgeBg = hasSuppressed ? '#fef3c7' : '#eff6ff';
+                                              const badgeColor = hasSuppressed ? '#92400e' : '#1d4ed8';
+                                              const badgeBorder = hasSuppressed ? '#fcd34d' : '#bfdbfe';
                                               return (
                                                 <button
                                                   onClick={(e) => {
@@ -9205,9 +9220,17 @@ h2{font-size:13px;color:#64748b;margin:0 0 20px;font-weight:500;}
                                                       const score = f.matchScore != null ? `${(f.matchScore * 100).toFixed(0)}%` : '-';
                                                       const matchedAt = f.matchedAt ? new Date(f.matchedAt).toLocaleString('ko-KR') : '-';
                                                       const storagePath = f.storagePath || '';
-                                                      return `<tr>
+                                                      // 중복/재공고/구버전 배지 tags
+                                                      const tags = [];
+                                                      if (f.isRevision) tags.push('<span class="tag rev">🔄 재공고</span>');
+                                                      if (f.hasOlderVersions) tags.push(`<span class="tag old">📜 구버전 ${f.hasOlderVersions}건</span>`);
+                                                      if (f.supersededByFileId) tags.push('<span class="tag sup">⬅️ 이후 재공고됨</span>');
+                                                      if (f.sameContentAs && f.sameContentAs.length) tags.push(`<span class="tag dup">🔗 내용중복 ${f.sameContentAs.length}건</span>`);
+                                                      if (f.suppressed) tags.push('<span class="tag sup">🔁 과거 PT 지원</span>');
+                                                      const rowClass = f.suppressed ? ' class="suppressed"' : '';
+                                                      return `<tr${rowClass}>
   <td class="num">${seq}</td>
-  <td class="fname" title="${(f.filename || '').replace(/"/g, '&quot;')}">${f.filename || '-'}${method}</td>
+  <td class="fname" title="${(f.filename || '').replace(/"/g, '&quot;')}">${f.filename || '-'}${method}<div class="tags">${tags.join(' ')}</div></td>
   <td class="ext">${(f.ext || '').toUpperCase()}</td>
   <td class="size">${sizeKB}</td>
   <td class="score">${score}</td>
@@ -9233,6 +9256,14 @@ td.matched{color:#64748b;font-size:11px;white-space:nowrap;width:140px;}
 td.action a{display:inline-block;padding:4px 10px;background:#2563eb;color:white;border-radius:5px;text-decoration:none;font-size:11px;font-weight:600;}
 td.action a:hover{background:#1d4ed8;}
 tr:hover td{background:#fafbfc;}
+tr.suppressed td{background:#f8fafc;opacity:0.65;}
+tr.suppressed td.fname{color:#64748b;}
+.tags{margin-top:3px;display:flex;flex-wrap:wrap;gap:3px;}
+.tag{display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap;}
+.tag.rev{background:#fef3c7;color:#92400e;border:1px solid #fcd34d;}
+.tag.old{background:#e0e7ff;color:#4338ca;border:1px solid #c7d2fe;}
+.tag.sup{background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;}
+.tag.dup{background:#fce7f3;color:#9f1239;border:1px solid #fbcfe8;}
 .foot{margin-top:14px;font-size:11px;color:#94a3b8;text-align:center;}
 </style></head>
 <body>
@@ -9249,10 +9280,10 @@ tr:hover td{background:#fafbfc;}
                                                     if (w) { w.document.write(html); w.document.close(); }
                                                     else alert('팝업이 차단되어 있습니다. 이 사이트의 팝업을 허용해주세요.');
                                                   }}
-                                                  style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', cursor: 'pointer' }}
-                                                  title="클릭: 잔디에서 수집된 공고문 파일 목록 새창으로 열기"
+                                                  style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: badgeBg, color: badgeColor, border: `1px solid ${badgeBorder}`, cursor: 'pointer' }}
+                                                  title={`클릭: 공고문 ${fileCount}건 열기${hasRevision ? ' (재공고 포함)' : ''}${hasSuppressed ? ' · 이 PT 지원 건 있음' : ''}`}
                                                 >
-                                                  📎 {fileCount}
+                                                  📎 {fileCount}{hasRevision ? '🔄' : ''}{hasSuppressed ? '🔁' : ''}
                                                 </button>
                                               );
                                             })()}
@@ -11902,7 +11933,7 @@ tr:hover td{background:#fafbfc;}
                 const totals = { '김현조': 0, '박시현': 0 };
                 const counts = { '김현조': 0, '박시현': 0 };
                 settleBriefings.forEach(s => {
-                  const { price: autoPrice } = getRegionPrice(s.address, s.date);
+                  const { price: autoPrice } = getRegionPrice(s.address, s.date, s.workType);
                   const price = s.customPrice || autoPrice;
                   const assignees = (s.assignee || '').split(/[\/,]/).map(a => a.trim());
                   if (assignees.includes('김현조')) { totals['김현조'] += price; counts['김현조']++; }
@@ -11923,13 +11954,16 @@ tr:hover td{background:#fafbfc;}
                         <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>해당 기간 정산 내역이 없습니다.</div>
                       ) : (
                         settleBriefings.map(s => {
-                          const { region, price: autoPrice } = getRegionPrice(s.address, s.date);
+                          const { region, price: autoPrice, isSupervision } = getRegionPrice(s.address, s.date, s.workType);
                           const price = s.customPrice || autoPrice;
                           const isCustom = autoPrice === 0;
                           return (
-                            <div key={s.id} style={{ padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: '6px', background: '#fafafa' }}>
+                            <div key={s.id} style={{ padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: '6px', background: isSupervision ? '#faf5ff' : '#fafafa' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
-                                <span style={{ fontSize: '15px', fontWeight: '600', color: '#1e293b' }}>{s.siteName}</span>
+                                <span style={{ fontSize: '15px', fontWeight: '600', color: '#1e293b' }}>
+                                  {isSupervision && <span style={{ display: 'inline-block', fontSize: '10px', fontWeight: '700', padding: '1px 6px', borderRadius: '6px', background: '#ddd6fe', color: '#5b21b6', marginRight: '5px', verticalAlign: 'middle' }}>감리</span>}
+                                  {s.siteName}
+                                </span>
                                 {isCustom ? (
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
                                     <input 
@@ -12994,6 +13028,14 @@ tr:hover td{background:#fafbfc;}
                       ))}
                     </div>
                   </div>
+
+                  {/* 감리 공종 - 건당 80,000원 (지역 무관) */}
+                  <div style={{ border: '1px solid #c4b5fd', borderRadius: '10px', overflow: 'hidden', gridColumn: '1 / span 2' }}>
+                    <div style={{ background: '#7c3aed', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>감리 공종 - 건당 80,000원 (지역/결과 무관)</div>
+                    <div style={{ padding: '12px', fontSize: '11px', color: '#475569', textAlign: 'center' }}>
+                      workType에 '감리' 포함된 PT/현설 건은 지역·승패 관계없이 1건당 80,000원으로 정산됩니다. (공고문 검증 제외)
+                    </div>
+                  </div>
                 </div>
 
                 <div style={{ marginTop: '16px', padding: '12px', background: '#f8fafc', borderRadius: '8px', fontSize: '12px', color: '#475569' }}>
@@ -13004,6 +13046,7 @@ tr:hover td{background:#fafbfc;}
                   <div>▣ 인천권 = <strong>110,000원</strong></div>
                   <div>▣ 강원권 = <strong>협의</strong> (원주 = <strong>130,000원</strong>)</div>
                   <div>▣ 대전/전라권 인접 = <strong>추후논의</strong></div>
+                  <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed #cbd5e1' }}>▣ <strong style={{ color: '#7c3aed' }}>감리 공종 = 건당 80,000원</strong> (지역·결과 무관)</div>
                 </div>
               </div>
             </div>
@@ -13634,6 +13677,8 @@ tr:hover td{background:#fafbfc;}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       {drilldownFilter === 'settlement' && (() => {
                         const totalSettlement = drillPts.reduce((sum, s) => {
+                          // 감리는 승패 무관 건당 80,000원
+                          if (s?.workType && /감리/.test(String(s.workType))) return sum + 80000;
                           const r2 = getUserResult(s);
                           if (r2 === '승') return sum + 500000;
                           if (r2 === '무' || r2 === '지원') return sum + 250000;
