@@ -904,7 +904,46 @@ app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
 
     // === 메시지 영역 안정화 + 과거 메시지 로드 위해 스크롤 업 ===
     await page.waitForSelector('[class*="message" i], [class*="msg" i], main, [role="main"]', { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(5000);  // 잔디는 SPA — 채널 클릭 후 메시지 로드까지 시간 필요
+
+    // === DOM 진단 (셀렉터 정확도 확인) ===
+    const domDiag = await page.evaluate(() => {
+      const sample = (sel, n = 3) => {
+        const els = [...document.querySelectorAll(sel)];
+        return {
+          count: els.length,
+          samples: els.slice(0, n).map(el => ({
+            tag: el.tagName,
+            className: (el.className || '').toString().slice(0, 100),
+            text: (el.innerText || '').trim().slice(0, 80),
+          })),
+        };
+      };
+      const allClassNames = new Set();
+      for (const el of document.querySelectorAll('*')) {
+        const c = (el.className || '').toString();
+        if (c) c.split(/\s+/).forEach(x => x && allClassNames.add(x));
+      }
+      const classKeywords = ['message', 'msg', 'file', 'attach', 'card', 'chat', 'room'];
+      const matchedClasses = [...allClassNames].filter(c =>
+        classKeywords.some(k => c.toLowerCase().includes(k))
+      ).slice(0, 50);
+      return {
+        url: location.href,
+        title: document.title,
+        bodyTextLen: document.body?.innerText?.length || 0,
+        bodyPreview: (document.body?.innerText || '').slice(0, 500),
+        anchorCount: document.querySelectorAll('a').length,
+        iframeCount: document.querySelectorAll('iframe').length,
+        timeElCount: document.querySelectorAll('time, [datetime]').length,
+        msgClassMatches: sample('[class*="message" i]', 5),
+        msgItemMatches: sample('[class*="msg" i]', 5),
+        fileClassMatches: sample('[class*="file" i]', 5),
+        attachClassMatches: sample('[class*="attach" i]', 5),
+        scrollContainers: sample('[class*="scroll" i]', 5),
+        relevantClassNames: matchedClasses,
+      };
+    });
 
     const scrollResult = await page.evaluate(async ({ maxScrolls, cutoffMs }) => {
       const findContainer = () => {
@@ -1020,6 +1059,7 @@ app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
       seqSummary,
       files,
       pageUrl,
+      domDiag,
       durationMs: Date.now() - startedAt,
     });
   } catch (e) {
