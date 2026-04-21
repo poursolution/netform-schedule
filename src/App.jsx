@@ -2961,21 +2961,28 @@ import { sendJandiNotification } from './utils/jandi.js';
           return assignees.includes(assignee);
         });
         
-        // 개별 담당자 결과 가져오기
+        // 개별 담당자 결과 가져오기 (지원 규칙: 주담 결과에 종속)
         const getResult = (s) => {
           const editKey = `${s.id}_${assignee}`;
-          if (editingResults.hasOwnProperty(editKey)) {
-            return editingResults[editKey];
+          let raw = null;
+          if (editingResults.hasOwnProperty(editKey)) raw = editingResults[editKey];
+          else if (s.results && s.results[assignee]) raw = s.results[assignee];
+          else {
+            const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+            if (assignees.length > 1) raw = null;
+            else raw = s.result || null;
           }
-          if (s.results && s.results[assignee]) {
-            return s.results[assignee];
+          // 지원자 규칙: 주담당자 '승' 또는 '무' 일 때만 지원 인정, '패' 면 본인도 '패'
+          if (raw === '지원') {
+            const primary = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim())[0];
+            if (primary && primary !== assignee) {
+              const primaryResult = s.results?.[primary] || s.result;
+              if (primaryResult === '승' || primaryResult === '무') return '지원';
+              if (primaryResult === '패') return '패';
+              return null;
+            }
           }
-          // 복수 담당자인 경우 레거시 result 사용 안함
-          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
-          if (assignees.length > 1) {
-            return null;
-          }
-          return s.result || null;
+          return raw;
         };
         
         // 본인영업 여부 확인
@@ -3009,10 +3016,24 @@ import { sendJandiNotification } from './utils/jandi.js';
         });
 
         const getResult = (s) => {
-          if (s.results && s.results[assigneeName]) return s.results[assigneeName];
-          const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
-          if (assignees.length > 1) return null;
-          return s.result || null;
+          let raw = null;
+          if (s.results && s.results[assigneeName]) raw = s.results[assigneeName];
+          else {
+            const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+            if (assignees.length > 1) raw = null;
+            else raw = s.result || null;
+          }
+          // 지원자 규칙 — 주담 승·무 때만 인정, 주담 패면 본인도 패
+          if (raw === '지원') {
+            const primary = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim())[0];
+            if (primary && primary !== assigneeName) {
+              const primaryResult = s.results?.[primary] || s.result;
+              if (primaryResult === '승' || primaryResult === '무') return '지원';
+              if (primaryResult === '패') return '패';
+              return null;
+            }
+          }
+          return raw;
         };
 
         const workTypeStats = {};
@@ -3519,12 +3540,26 @@ import { sendJandiNotification } from './utils/jandi.js';
             });
             
             const getResult = (s) => {
-              if (s.results && s.results[assignee]) return s.results[assignee];
-              const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
-              if (assignees.length > 1) return null;
-              return s.result || null;
+              let raw = null;
+              if (s.results && s.results[assignee]) raw = s.results[assignee];
+              else {
+                const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                if (assignees.length > 1) raw = null;
+                else raw = s.result || null;
+              }
+              // 지원자 규칙 — 주담 승·무 때만 인정
+              if (raw === '지원') {
+                const primary = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim())[0];
+                if (primary && primary !== assignee) {
+                  const primaryResult = s.results?.[primary] || s.result;
+                  if (primaryResult === '승' || primaryResult === '무') return '지원';
+                  if (primaryResult === '패') return '패';
+                  return null;
+                }
+              }
+              return raw;
             };
-            
+
             const wins = list.filter(s => getResult(s) === '승').length;
             const draws = list.filter(s => getResult(s) === '무').length;
             const losses = list.filter(s => getResult(s) === '패').length;
@@ -13610,10 +13645,24 @@ tr.suppressed td.fname{color:#64748b;}
               return s.ptAssignee.split(/[\/,+&]/).map(a => a.trim()).some(a => a === viewUser);
             });
             const getUserResult = (s) => {
-              if (s.results && s.results[viewUser] !== undefined) return s.results[viewUser];
-              const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
-              if (assignees.length <= 1) return s.result || null;
-              return null;
+              let raw = null;
+              if (s.results && s.results[viewUser] !== undefined) raw = s.results[viewUser];
+              else {
+                const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
+                if (assignees.length <= 1) raw = s.result || null;
+                else raw = null;
+              }
+              // 지원자 규칙 — 주담 승·무 때만 인정, 주담 패면 본인도 패
+              if (raw === '지원') {
+                const primary = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim())[0];
+                if (primary && primary !== viewUser) {
+                  const primaryResult = s.results?.[primary] || s.result;
+                  if (primaryResult === '승' || primaryResult === '무') return '지원';
+                  if (primaryResult === '패') return '패';
+                  return null;
+                }
+              }
+              return raw;
             };
             const currentMonthStr2 = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
             let drillPts = [];
