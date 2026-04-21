@@ -648,13 +648,11 @@ app.post('/admin/jandi-login-test', requireAuth, async (req, res) => {
 // === 잔디 채널 스크롤 헬퍼 — 마우스 wheel 기반 (과거 메시지 lazy-load 트리거) ===
 // cutoffMs 시각보다 오래된 메시지까지 로드되면 중단.
 // 반환: { scrolls, finalHeight, oldestTs }
-async function scrollJandiChannelToCutoff(page, cutoffMs, maxScrolls = 300) {
-  // 메시지 영역 포커스 — 잔디의 메인 채팅 패널
+async function scrollJandiChannelToCutoff(page, cutoffMs, maxScrolls = 500) {
   const chatArea = page.locator('.cpanel._chatPanel, ._primaryPanel, .msgs-holder, .msgs-stage').first();
   let box = null;
   try { box = await chatArea.boundingBox({ timeout: 5000 }); } catch (_) {}
   if (!box) {
-    // fallback: 뷰포트 중앙
     const vp = page.viewportSize() || { width: 1280, height: 720 };
     box = { x: vp.width / 2, y: vp.height / 2, width: 1, height: 1 };
   }
@@ -665,18 +663,30 @@ async function scrollJandiChannelToCutoff(page, cutoffMs, maxScrolls = 300) {
   let scrolls = 0, stagnant = 0;
   let oldestTs = null;
   let lastHeight = await page.evaluate(() => document.documentElement.scrollHeight).catch(() => 0);
+  let lastMsgCount = await page.evaluate(() => document.querySelectorAll('.msg-attach, .preview-file').length).catch(() => 0);
 
   while (scrolls < maxScrolls) {
-    await page.mouse.wheel(0, -1200);
-    await page.waitForTimeout(400);
+    // 더 큰 wheel + 랜덤 대기 (잔디 rate limit 회피)
+    await page.mouse.wheel(0, -2500);
+    await page.waitForTimeout(500 + Math.floor(Math.random() * 200));
     scrolls++;
 
-    // 주기적으로 시간/상태 체크
+    // 20회마다 "더 강력한" 스크롤 시도: Home 키 + 맨 위 요소 scrollIntoView
+    if (scrolls % 20 === 0) {
+      await page.keyboard.press('Home').catch(() => {});
+      await page.waitForTimeout(800);
+      // 맨 위 메시지에서 살짝 아래로 내렸다 다시 위로 (lazy load 재트리거)
+      await page.mouse.wheel(0, 800);
+      await page.waitForTimeout(300);
+      await page.mouse.wheel(0, -3000);
+      await page.waitForTimeout(800);
+    }
+
+    // 5회마다 상태 체크 (message 개수 + scrollHeight 동시 감시)
     if (scrolls % 5 === 0) {
-      const { oldest, curH } = await page.evaluate(() => {
+      const { oldest, curH, msgCount } = await page.evaluate(() => {
         const times = [...document.querySelectorAll('time, .fn-write-time time')]
-          .map(t => (t.textContent || '').trim())
-          .filter(Boolean);
+          .map(t => (t.textContent || '').trim()).filter(Boolean);
         let oldest = Infinity;
         for (const s of times) {
           const m = s.match(/(\d{4})\/(\d{2})\/(\d{2})/);
@@ -688,22 +698,26 @@ async function scrollJandiChannelToCutoff(page, cutoffMs, maxScrolls = 300) {
         return {
           oldest: oldest === Infinity ? null : oldest,
           curH: document.documentElement.scrollHeight,
+          msgCount: document.querySelectorAll('.msg-attach, .preview-file').length,
         };
       });
       if (oldest) oldestTs = oldest;
       if (oldest && oldest <= cutoffMs) break;
-      if (curH === lastHeight) {
+      // 메시지 개수 또는 scrollHeight 중 하나라도 늘었으면 stagnant 리셋
+      if (curH === lastHeight && msgCount === lastMsgCount) {
         stagnant++;
-        if (stagnant >= 4) break;  // 5 × 4 = 20회 wheel해도 변화 없으면 종료
+        if (stagnant >= 10) break;  // 5 × 10 = 50회 변화 없으면 정말로 끝
       } else {
         stagnant = 0;
         lastHeight = curH;
+        lastMsgCount = msgCount;
       }
     }
   }
   return {
     scrolls,
     finalHeight: lastHeight,
+    msgCount: lastMsgCount,
     oldestTs: oldestTs ? new Date(oldestTs).toISOString() : null,
   };
 }
