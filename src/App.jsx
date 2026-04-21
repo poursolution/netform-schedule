@@ -1559,7 +1559,16 @@ import { sendJandiNotification } from './utils/jandi.js';
           
           // userAccounts가 로드되었는지 확인
           const account = userAccounts[id];
-          if (account && account.password === password) {
+          // ⚠️ Firebase users/ 로드 전엔 account.password 가 빈 문자열('') 임
+          //    password 미로드 상태에서 mismatch 판단하면 안 됨 — 다음 render 에서 재시도되도록 return
+          const anyPwLoaded = Object.values(userAccounts).some(a => a.password);
+          if (!account) {
+            // 존재 안 하는 계정 — 삭제
+            localStorage.removeItem('autoLogin');
+          } else if (!anyPwLoaded) {
+            // Firebase users/ 아직 로드 안 됨 — 삭제하지 말고 다음 render 기다림
+            return;
+          } else if (account.password === password) {
             setCurrentUser({ id, ...account });
             setIsLoggedIn(true);
             // 모든 사용자에게 전체 보기 기본값
@@ -1577,8 +1586,8 @@ import { sendJandiNotification } from './utils/jandi.js';
             setTimeout(() => {
               checkMySchedulesOnLoad(account.name);
             }, 1500);
-          } else if (Object.keys(userAccounts).length > 5) {
-            // userAccounts가 충분히 로드된 후에도 맞지 않으면 삭제
+          } else {
+            // password 로드 완료 + mismatch → 실제로 비밀번호 바뀐 경우 (삭제)
             localStorage.removeItem('autoLogin');
           }
         } catch (e) {
