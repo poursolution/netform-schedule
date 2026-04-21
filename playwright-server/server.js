@@ -864,29 +864,73 @@ app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
       entryDebug = { method: 'direct-href', fullUrl };
       entered = true;
     } else {
-      // 사이드바에서 채널명 매칭 → 클릭
-      const clickResult = await page.evaluate((name) => {
+      // 사이드바에서 채널명 매칭 → 해시뱅 href 추출 (잔디는 AngularJS — #!/room/XXX, #!/topic/XXX)
+      const findResult = await page.evaluate((name) => {
         const normalize = s => (s || '').replace(/\s+/g, '').trim();
         const target = normalize(name);
-        // 1) a 태그 완전일치
-        const aTags = [...document.querySelectorAll('a')];
-        let el = aTags.find(a => normalize(a.innerText || a.textContent) === target);
-        // 2) a 태그 포함 매칭
-        if (!el) el = aTags.find(a => normalize(a.innerText || a.textContent).includes(target));
-        // 3) li/div 대체
-        if (!el) {
-          const all = [...document.querySelectorAll('li, div[role="button"], div[class*="item" i], span')];
-          el = all.find(x => normalize(x.innerText || '').includes(target));
+
+        // 사이드바 lnb-item 또는 일반 li/div 중 텍스트 매칭하는 것 찾기
+        const candidates = [...document.querySelectorAll('.lnb-item-box, .lnb-item-title, [class*="lnb-item" i], li, div[role="button"]')];
+        let el = candidates.find(x => normalize(x.innerText || '') === target);
+        if (!el) el = candidates.find(x => normalize(x.innerText || '').includes(target));
+        if (!el) return { ok: false, reason: 'no_text_match', candidatesChecked: candidates.length };
+
+        // el 또는 ancestors/descendants에서 #!/room/, #!/topic/, #!/chat/ 패턴 href 찾기
+        const findHashbangHref = (node) => {
+          if (!node) return null;
+          // self 또는 안쪽에서 anchor 찾기
+          const insideAs = [node, ...(node.querySelectorAll?.('a') || [])];
+          for (const a of insideAs) {
+            const h = a.getAttribute?.('href') || '';
+            if (/#!\/(room|topic|chat|message|dm)\//.test(h)) return h;
+          }
+          // ng-click 안에 routing 있을 수도
+          const ngClick = node.getAttribute?.('ng-click') || '';
+          const ngClickRoom = ngClick.match(/['"](\d{6,})['"]/);
+          if (ngClickRoom) return `#!/room/${ngClickRoom[1]}`;
+          return null;
+        };
+
+        let href = findHashbangHref(el);
+        // 부모 5단계 탐색
+        let p = el;
+        for (let i = 0; !href && i < 5 && p; i++) {
+          p = p.parentElement;
+          href = findHashbangHref(p);
         }
-        if (!el) return { ok: false };
-        const href = el.tagName === 'A' ? (el.getAttribute('href') || el.href) : null;
-        el.scrollIntoView?.({ block: 'center' });
-        el.click();
-        return { ok: true, tag: el.tagName, href, text: (el.innerText || '').trim().slice(0, 60) };
+
+        // data-* 에서도 찾기
+        if (!href) {
+          const dataId = el.getAttribute?.('data-room-id') || el.getAttribute?.('data-entity-id');
+          if (dataId) href = `#!/room/${dataId}`;
+        }
+
+        const meta = {
+          tag: el.tagName,
+          className: (el.className || '').toString().slice(0, 100),
+          text: (el.innerText || '').trim().slice(0, 80),
+        };
+
+        // href 없으면 click() 폴백 시도
+        if (!href) {
+          el.scrollIntoView?.({ block: 'center' });
+          el.click();
+          return { ok: true, method: 'click', href: null, el: meta };
+        }
+        return { ok: true, method: 'href', href, el: meta };
       }, channelName);
-      entryDebug = { method: 'sidebar-click', clickResult };
-      if (clickResult.ok) {
-        await page.waitForTimeout(3500);
+
+      entryDebug = { method: 'sidebar-find', findResult };
+      if (findResult.ok) {
+        if (findResult.href) {
+          // 해시뱅 라우팅 — 같은 페이지에서 hash만 변경
+          const fullUrl = `https://${team}.jandi.com/app/${findResult.href.startsWith('#') ? findResult.href : '#' + findResult.href}`;
+          await page.evaluate((h) => { window.location.hash = h.replace(/^#/, ''); }, findResult.href);
+          await page.waitForTimeout(4000);
+          entryDebug.navigatedTo = fullUrl;
+        } else {
+          await page.waitForTimeout(4000);
+        }
         entered = true;
       }
     }
