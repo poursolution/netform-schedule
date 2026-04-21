@@ -2569,9 +2569,13 @@ import { sendJandiNotification } from './utils/jandi.js';
           }
           setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), requested: true } } } : s));
 
-          // 2) K-APT 검증 — 감리 공종은 공고문 자체가 없으므로 검증 skip
-          const isSupervisionPt = updatedSchedule.workType && /감리/.test(String(updatedSchedule.workType));
-          if (!isSupervisionPt) {
+          // 2) K-APT 검증 자동 호출 — 다음 경우 skip (이중검증 방지)
+          //    a) 감리 PT (workType/siteName 에 '감리') — 공고문 자체 없음
+          //    b) 잔디 evidenceFiles 가 이미 연결됨 — 잔디 프로세스로 공고문 확인 완료
+          const combined = (updatedSchedule.workType || '') + '|' + (updatedSchedule.siteName || '');
+          const isSupervisionPt = /감리/.test(combined);
+          const hasJandiEvidence = updatedSchedule.evidenceFiles && Object.keys(updatedSchedule.evidenceFiles).length > 0;
+          if (!isSupervisionPt && !hasJandiEvidence) {
             verifyKaptForPt({
               scheduleId,
               assignee: targetAssignee,
@@ -9067,9 +9071,9 @@ import { sendJandiNotification } from './utils/jandi.js';
                                         </div>
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
-                                            {/* 감리 배지 — workType 에 "감리" 포함 시 단지명 앞에 표시 (건당 80,000원 정산 대상) */}
-                                            {s?.workType && /감리/.test(String(s.workType)) && (
-                                              <span style={{ fontSize: '10px', fontWeight: '800', padding: '2px 8px', borderRadius: '6px', background: '#ddd6fe', color: '#5b21b6', letterSpacing: '0.02em' }} title="감리 공종 · 건당 80,000원">감리</span>
+                                            {/* 감리 배지 — workType 또는 siteName(현장명 prefix) 에 "감리" 포함 시 단지명 앞에 표시 (건당 80,000원) */}
+                                            {/감리/.test((s?.workType || '') + '|' + (s?.siteName || '')) && (
+                                              <span style={{ fontSize: '10px', fontWeight: '800', padding: '2px 8px', borderRadius: '6px', background: '#ddd6fe', color: '#5b21b6', letterSpacing: '0.02em' }} title="감리 건 · 건당 80,000원 (공고문·결과 무관)">감리</span>
                                             )}
                                             <span onClick={(e) => { e.stopPropagation(); handleEditClick({ ...card.rawData, type: 'pt' }); }} style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: '700', color: '#1e293b', cursor: 'pointer', textDecoration: 'underline', textDecorationColor: '#cbd5e1', textUnderlineOffset: '2px' }} onMouseOver={e => e.currentTarget.style.color = '#3b82f6'} onMouseOut={e => e.currentTarget.style.color = '#1e293b'}>{card.siteName}</span>
                                             {currentResult && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: ss.badge, color: ss.text }}>{ss.label}</span>}
@@ -9288,8 +9292,8 @@ tr.suppressed td.fname{color:#64748b;}
                                                 </button>
                                               );
                                             })()}
-                                            {/* 🔍 K-APT 개별 검증 버튼 (모든 결과 - 승·무·패·지원·진행중, 단 승+정산완료·감리는 숨김) */}
-                                            {!isSelfPT && !isSuperseded && kaptWorkerUrl && !(currentResult === '승' && (settlement.completed || settlement.selfSales)) && !(s?.workType && /감리/.test(String(s.workType))) && (() => {
+                                            {/* 🔍 K-APT 개별 검증 버튼 (수동 — 사용자가 필요할 때 누름) */}
+                                            {!isSelfPT && !isSuperseded && kaptWorkerUrl && !(currentResult === '승' && (settlement.completed || settlement.selfSales)) && (() => {
                                               const vkey = `${card.id}_${card.manager}`;
                                               const busy = kaptVerifyingId === vkey;
                                               const kv = s?.kaptVerified;
@@ -9345,6 +9349,39 @@ tr.suppressed td.fname{color:#64748b;}
                                                               }
                                                             } catch (e2) {
                                                               alert(`❌ 재검증 오류: ${e2.message}`);
+                                                            }
+                                                          }
+                                                        }
+                                                      } else if (r.status === 'needs_review' && r.reason === 'bid_not_found') {
+                                                        // 공고번호로 조회 했으나 K-APT / data.go.kr 에 없음 → 공고번호 재입력 유도
+                                                        const curBid = s?.bidNo || '';
+                                                        const msg = `⚠ 공고번호 ${curBid ? `'${curBid}' ` : ''}K-APT 조회 실패 (bid_not_found)\n\n원인:\n  • 입력된 공고번호가 틀림\n  • K-APT/data.go.kr 에 아직 등재되지 않음 (당일 공고는 다음날 반영)\n  • 공고가 취소·철회됨\n\n해결:\n  1. 확인 → 21line.co.kr 새 탭 열어 단지명으로 재검색\n  2. 올바른 공고번호(17~18자리 숫자 or kg2b_XXX) 입력 → 즉시 재검증\n  3. 취소 → 나중에 수동 수정\n\n공고번호 재입력하시겠습니까?`;
+                                                        if (window.confirm(msg)) {
+                                                          const brandGuess = (card.siteName || '').replace(/\s+/g, '').replace(/아파트|APT/gi, '').slice(-5);
+                                                          window.open(`https://www.21line.co.kr/conty/?cd=first`, '_blank');
+                                                          const bidNumInput = window.prompt(`공고번호 재입력 (예: 20260401144113799 또는 kg2b_128097)\n\n단지명 힌트: "${brandGuess}"\n빈 값이면 취소됩니다.`, curBid);
+                                                          if (bidNumInput && bidNumInput.trim() && bidNumInput.trim() !== curBid) {
+                                                            const trimmed = bidNumInput.trim();
+                                                            setPtSchedules(prev => prev.map(ps => ps.id === card.id ? { ...ps, bidNo: trimmed } : ps));
+                                                            setDirtyScheduleIds(prev => new Set([...prev, card.id]));
+                                                            setHasResultChanges(true);
+                                                            try {
+                                                              const r3 = await verifyKaptForPt({
+                                                                scheduleId: card.id,
+                                                                assignee: card.manager,
+                                                                siteName: card.siteName,
+                                                                workType: s?.workType,
+                                                                bidNo: trimmed,
+                                                                ptDate: card.date,
+                                                                by: currentUser?.name || 'manual',
+                                                              });
+                                                              if (r3.status === 'verified') {
+                                                                alert(`✅ 재검증 통과\n\n공고번호: ${trimmed}\n공법: ${r3.matchedValue || r3.matchedBy}\n${r3.message || ''}`);
+                                                              } else {
+                                                                alert(`⚠ 공고번호 ${trimmed} 검증 실패\n\n사유: ${r3.reason || ''}\n${r3.message || ''}`);
+                                                              }
+                                                            } catch (e3) {
+                                                              alert(`❌ 재검증 오류: ${e3.message}`);
                                                             }
                                                           }
                                                         }
@@ -13678,8 +13715,8 @@ tr.suppressed td.fname{color:#64748b;}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       {drilldownFilter === 'settlement' && (() => {
                         const totalSettlement = drillPts.reduce((sum, s) => {
-                          // 감리는 승패 무관 건당 80,000원
-                          if (s?.workType && /감리/.test(String(s.workType))) return sum + 80000;
+                          // 감리 (workType 또는 siteName 어느 쪽이든 '감리') 는 승패 무관 건당 80,000원
+                          if (/감리/.test((s?.workType || '') + '|' + (s?.siteName || ''))) return sum + 80000;
                           const r2 = getUserResult(s);
                           if (r2 === '승') return sum + 500000;
                           if (r2 === '무' || r2 === '지원') return sum + 250000;
