@@ -1294,23 +1294,46 @@ app.post('/admin/jandi-file-download-test', requireAuth, async (req, res) => {
     let step1 = {}, step2 = {};
     try {
       const apiUrl = `https://i1.jandi.com/file-api/v1/teams/${teamId}/files/${fileId}/downloadUrl?fileId=${fileId}`;
-      const r1 = await context.request.get(apiUrl, {
-        headers: {
-          'Authorization': `Bearer ${jwt}`,
-          'Referer': `https://${team}.jandi.com/`,
-          'Accept': 'application/vnd.tosslab.jandi-v2+json',
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      });
-      step1 = {
-        httpStatus: r1.status(),
-        contentType: r1.headers()['content-type'],
-      };
-      const apiJson = await r1.json().catch(() => null);
+      // Accept 헤더 여러 버전 시도
+      const acceptCandidates = [
+        'application/vnd.tosslab.jandi-v1+json',
+        'application/vnd.tosslab.jandi-v3+json',
+        'application/vnd.tosslab.jandi+json',
+        'application/json',
+        '*/*',
+      ];
+      step1.attempts = [];
+      let r1 = null, apiJson = null, signedUrl = null;
+      for (const accept of acceptCandidates) {
+        r1 = await context.request.get(apiUrl, {
+          headers: {
+            'Authorization': `Bearer ${jwt}`,
+            'Referer': `https://${team}.jandi.com/`,
+            'Accept': accept,
+          },
+          timeout: 15000,
+        });
+        const s = r1.status();
+        step1.attempts.push({ accept, status: s });
+        if (s >= 200 && s < 300) {
+          apiJson = await r1.json().catch(() => null);
+          signedUrl = apiJson?.downloadUrl || apiJson?.url || apiJson?.data?.downloadUrl;
+          if (signedUrl) { step1.workingAccept = accept; break; }
+        } else if (s === 406) {
+          continue; // try next
+        } else {
+          // 401/403/500 등은 바로 stop
+          const body = await r1.text().catch(() => '');
+          step1.attempts[step1.attempts.length - 1].bodyPreview = body.slice(0, 200);
+          break;
+        }
+      }
+      if (r1) {
+        step1.finalStatus = r1.status();
+        step1.finalContentType = r1.headers()['content-type'];
+      }
       step1.responseBody = apiJson;
-      const signedUrl = apiJson?.downloadUrl || apiJson?.url || apiJson?.data?.downloadUrl;
-      step1.signedUrl = signedUrl ? signedUrl.slice(0, 180) + '...' : null;
+      step1.signedUrlPreview = signedUrl ? signedUrl.slice(0, 200) + '...' : null;
 
       // Step 2: signed URL로 실제 다운로드
       if (signedUrl) {
