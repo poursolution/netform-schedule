@@ -864,74 +864,34 @@ app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
       entryDebug = { method: 'direct-href', fullUrl };
       entered = true;
     } else {
-      // 사이드바에서 채널명 매칭 → 해시뱅 href 추출 (잔디는 AngularJS — #!/room/XXX, #!/topic/XXX)
-      const findResult = await page.evaluate((name) => {
-        const normalize = s => (s || '').replace(/\s+/g, '').trim();
-        const target = normalize(name);
-
-        // 사이드바 lnb-item 또는 일반 li/div 중 텍스트 매칭하는 것 찾기
-        const candidates = [...document.querySelectorAll('.lnb-item-box, .lnb-item-title, [class*="lnb-item" i], li, div[role="button"]')];
-        let el = candidates.find(x => normalize(x.innerText || '') === target);
-        if (!el) el = candidates.find(x => normalize(x.innerText || '').includes(target));
-        if (!el) return { ok: false, reason: 'no_text_match', candidatesChecked: candidates.length };
-
-        // el 또는 ancestors/descendants에서 #!/room/, #!/topic/, #!/chat/ 패턴 href 찾기
-        const findHashbangHref = (node) => {
-          if (!node) return null;
-          // self 또는 안쪽에서 anchor 찾기
-          const insideAs = [node, ...(node.querySelectorAll?.('a') || [])];
-          for (const a of insideAs) {
-            const h = a.getAttribute?.('href') || '';
-            if (/#!\/(room|topic|chat|message|dm)\//.test(h)) return h;
-          }
-          // ng-click 안에 routing 있을 수도
-          const ngClick = node.getAttribute?.('ng-click') || '';
-          const ngClickRoom = ngClick.match(/['"](\d{6,})['"]/);
-          if (ngClickRoom) return `#!/room/${ngClickRoom[1]}`;
-          return null;
-        };
-
-        let href = findHashbangHref(el);
-        // 부모 5단계 탐색
-        let p = el;
-        for (let i = 0; !href && i < 5 && p; i++) {
-          p = p.parentElement;
-          href = findHashbangHref(p);
+      // 사이드바에서 lnb-list-item 중 채널명 매칭 → Playwright native click (AngularJS ng-click 트리거)
+      const itemLocator = page.locator('.lnb-list-item').filter({ hasText: channelName });
+      const itemCount = await itemLocator.count();
+      entryDebug = { method: 'sidebar-native-click', channelName, candidateCount: itemCount };
+      if (itemCount === 0) {
+        // 폴백 — 모든 텍스트로 검색
+        const altLocator = page.locator(`text="${channelName}"`);
+        const altCount = await altLocator.count();
+        entryDebug.fallbackTextCount = altCount;
+        if (altCount > 0) {
+          await altLocator.first().scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+          await altLocator.first().click({ timeout: 10000, force: true }).catch(e => entryDebug.clickError = e.message);
         }
+      } else {
+        await itemLocator.first().scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+        await itemLocator.first().click({ timeout: 10000 }).catch(e => entryDebug.clickError = e.message);
+      }
 
-        // data-* 에서도 찾기
-        if (!href) {
-          const dataId = el.getAttribute?.('data-room-id') || el.getAttribute?.('data-entity-id');
-          if (dataId) href = `#!/room/${dataId}`;
-        }
-
-        const meta = {
-          tag: el.tagName,
-          className: (el.className || '').toString().slice(0, 100),
-          text: (el.innerText || '').trim().slice(0, 80),
-        };
-
-        // href 없으면 click() 폴백 시도
-        if (!href) {
-          el.scrollIntoView?.({ block: 'center' });
-          el.click();
-          return { ok: true, method: 'click', href: null, el: meta };
-        }
-        return { ok: true, method: 'href', href, el: meta };
-      }, channelName);
-
-      entryDebug = { method: 'sidebar-find', findResult };
-      if (findResult.ok) {
-        if (findResult.href) {
-          // 해시뱅 라우팅 — 같은 페이지에서 hash만 변경
-          const fullUrl = `https://${team}.jandi.com/app/${findResult.href.startsWith('#') ? findResult.href : '#' + findResult.href}`;
-          await page.evaluate((h) => { window.location.hash = h.replace(/^#/, ''); }, findResult.href);
-          await page.waitForTimeout(4000);
-          entryDebug.navigatedTo = fullUrl;
-        } else {
-          await page.waitForTimeout(4000);
-        }
+      // URL이 /#!/room/숫자 또는 /#!/topic/숫자 로 바뀔 때까지 대기 (max 15초)
+      try {
+        await page.waitForURL(u => /#!\/(room|topic)\/\d+/.test(u.toString()), { timeout: 15000 });
+        entryDebug.urlAfterClick = page.url();
         entered = true;
+      } catch (_) {
+        entryDebug.urlAfterClick = page.url();
+        entryDebug.urlChangeTimeout = true;
+        // URL 바뀌지 않았어도 일단 진행 시도
+        entered = entryDebug.urlAfterClick.includes('#!/');
       }
     }
 
