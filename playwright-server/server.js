@@ -628,6 +628,367 @@ app.post('/admin/jandi-login-test', requireAuth, async (req, res) => {
   }
 });
 
+// === 잔디 로그인 헬퍼 (재사용) ===
+// 반환: { ok, status, beforeUrl, afterUrl, teamUrl? }
+async function performJandiLogin(page, { email, password, team }) {
+  await page.goto('https://www.jandi.com/login/ko', { waitUntil: 'networkidle', timeout: 45000 }).catch(async () => {
+    await page.goto('https://www.jandi.com/login/ko', { waitUntil: 'domcontentloaded', timeout: 30000 });
+  });
+  await page.waitForTimeout(2500);
+  const beforeUrl = page.url();
+
+  try {
+    await page.waitForSelector('input[type="email"], input[name="email"], input[type="password"]', { timeout: 10000 });
+  } catch (_) {
+    return { ok: false, status: 'no_form', beforeUrl, afterUrl: page.url() };
+  }
+
+  const emailEl = await page.$('input[type="email"], input[name="email"], input#email');
+  const passEl = await page.$('input[type="password"], input[name="password"]');
+  if (!emailEl || !passEl) {
+    return { ok: false, status: 'no_form', beforeUrl, afterUrl: page.url() };
+  }
+  await emailEl.fill(email);
+  await passEl.fill(password);
+  await page.waitForTimeout(300);
+
+  const clicked = await page.evaluate(() => {
+    const btn = document.querySelector('button[type="submit"], input[type="submit"]')
+      || [...document.querySelectorAll('button')].find(b => /로그인|log\s*in|sign\s*in/i.test(b.innerText || ''));
+    if (btn) { btn.click(); return 'button'; }
+    const form = document.querySelector('form');
+    if (form) { form.submit(); return 'form'; }
+    return null;
+  });
+  if (!clicked) return { ok: false, status: 'no_submit', beforeUrl, afterUrl: page.url() };
+
+  await Promise.race([
+    page.waitForURL(url => !/\/login/i.test(url.toString()), { timeout: 15000 }).catch(() => {}),
+    page.waitForSelector('aside, [class*="sidebar" i], [class*="topic" i]', { timeout: 15000 }).catch(() => {}),
+  ]);
+  await page.waitForTimeout(2000);
+
+  let afterUrl = page.url();
+  const loggedIn = !/\/login|\/landing/i.test(afterUrl);
+
+  // 팀 워크스페이스로 이동 (로그인 후 팀 선택 페이지일 수 있음)
+  let teamUrl = null;
+  if (loggedIn && team) {
+    teamUrl = `https://${team}.jandi.com/`;
+    if (!afterUrl.includes(`${team}.jandi.com`)) {
+      await page.goto(teamUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+      await page.waitForTimeout(3000);
+      afterUrl = page.url();
+    }
+  }
+
+  return {
+    ok: loggedIn,
+    status: loggedIn ? 'logged_in' : 'login_uncertain',
+    beforeUrl, afterUrl, teamUrl,
+  };
+}
+
+// === 잔디 채널 목록 조회 (discovery / debug) ===
+// 사용: POST /admin/jandi-channels-list
+// 목적: 사이드바의 토픽/채팅 채널명·href를 덤프 → "입찰 공고(POUR공법)" 존재 확인
+app.post('/admin/jandi-channels-list', requireAuth, async (req, res) => {
+  const email = process.env.JANDI_EMAIL;
+  const password = process.env.JANDI_PASSWORD;
+  const team = process.env.JANDI_TEAM;
+  if (!email || !password || !team) {
+    return res.status(400).json({ error: 'JANDI_EMAIL, JANDI_PASSWORD, JANDI_TEAM env vars required' });
+  }
+  const startedAt = Date.now();
+  let context = null;
+  try {
+    const browser = await getBrowser();
+    context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      locale: 'ko-KR',
+      ignoreHTTPSErrors: true,
+    });
+    const page = await context.newPage();
+
+    const login = await performJandiLogin(page, { email, password, team });
+    if (!login.ok) {
+      await context.close();
+      return res.json({ status: 'login_failed', login, durationMs: Date.now() - startedAt });
+    }
+
+    // 사이드바 완전 렌더 대기 (SPA)
+    await page.waitForTimeout(4000);
+
+    // 다양한 selector 조합으로 사이드바 채널 추출
+    const channels = await page.evaluate(() => {
+      const out = [];
+      const seen = new Set();
+      const push = (name, href, source, extra = {}) => {
+        name = (name || '').trim();
+        if (!name || name.length > 60) return;
+        const key = name + '|' + (href || '');
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({ name, href: href || null, source, ...extra });
+      };
+      // 1) 토픽/채팅 링크
+      for (const a of document.querySelectorAll('a[href*="/topics/"], a[href*="/chats/"], a[href*="/messages/"], a[href*="/dms/"]')) {
+        const href = a.getAttribute('href') || a.href || '';
+        const name = (a.innerText || a.textContent || '').trim();
+        const kind = /topics/.test(href) ? 'topic' : /chats|messages/.test(href) ? 'chat' : 'dm';
+        push(name, href, 'href-link', { kind });
+      }
+      // 2) data-* 속성
+      for (const el of document.querySelectorAll('[data-channel-name], [data-room-name], [data-topic-name], [data-entity-name]')) {
+        const name = el.getAttribute('data-channel-name') || el.getAttribute('data-room-name') || el.getAttribute('data-topic-name') || el.getAttribute('data-entity-name');
+        const id = el.getAttribute('data-channel-id') || el.getAttribute('data-room-id') || el.getAttribute('data-topic-id') || el.getAttribute('data-entity-id');
+        push(name, null, 'data-attr', { id });
+      }
+      // 3) 사이드바 영역의 li/div 텍스트 (fallback)
+      const sidebarRoots = [...document.querySelectorAll('aside, [class*="sidebar" i], [class*="lnb" i], nav[class*="side" i]')];
+      for (const root of sidebarRoots) {
+        for (const el of root.querySelectorAll('li, div[role="button"], a, [class*="item" i]')) {
+          const txt = (el.innerText || '').trim();
+          if (!txt || txt.length > 60 || /\n/.test(txt)) continue;
+          push(txt, null, 'sidebar-scan');
+          if (out.length > 200) break;
+        }
+      }
+      return out;
+    });
+
+    const htmlSnippet = channels.length === 0
+      ? await page.evaluate(() => document.body?.innerHTML?.slice(0, 5000) || '')
+      : null;
+
+    await context.close();
+    return res.json({
+      status: 'ok',
+      login,
+      channelCount: channels.length,
+      channels: channels.slice(0, 100),  // 너무 많으면 잘라냄
+      htmlSnippet,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (e) {
+    if (context) await context.close().catch(() => {});
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
+// === 잔디 채널 첨부파일 수집 ===
+// 사용: POST /admin/jandi-channel-fetch
+// body: { channelName?='입찰 공고(POUR공법)', channelHref?, monthsBack?=12, maxScrolls?=200 }
+// 흐름: 로그인 → 채널 진입(href 직접 or 사이드바 클릭) → 과거까지 스크롤 → 첨부파일 메타 수집
+app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
+  const email = process.env.JANDI_EMAIL;
+  const password = process.env.JANDI_PASSWORD;
+  const team = process.env.JANDI_TEAM;
+  if (!email || !password || !team) {
+    return res.status(400).json({ error: 'JANDI_EMAIL, JANDI_PASSWORD, JANDI_TEAM env vars required' });
+  }
+  const {
+    channelName = '입찰 공고(POUR공법)',
+    channelHref,
+    monthsBack = 12,
+    maxScrolls = 300,
+  } = req.body || {};
+  const cutoff = new Date(Date.now() - monthsBack * 30 * 86400 * 1000);
+  const startedAt = Date.now();
+  let context = null;
+  try {
+    const browser = await getBrowser();
+    context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      locale: 'ko-KR',
+      ignoreHTTPSErrors: true,
+      acceptDownloads: true,
+    });
+    const page = await context.newPage();
+
+    const login = await performJandiLogin(page, { email, password, team });
+    if (!login.ok) {
+      await context.close();
+      return res.json({ status: 'login_failed', login, durationMs: Date.now() - startedAt });
+    }
+    await page.waitForTimeout(3500);  // 사이드바 렌더 대기
+
+    // === 채널 진입 ===
+    let entryDebug = {};
+    let entered = false;
+    if (channelHref) {
+      const fullUrl = channelHref.startsWith('http')
+        ? channelHref
+        : `https://${team}.jandi.com${channelHref.startsWith('/') ? '' : '/'}${channelHref}`;
+      await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(3000);
+      entryDebug = { method: 'direct-href', fullUrl };
+      entered = true;
+    } else {
+      // 사이드바에서 채널명 매칭 → 클릭
+      const clickResult = await page.evaluate((name) => {
+        const normalize = s => (s || '').replace(/\s+/g, '').trim();
+        const target = normalize(name);
+        // 1) a 태그 완전일치
+        const aTags = [...document.querySelectorAll('a')];
+        let el = aTags.find(a => normalize(a.innerText || a.textContent) === target);
+        // 2) a 태그 포함 매칭
+        if (!el) el = aTags.find(a => normalize(a.innerText || a.textContent).includes(target));
+        // 3) li/div 대체
+        if (!el) {
+          const all = [...document.querySelectorAll('li, div[role="button"], div[class*="item" i], span')];
+          el = all.find(x => normalize(x.innerText || '').includes(target));
+        }
+        if (!el) return { ok: false };
+        const href = el.tagName === 'A' ? (el.getAttribute('href') || el.href) : null;
+        el.scrollIntoView?.({ block: 'center' });
+        el.click();
+        return { ok: true, tag: el.tagName, href, text: (el.innerText || '').trim().slice(0, 60) };
+      }, channelName);
+      entryDebug = { method: 'sidebar-click', clickResult };
+      if (clickResult.ok) {
+        await page.waitForTimeout(3500);
+        entered = true;
+      }
+    }
+
+    if (!entered) {
+      await context.close();
+      return res.json({
+        status: 'channel_not_found',
+        channelName,
+        entryDebug,
+        hint: 'POST /admin/jandi-channels-list 로 사이드바 채널명 확인 후 channelHref 를 직접 넘길 것',
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
+    // === 메시지 영역 안정화 + 과거 메시지 로드 위해 스크롤 업 ===
+    await page.waitForSelector('[class*="message" i], [class*="msg" i], main, [role="main"]', { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(2000);
+
+    const scrollResult = await page.evaluate(async ({ maxScrolls, cutoffMs }) => {
+      const findContainer = () => {
+        const cands = [
+          ...document.querySelectorAll('[class*="message-list" i], [class*="messages" i], [class*="msg-list" i], [class*="msgList" i], main [class*="scroll" i], [class*="chat-container" i]')
+        ];
+        return cands.find(el => el.scrollHeight > el.clientHeight + 50)
+          || document.scrollingElement;
+      };
+      const container = findContainer();
+      let scrolls = 0;
+      let lastHeight = container.scrollHeight;
+      let stagnant = 0;
+      let oldestTs = null;
+      while (scrolls < maxScrolls) {
+        container.scrollTop = 0;
+        await new Promise(r => setTimeout(r, 700));
+        scrolls++;
+        // 가장 오래된 메시지 시간 추정
+        const times = [...document.querySelectorAll('time[datetime], [datetime]')]
+          .map(t => t.getAttribute('datetime'))
+          .filter(Boolean)
+          .map(s => new Date(s).getTime())
+          .filter(t => !isNaN(t));
+        if (times.length) {
+          const old = Math.min(...times);
+          oldestTs = old;
+          if (old <= cutoffMs) break;
+        }
+        const h = container.scrollHeight;
+        if (h === lastHeight) {
+          stagnant++;
+          if (stagnant >= 6) break;
+        } else {
+          stagnant = 0; lastHeight = h;
+        }
+      }
+      return {
+        scrolls,
+        finalHeight: container.scrollHeight,
+        oldestTs: oldestTs ? new Date(oldestTs).toISOString() : null,
+      };
+    }, { maxScrolls, cutoffMs: cutoff.getTime() });
+
+    // === 첨부파일 추출 ===
+    const files = await page.evaluate(() => {
+      const out = [];
+      const seen = new Set();
+      const exts = /\.(pdf|hwp|hwpx|doc|docx|xls|xlsx|zip)($|\?|\s)/i;
+
+      // 메시지 블록 찾기 → 각 블록 안에서 파일카드 + 시간 + 작성자 추출
+      const blocks = [...document.querySelectorAll('[class*="message" i], [class*="msg-item" i], li, article')];
+      for (const block of blocks) {
+        // 파일명으로 보이는 텍스트 or download 속성
+        const fileAnchors = [...block.querySelectorAll('a')].filter(a => {
+          const t = (a.innerText || '').trim();
+          const h = a.href || '';
+          return exts.test(t) || exts.test(h) || a.hasAttribute('download');
+        });
+        // 파일카드 div (a 태그 없는 경우)
+        const fileCards = [...block.querySelectorAll('[class*="file" i], [class*="attach" i]')].filter(el => {
+          const t = (el.innerText || '').trim();
+          return exts.test(t) && !el.closest('a');
+        });
+
+        const timeEl = block.querySelector('time[datetime], [datetime]');
+        const ts = timeEl ? (timeEl.getAttribute('datetime') || timeEl.textContent) : null;
+        const authorEl = block.querySelector('[class*="author" i], [class*="user-name" i], [class*="sender" i], [class*="name" i]');
+        const uploader = authorEl ? (authorEl.innerText || '').trim().slice(0, 30) : null;
+
+        for (const a of fileAnchors) {
+          const filename = (a.innerText || '').trim();
+          const href = a.href || '';
+          const key = filename + '|' + href;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push({ filename, href, uploader, ts, source: 'anchor' });
+        }
+        for (const el of fileCards) {
+          const filename = (el.innerText || '').trim().split('\n')[0].slice(0, 200);
+          const key = filename + '|card';
+          if (seen.has(key)) continue;
+          seen.add(key);
+          // data-* 에서 URL/ID 추출 시도
+          const href = el.getAttribute('data-href') || el.getAttribute('data-url') || el.getAttribute('data-file-url') || '';
+          const fileId = el.getAttribute('data-file-id') || el.getAttribute('data-id') || null;
+          out.push({ filename, href, fileId, uploader, ts, source: 'card' });
+        }
+      }
+      return out;
+    });
+
+    const pageUrl = page.url();
+    await context.close();
+
+    // 파일명 파싱 summary (순번 범위 등)
+    const seqs = files
+      .map(f => (f.filename.match(/^(\d+)_/) || [])[1])
+      .filter(Boolean)
+      .map(s => parseInt(s, 10));
+    const seqSummary = seqs.length
+      ? { min: Math.min(...seqs), max: Math.max(...seqs), count: seqs.length }
+      : null;
+
+    return res.json({
+      status: 'ok',
+      channelName,
+      entryDebug,
+      monthsBack,
+      cutoff: cutoff.toISOString(),
+      scrollResult,
+      fileCount: files.length,
+      seqSummary,
+      files,
+      pageUrl,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (e) {
+    if (context) await context.close().catch(() => {});
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
 // === Phase 1: K-APT 전체 공고 리스트 크롤링 (aptName 필터 없이) ===
 // 사용: POST /admin/kapt-list-crawl { startDate, endDate, pageNo, bidGb }
 // 목적: aptName 없어도 bidList.do 가 결과 반환하는지 검증 + 초기 캐시 구축용
