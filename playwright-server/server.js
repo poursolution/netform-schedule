@@ -1498,7 +1498,11 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       .replace(/[()()[\]【】]/g, '')
       .toLowerCase();
 
-    // 유사도 — 공통 최장 substring 기반
+    // 유사도 — 두 방식 max:
+    //  (1) 공통 최장 substring / longer.length (원래 방식)
+    //  (2) subsequence 매칭 비율 — 짧은 쪽 글자들이 긴 쪽에 순서대로 있는 비율
+    //      예) "평택장당우미3차" 의 8글자 전부가 "평택장당우미이노스빌3차아파트" 에 순서대로 존재
+    //      → score = 8/8 = 1.0 (단 shorter.length < 4 이면 노이즈 방지로 무시)
     const similarity = (a, b) => {
       const na = norm(a), nb = norm(b);
       if (!na || !nb) return 0;
@@ -1506,13 +1510,31 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       if (na.includes(nb) || nb.includes(na)) return 0.9;
       const longer = na.length >= nb.length ? na : nb;
       const shorter = na.length >= nb.length ? nb : na;
+      // (1) substring
       let best = 0;
       for (let len = shorter.length; len >= 3 && len > best; len--) {
         for (let i = 0; i + len <= shorter.length; i++) {
           if (longer.includes(shorter.slice(i, i + len))) { best = len; break; }
         }
       }
-      return best / longer.length;
+      const substringScore = best / longer.length;
+      // (2) subsequence (shorter.length ≥ 4 이어야 노이즈 아님)
+      let subseqScore = 0;
+      if (shorter.length >= 4) {
+        let i = 0, j = 0, matched = 0;
+        while (i < shorter.length && j < longer.length) {
+          if (shorter[i] === longer[j]) { matched++; i++; }
+          j++;
+        }
+        if (i === shorter.length) {
+          // 짧은 쪽 전체가 순서대로 매칭됨 — shorter/longer 비율
+          subseqScore = matched / longer.length;
+          // 보너스: 짧은 쪽이 연속되지 않아도 전부 들어가면 매칭도 높게 평가
+          // shorter.length/longer.length 가 너무 낮으면 0.85 임계값 못 넘으니 약간 가산
+          if (shorter.length / longer.length >= 0.5) subseqScore = Math.max(subseqScore, 0.85);
+        }
+      }
+      return Math.max(substringScore, subseqScore);
     };
 
     // 1. evidence 로드
@@ -1639,7 +1661,20 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
           if (longer.includes(shorter.slice(i, i + len))) { best = len; break; }
         }
       }
-      return best / longer.length;
+      const substringScore = best / longer.length;
+      let subseqScore = 0;
+      if (shorter.length >= 4) {
+        let i = 0, j = 0, matched = 0;
+        while (i < shorter.length && j < longer.length) {
+          if (shorter[i] === longer[j]) { matched++; i++; }
+          j++;
+        }
+        if (i === shorter.length) {
+          subseqScore = matched / longer.length;
+          if (shorter.length / longer.length >= 0.5) subseqScore = Math.max(subseqScore, 0.85);
+        }
+      }
+      return Math.max(substringScore, subseqScore);
     };
 
     const [evSnap, ptSnap] = await Promise.all([
