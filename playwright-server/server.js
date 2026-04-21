@@ -1498,11 +1498,7 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       .replace(/[()()[\]【】]/g, '')
       .toLowerCase();
 
-    // 유사도 — 두 방식 max:
-    //  (1) 공통 최장 substring / longer.length (원래 방식)
-    //  (2) subsequence 매칭 비율 — 짧은 쪽 글자들이 긴 쪽에 순서대로 있는 비율
-    //      예) "평택장당우미3차" 의 8글자 전부가 "평택장당우미이노스빌3차아파트" 에 순서대로 존재
-    //      → score = 8/8 = 1.0 (단 shorter.length < 4 이면 노이즈 방지로 무시)
+    // 유사도 — substring + subsequence 조합
     const similarity = (a, b) => {
       const na = norm(a), nb = norm(b);
       if (!na || !nb) return 0;
@@ -1510,7 +1506,6 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       if (na.includes(nb) || nb.includes(na)) return 0.9;
       const longer = na.length >= nb.length ? na : nb;
       const shorter = na.length >= nb.length ? nb : na;
-      // (1) substring
       let best = 0;
       for (let len = shorter.length; len >= 3 && len > best; len--) {
         for (let i = 0; i + len <= shorter.length; i++) {
@@ -1518,7 +1513,6 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
         }
       }
       const substringScore = best / longer.length;
-      // (2) subsequence (shorter.length ≥ 4 이어야 노이즈 아님)
       let subseqScore = 0;
       if (shorter.length >= 4) {
         let i = 0, j = 0, matched = 0;
@@ -1527,14 +1521,34 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
           j++;
         }
         if (i === shorter.length) {
-          // 짧은 쪽 전체가 순서대로 매칭됨 — shorter/longer 비율
           subseqScore = matched / longer.length;
-          // 보너스: 짧은 쪽이 연속되지 않아도 전부 들어가면 매칭도 높게 평가
-          // shorter.length/longer.length 가 너무 낮으면 0.85 임계값 못 넘으니 약간 가산
           if (shorter.length / longer.length >= 0.5) subseqScore = Math.max(subseqScore, 0.85);
         }
       }
       return Math.max(substringScore, subseqScore);
+    };
+
+    // 복합 매칭 — siteName + address 둘 다 고려
+    //  - nameSim 이 이미 높으면 (>=0.95) 그대로
+    //  - 아니면 nameSim 과 addressSim 둘 다 계산 → 조합
+    //     * nameSim >= 0.5 AND addressSim >= 0.7 → 지역 매칭 + 이름 부분일치 = 0.85 보장
+    //     * 외엔 max(nameSim, addressSim * 0.8)  (address 단독 매칭은 약간 penalty)
+    const composite = (parsedSite, pt) => {
+      const nameSim = similarity(parsedSite, pt.siteName);
+      if (nameSim >= 0.95) return { score: nameSim, matchedBy: 'name' };
+      const addr = pt.address || '';
+      const addrSim = addr ? similarity(parsedSite, addr) : 0;
+      // 지역명(2~3자) 직접 일치 검사 — parsedSite 앞 2~3글자가 address 안에 등장하는지
+      let regionBoost = 0;
+      const firstToken = (parsedSite.match(/^[가-힣]{2,3}/) || [])[0];
+      if (firstToken && addr.includes(firstToken)) regionBoost = 0.3;
+      // 합성: nameSim 이 절반 이상 + 주소까지 잡히면 확신
+      if (nameSim >= 0.5 && (addrSim >= 0.7 || regionBoost > 0)) {
+        return { score: Math.max(0.85, nameSim + regionBoost * 0.3), matchedBy: 'name+address' };
+      }
+      const addrOnly = addrSim * 0.8;
+      if (addrOnly > nameSim) return { score: addrOnly, matchedBy: 'address' };
+      return { score: nameSim, matchedBy: 'name' };
     };
 
     // 1. evidence 로드
@@ -1542,15 +1556,15 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
     const evidence = evSnap.val() || {};
     const evCount = Object.keys(evidence).length;
 
-    // 2. pt 로드 (대용량 — siteName 만 뽑아서 인덱스)
+    // 2. pt 로드 — siteName + address 둘 다 인덱스
     const ptSnap = await db.ref('pt').once('value');
     const pts = ptSnap.val() || {};
     const ptEntries = Object.entries(pts)
       .filter(([, v]) => v?.siteName)
-      .map(([id, v]) => ({ id, siteName: v.siteName, normSite: norm(v.siteName), ptAssignee: v.ptAssignee, date: v.date }));
+      .map(([id, v]) => ({ id, siteName: v.siteName, address: v.address || '', ptAssignee: v.ptAssignee, date: v.date, result: v.results }));
 
-    // 3. 매칭
-    const updates = {}; // flat update object for atomic multi-path write
+    // 3. 매칭 — composite (name + address) 사용
+    const updates = {};
     const results = { evidenceProcessed: 0, matched: 0, multiMatch: 0, unmatched: 0, matches: [] };
 
     for (const [fileId, ev] of Object.entries(evidence)) {
@@ -1560,9 +1574,11 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       const evSite = ev.parsedSiteName;
       if (!evSite) { results.unmatched++; continue; }
 
-      // 모든 PT 후보와 유사도 계산
       const candidates = ptEntries
-        .map(p => ({ ...p, score: similarity(evSite, p.siteName) }))
+        .map(p => {
+          const c = composite(evSite, p);
+          return { ...p, score: c.score, matchedBy: c.matchedBy };
+        })
         .filter(p => p.score >= minScore)
         .sort((a, b) => b.score - a.score);
 
@@ -1608,7 +1624,7 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
         fileId,
         filename: ev.filename,
         parsedSiteName: evSite,
-        matchedPts: toLink.map(c => ({ id: c.id, siteName: c.siteName, score: Number(c.score.toFixed(3)), ptAssignee: c.ptAssignee, date: c.date })),
+        matchedPts: toLink.map(c => ({ id: c.id, siteName: c.siteName, address: c.address, score: Number(c.score.toFixed(3)), matchedBy: c.matchedBy, ptAssignee: c.ptAssignee, date: c.date })),
       });
     }
 
@@ -1685,7 +1701,24 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
     const pts = ptSnap.val() || {};
     const ptEntries = Object.entries(pts)
       .filter(([, v]) => v?.siteName)
-      .map(([id, v]) => ({ id, siteName: v.siteName, ptAssignee: v.ptAssignee, date: v.date, result: v.results }));
+      .map(([id, v]) => ({ id, siteName: v.siteName, address: v.address || '', ptAssignee: v.ptAssignee, date: v.date, result: v.results }));
+
+    // composite: siteName + address 조합 (위 jandi-pt-match 와 동일 로직)
+    const composite = (parsedSite, pt) => {
+      const nameSim = similarity(parsedSite, pt.siteName);
+      if (nameSim >= 0.95) return { score: nameSim, matchedBy: 'name' };
+      const addr = pt.address || '';
+      const addrSim = addr ? similarity(parsedSite, addr) : 0;
+      let regionBoost = 0;
+      const firstToken = (parsedSite.match(/^[가-힣]{2,3}/) || [])[0];
+      if (firstToken && addr.includes(firstToken)) regionBoost = 0.3;
+      if (nameSim >= 0.5 && (addrSim >= 0.7 || regionBoost > 0)) {
+        return { score: Math.max(0.85, nameSim + regionBoost * 0.3), matchedBy: 'name+address' };
+      }
+      const addrOnly = addrSim * 0.8;
+      if (addrOnly > nameSim) return { score: addrOnly, matchedBy: 'address' };
+      return { score: nameSim, matchedBy: 'name' };
+    };
 
     const unmatched = [];
     for (const [fileId, ev] of Object.entries(evidence)) {
@@ -1695,7 +1728,10 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
         continue;
       }
       const candidates = ptEntries
-        .map(p => ({ ...p, score: similarity(ev.parsedSiteName, p.siteName) }))
+        .map(p => {
+          const c = composite(ev.parsedSiteName, p);
+          return { ...p, score: c.score, matchedBy: c.matchedBy };
+        })
         .filter(p => p.score >= minCandidateScore)
         .sort((a, b) => b.score - a.score)
         .slice(0, topN);
@@ -1711,10 +1747,12 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
         candidates: candidates.map(c => ({
           ptId: c.id,
           siteName: c.siteName,
+          address: c.address,
           ptAssignee: c.ptAssignee,
           date: c.date,
           result: c.result ? Object.keys(c.result).join(',') : null,
           score: Number(c.score.toFixed(3)),
+          matchedBy: c.matchedBy,
         })),
       });
     }
