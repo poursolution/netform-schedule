@@ -1549,6 +1549,130 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
   }
 });
 
+// === Phase 3c+ : 미매칭 evidence 조회 + top 후보 추천 ===
+// 사용: POST /admin/jandi-unmatched-evidence
+// body: { minCandidateScore?=0.3, topN?=3 }
+// 반환: 각 no_match evidence + 가장 가까운 PT 후보 N개 (score 순)
+app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
+  const { minCandidateScore = 0.3, topN = 3 } = req.body || {};
+  try {
+    await getFirebaseAdmin();
+    const db = admin.database();
+
+    const norm = (s) => (s || '').toString().replace(/\s+/g, '').replace(/[()()[\]【】]/g, '').toLowerCase();
+    const similarity = (a, b) => {
+      const na = norm(a), nb = norm(b);
+      if (!na || !nb) return 0;
+      if (na === nb) return 1;
+      if (na.includes(nb) || nb.includes(na)) return 0.9;
+      const longer = na.length >= nb.length ? na : nb;
+      const shorter = na.length >= nb.length ? nb : na;
+      let best = 0;
+      for (let len = shorter.length; len >= 2 && len > best; len--) {
+        for (let i = 0; i + len <= shorter.length; i++) {
+          if (longer.includes(shorter.slice(i, i + len))) { best = len; break; }
+        }
+      }
+      return best / longer.length;
+    };
+
+    const [evSnap, ptSnap] = await Promise.all([
+      db.ref('evidence').once('value'),
+      db.ref('pt').once('value'),
+    ]);
+    const evidence = evSnap.val() || {};
+    const pts = ptSnap.val() || {};
+    const ptEntries = Object.entries(pts)
+      .filter(([, v]) => v?.siteName)
+      .map(([id, v]) => ({ id, siteName: v.siteName, ptAssignee: v.ptAssignee, date: v.date, result: v.results }));
+
+    const unmatched = [];
+    for (const [fileId, ev] of Object.entries(evidence)) {
+      if (ev.ptMatchStatus === 'matched') continue;
+      if (!ev.parsedSiteName) {
+        unmatched.push({ fileId, filename: ev.filename, reason: 'no_parsed_site', candidates: [] });
+        continue;
+      }
+      const candidates = ptEntries
+        .map(p => ({ ...p, score: similarity(ev.parsedSiteName, p.siteName) }))
+        .filter(p => p.score >= minCandidateScore)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, topN);
+      unmatched.push({
+        fileId,
+        filename: ev.filename,
+        parsedSeq: ev.parsedSeq,
+        parsedSiteName: ev.parsedSiteName,
+        parsedMethod: ev.parsedMethod,
+        ext: ev.ext,
+        size: ev.size,
+        storagePath: ev.storagePath,
+        candidates: candidates.map(c => ({
+          ptId: c.id,
+          siteName: c.siteName,
+          ptAssignee: c.ptAssignee,
+          date: c.date,
+          result: c.result ? Object.keys(c.result).join(',') : null,
+          score: Number(c.score.toFixed(3)),
+        })),
+      });
+    }
+
+    const withCandidates = unmatched.filter(u => u.candidates.length > 0);
+    const noCandidates = unmatched.filter(u => u.candidates.length === 0);
+
+    return res.json({
+      status: 'ok',
+      totalUnmatched: unmatched.length,
+      withCandidates: withCandidates.length,
+      noCandidates: noCandidates.length,
+      unmatched,
+    });
+  } catch (e) {
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
+// === 수동 매칭 적용/해제 ===
+// 사용: POST /admin/jandi-manual-link
+// body: { fileId, ptId, unlink?=false }
+app.post('/admin/jandi-manual-link', requireAuth, async (req, res) => {
+  const { fileId, ptId, unlink = false } = req.body || {};
+  if (!fileId || !ptId) return res.status(400).json({ error: 'fileId and ptId required' });
+  try {
+    await getFirebaseAdmin();
+    const db = admin.database();
+    const evSnap = await db.ref(`evidence/${fileId}`).once('value');
+    const ev = evSnap.val();
+    if (!ev) return res.status(404).json({ error: 'evidence not found' });
+
+    const updates = {};
+    if (unlink) {
+      updates[`pt/${ptId}/evidenceFiles/${fileId}`] = null;
+      updates[`evidence/${fileId}/matchedPtIds/${ptId}`] = null;
+    } else {
+      updates[`pt/${ptId}/evidenceFiles/${fileId}`] = {
+        filename: ev.filename,
+        storagePath: ev.storagePath,
+        ext: ev.ext,
+        size: ev.size,
+        parsedSeq: ev.parsedSeq,
+        parsedMethod: ev.parsedMethod,
+        matchScore: 1.0,
+        matchedAt: new Date().toISOString(),
+        matchedBy: 'manual',
+      };
+      updates[`evidence/${fileId}/matchedPtIds/${ptId}`] = 1.0;
+      updates[`evidence/${fileId}/ptMatchStatus`] = 'matched';
+      updates[`evidence/${fileId}/matchedAt`] = new Date().toISOString();
+    }
+    await db.ref().update(updates);
+    return res.json({ status: 'ok', action: unlink ? 'unlinked' : 'linked', fileId, ptId });
+  } catch (e) {
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
 // === 잔디 실제 다운로드 URL sniff ===
 // 사용: POST /admin/jandi-download-sniff
 // body: { channelName?='입찰 공고(POUR공법)' }
