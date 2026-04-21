@@ -9189,6 +9189,73 @@ h2{font-size:13px;color:#64748b;margin:0 0 20px;font-weight:500;}
                                                 </button>
                                               );
                                             })()}
+                                            {/* 📎 잔디 공고문 첨부파일 배지 (Phase 3d) */}
+                                            {s?.evidenceFiles && Object.keys(s.evidenceFiles).length > 0 && (() => {
+                                              const files = Object.entries(s.evidenceFiles).map(([fid, f]) => ({ fid, ...f }));
+                                              const fileCount = files.length;
+                                              return (
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const siteName = card.siteName || '';
+                                                    const rows = files.map(f => {
+                                                      const sizeKB = f.size ? (f.size / 1024).toFixed(1) + ' KB' : '-';
+                                                      const seq = f.parsedSeq != null ? `#${f.parsedSeq}` : '';
+                                                      const method = f.parsedMethod ? ` (${f.parsedMethod})` : '';
+                                                      const score = f.matchScore != null ? `${(f.matchScore * 100).toFixed(0)}%` : '-';
+                                                      const matchedAt = f.matchedAt ? new Date(f.matchedAt).toLocaleString('ko-KR') : '-';
+                                                      const storagePath = f.storagePath || '';
+                                                      return `<tr>
+  <td class="num">${seq}</td>
+  <td class="fname" title="${(f.filename || '').replace(/"/g, '&quot;')}">${f.filename || '-'}${method}</td>
+  <td class="ext">${(f.ext || '').toUpperCase()}</td>
+  <td class="size">${sizeKB}</td>
+  <td class="score">${score}</td>
+  <td class="matched">${matchedAt}</td>
+  <td class="action"><a href="https://console.firebase.google.com/project/test-168a4/storage/test-168a4.firebasestorage.app/files/${encodeURIComponent(storagePath)}" target="_blank">Firebase에서 열기</a></td>
+</tr>`;
+                                                    }).join('');
+                                                    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>공고문 첨부파일 — ${siteName}</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"맑은 고딕",sans-serif;margin:0;padding:20px;background:#f8fafc;color:#1e293b;}
+h1{font-size:18px;margin:0 0 4px;}
+h2{font-size:13px;color:#64748b;margin:0 0 20px;font-weight:500;}
+.info{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#1e40af;}
+table{width:100%;border-collapse:collapse;background:white;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;font-size:13px;}
+th{background:#f1f5f9;color:#475569;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;padding:10px 8px;text-align:left;border-bottom:1px solid #e2e8f0;}
+td{padding:10px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle;}
+td.num{color:#6366f1;font-weight:700;font-family:monospace;font-size:12px;width:50px;}
+td.fname{color:#1e293b;font-weight:600;max-width:360px;word-break:break-all;}
+td.ext{color:#64748b;font-weight:700;font-size:11px;width:55px;}
+td.size{color:#64748b;font-size:12px;text-align:right;white-space:nowrap;width:80px;}
+td.score{color:#16a34a;font-weight:700;font-size:12px;width:55px;text-align:center;}
+td.matched{color:#64748b;font-size:11px;white-space:nowrap;width:140px;}
+td.action a{display:inline-block;padding:4px 10px;background:#2563eb;color:white;border-radius:5px;text-decoration:none;font-size:11px;font-weight:600;}
+td.action a:hover{background:#1d4ed8;}
+tr:hover td{background:#fafbfc;}
+.foot{margin-top:14px;font-size:11px;color:#94a3b8;text-align:center;}
+</style></head>
+<body>
+<h1>📎 공고문 첨부파일 (${fileCount}개)</h1>
+<h2>${siteName.replace(/</g, '&lt;')}</h2>
+<div class="info">잔디 "입찰 공고(POUR공법)" 채널에서 자동 수집 · Firebase Storage 보관 · 파일명 단지명 매칭 자동</div>
+<table>
+  <thead><tr><th>순번</th><th>파일명</th><th>형식</th><th>크기</th><th>매칭</th><th>연결일시</th><th>열기</th></tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+<div class="foot">HWP/HWPX는 한글로 열어야 합니다. PDF는 브라우저에서 바로 보기 가능. Firebase 콘솔 접근 권한이 필요합니다.</div>
+</body></html>`;
+                                                    const w = window.open('', '_blank', 'width=900,height=600,scrollbars=yes');
+                                                    if (w) { w.document.write(html); w.document.close(); }
+                                                    else alert('팝업이 차단되어 있습니다. 이 사이트의 팝업을 허용해주세요.');
+                                                  }}
+                                                  style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', cursor: 'pointer' }}
+                                                  title="클릭: 잔디에서 수집된 공고문 파일 목록 새창으로 열기"
+                                                >
+                                                  📎 {fileCount}
+                                                </button>
+                                              );
+                                            })()}
                                             {/* 🔍 K-APT 개별 검증 버튼 (모든 결과 - 승·무·패·지원·진행중, 단 승+정산완료는 숨김) */}
                                             {!isSelfPT && !isSuperseded && kaptWorkerUrl && !(currentResult === '승' && (settlement.completed || settlement.selfSales)) && (() => {
                                               const vkey = `${card.id}_${card.manager}`;
