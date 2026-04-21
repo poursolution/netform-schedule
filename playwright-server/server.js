@@ -631,16 +631,27 @@ app.post('/admin/jandi-login-test', requireAuth, async (req, res) => {
 // === 잔디 로그인 헬퍼 (재사용) ===
 // 반환: { ok, status, beforeUrl, submitUrl, finalUrl, teamUrl, hasCaptcha?, error? }
 async function performJandiLogin(page, { email, password, team }) {
-  // 1) 팀 워크스페이스 직접 접근 → 로그인 안 돼있으면 자동으로 signin 으로 리디렉트됨
   const teamUrl = `https://${team}.jandi.com/`;
+
+  // "로그인 된 상태"의 URL 판별 — 앱 경로여야 함 (/app/, /topics/, /chats/, /bots/ 등)
+  // /landing/, /login/, /signin 은 로그인 페이지
+  const isInApp = (url) =>
+    url.includes(`${team}.jandi.com`) &&
+    !/\/landing|\/login|\/signin/i.test(url);
+
+  // 1) 팀 도메인 접근 — 로그인 상태면 앱에 머물고, 아니면 랜딩/signin으로 튕김
   await page.goto(teamUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(2500);
   const beforeUrl = page.url();
 
-  // 이미 로그인 상태면 바로 종료
-  if (beforeUrl.includes(`${team}.jandi.com`) && !/login|signin/i.test(beforeUrl)) {
+  if (isInApp(beforeUrl)) {
     return { ok: true, status: 'already_logged_in', beforeUrl, finalUrl: beforeUrl, teamUrl };
   }
+
+  // 2) signin 페이지로 명시적 이동 (teamUrl로 되돌아올 redirectUrl 포함)
+  const signinUrl = `https://www.jandi.com/landing/kr/signin?redirectUrl=${encodeURIComponent(teamUrl)}`;
+  await page.goto(signinUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(3000);
 
   // 로그인 폼 감지
   try {
@@ -707,12 +718,12 @@ async function performJandiLogin(page, { email, password, team }) {
     };
   });
 
-  // 팀 워크스페이스로 강제 이동 (로그인 성공했으면 그대로 있고, 실패면 다시 signin으로 튕김)
+  // 팀 워크스페이스로 강제 이동 — 로그인 성공했으면 /app/ 진입, 실패면 /landing/ 로 튕김
   await page.goto(teamUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-  await page.waitForTimeout(3500);
+  await page.waitForTimeout(4000);
   const finalUrl = page.url();
 
-  const loggedIn = finalUrl.includes(`${team}.jandi.com`) && !/login|signin/i.test(finalUrl);
+  const loggedIn = isInApp(finalUrl);
   return {
     ok: loggedIn,
     status: loggedIn ? 'logged_in' : (postCheck.hasErrors ? 'login_rejected' : 'login_uncertain'),
