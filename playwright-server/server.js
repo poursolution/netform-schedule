@@ -1397,17 +1397,82 @@ app.post('/admin/jandi-channel-sync', requireAuth, async (req, res) => {
 });
 
 // 파일명 파서 (server 내부용 — src/utils/jandiFileParser.js 와 동일 로직)
+const JANDI_METHOD_PREFIXES = [
+  'POUR공법', 'CNC공법', 'DO공법', 'DETEX공법',
+  'POUR솔루션', 'POUR시스템',
+  'POUR', 'CNC', 'DO', 'DETEX', '시멘트분말',
+];
 function parseFilenameLocal(filename) {
   const extMatch = (filename || '').match(/\.([a-z0-9]+)$/i);
-  if (!extMatch) return { seq: null, siteName: '', method: '' };
+  if (!extMatch) return { seq: null, siteName: '', method: '', methodPrefix: '' };
   const base = filename.slice(0, -extMatch[0].length);
   const m = base.match(/^(?:(\d+)_)?(.+?)(?:\(([^)]+)\))?\s*$/);
+  if (!m) return { seq: null, siteName: '', method: '', methodPrefix: '' };
+  let rest = (m[2] || '').trim();
+  let methodPrefix = '';
+  for (const p of JANDI_METHOD_PREFIXES) {
+    if (rest.startsWith(p + '_')) {
+      methodPrefix = p;
+      rest = rest.slice(p.length + 1).trim();
+      break;
+    }
+  }
   return {
-    seq: m?.[1] ? parseInt(m[1], 10) : null,
-    siteName: (m?.[2] || '').trim(),
-    method: (m?.[3] || '').trim(),
+    seq: m[1] ? parseInt(m[1], 10) : null,
+    siteName: rest,
+    method: (m[3] || '').trim(),
+    methodPrefix,
   };
 }
+
+// === 기존 evidence 재파싱 (파일명 재분석만, 다운로드 X) ===
+// 사용: POST /admin/jandi-reparse-evidence
+// body: { dryRun?=false }
+app.post('/admin/jandi-reparse-evidence', requireAuth, async (req, res) => {
+  const { dryRun = false } = req.body || {};
+  try {
+    await getFirebaseAdmin();
+    const db = admin.database();
+    const snap = await db.ref('evidence').once('value');
+    const evidence = snap.val() || {};
+
+    const changed = [];
+    const updates = {};
+    for (const [fileId, ev] of Object.entries(evidence)) {
+      const parsed = parseFilenameLocal(ev.filename);
+      const oldSite = ev.parsedSiteName || '';
+      const newSite = parsed.siteName || '';
+      if (oldSite === newSite && ev.parsedMethodPrefix === parsed.methodPrefix) continue;
+      changed.push({
+        fileId,
+        filename: ev.filename,
+        oldSite,
+        newSite,
+        methodPrefix: parsed.methodPrefix,
+      });
+      if (!dryRun) {
+        updates[`evidence/${fileId}/parsedSiteName`] = parsed.siteName;
+        updates[`evidence/${fileId}/parsedSeq`] = parsed.seq;
+        updates[`evidence/${fileId}/parsedMethod`] = parsed.method;
+        updates[`evidence/${fileId}/parsedMethodPrefix`] = parsed.methodPrefix || null;
+        // 매칭상태 초기화해서 다음 match에서 재평가되게
+        updates[`evidence/${fileId}/ptMatchStatus`] = 'pending';
+      }
+    }
+    if (!dryRun && Object.keys(updates).length > 0) {
+      await db.ref().update(updates);
+    }
+    return res.json({
+      status: 'ok',
+      dryRun,
+      totalEvidence: Object.keys(evidence).length,
+      changedCount: changed.length,
+      changes: changed,
+    });
+  } catch (e) {
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
 
 // === Phase 3c: evidence ↔ PT 자동 매칭 ===
 // 사용: POST /admin/jandi-pt-match
