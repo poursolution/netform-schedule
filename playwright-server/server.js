@@ -1164,52 +1164,89 @@ app.post('/admin/jandi-file-download-test', requireAuth, async (req, res) => {
       return res.json({ status: 'login_failed', login, durationMs: Date.now() - startedAt });
     }
 
-    // 방법 1: page.evaluate 내부 fetch (브라우저 컨텍스트 완전 재사용 — 쿠키/JWT/CORS 자동)
-    const fetchResult = await page.evaluate(async (url) => {
-      try {
-        const resp = await fetch(url, {
-          credentials: 'include',
-          headers: { 'Accept': '*/*' },
-        });
-        const buf = await resp.arrayBuffer();
-        const bytes = Array.from(new Uint8Array(buf).slice(0, 256));
-        return {
-          ok: resp.ok,
-          status: resp.status,
-          contentType: resp.headers.get('content-type'),
-          contentLength: resp.headers.get('content-length'),
-          contentDisposition: resp.headers.get('content-disposition'),
-          totalBytes: buf.byteLength,
-          first256Bytes: bytes,
-        };
-      } catch (e) {
-        return { error: e.message, stack: e.stack };
-      }
-    }, fileUrl);
+    // 방법 A: JWT Bearer 헤더로 시도 (쿠키 + Authorization)
+    const cookies = await context.cookies();
+    const jwt = cookies.find(c => c.name === '_jd_.access_token')?.value;
 
-    // 응답 분석
-    let first256Hex = '', first50UTF8 = '', looksLikeHTML = false;
-    if (fetchResult.first256Bytes) {
-      const u8 = new Uint8Array(fetchResult.first256Bytes);
-      first256Hex = Buffer.from(u8).toString('hex').slice(0, 400);
-      first50UTF8 = Buffer.from(u8).slice(0, 50).toString('utf-8').replace(/[^\x20-\x7e]/g, '.');
-      looksLikeHTML = /text\/html/i.test(fetchResult.contentType || '') || first50UTF8.toLowerCase().includes('<html');
+    let method = 'unknown', verdict = 'unknown';
+    let httpStatus, contentType, contentLength, totalBytes, first50UTF8 = '', first256Hex = '', looksLikeHTML = false, fetchError;
+
+    if (jwt) {
+      try {
+        method = 'context.request.get + Bearer JWT';
+        const resp = await context.request.get(fileUrl, {
+          headers: {
+            'Authorization': `Bearer ${jwt}`,
+            'Referer': `https://${team}.jandi.com/`,
+            'Accept': '*/*',
+          },
+          timeout: 45000,
+        });
+        httpStatus = resp.status();
+        contentType = resp.headers()['content-type'];
+        contentLength = resp.headers()['content-length'];
+        const buf = await resp.body();
+        totalBytes = buf.length;
+        first256Hex = buf.slice(0, 256).toString('hex');
+        first50UTF8 = buf.slice(0, 50).toString('utf-8').replace(/[^\x20-\x7e]/g, '.');
+        looksLikeHTML = /text\/html/i.test(contentType || '') || first50UTF8.toLowerCase().includes('<html');
+        verdict = (resp.ok() && !looksLikeHTML && totalBytes > 1000) ? 'download_works' : 'download_failed_or_redirect';
+      } catch (e) {
+        fetchError = `bearer_request_failed: ${e.message}`;
+      }
+    }
+
+    // 방법 B (verdict != download_works 이면): 브라우저 네이티브 download 이벤트
+    if (verdict !== 'download_works') {
+      try {
+        method += ' → download-event fallback';
+        const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
+        // <a href=url download> 클릭 트리거
+        await page.evaluate((url) => {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = '';
+          a.target = '_self';
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+        }, fileUrl);
+        const download = await downloadPromise;
+        if (download) {
+          const tmpPath = await download.path();
+          if (tmpPath) {
+            const fs = await import('fs/promises');
+            const buf = await fs.readFile(tmpPath);
+            totalBytes = buf.length;
+            first256Hex = buf.slice(0, 256).toString('hex');
+            first50UTF8 = buf.slice(0, 50).toString('utf-8').replace(/[^\x20-\x7e]/g, '.');
+            contentType = download.suggestedFilename(); // 대충 파일명 확장자로
+            httpStatus = 200;
+            verdict = 'download_works_via_event';
+          }
+        } else {
+          fetchError = (fetchError || '') + ' | download_event_timeout';
+        }
+      } catch (e) {
+        fetchError = (fetchError || '') + ` | download_event_failed: ${e.message}`;
+      }
     }
 
     await context.close();
     return res.json({
       status: 'ok',
-      method: 'page.evaluate fetch (browser context)',
-      httpStatus: fetchResult.status,
-      contentType: fetchResult.contentType,
-      contentLength: fetchResult.contentLength,
-      totalBytes: fetchResult.totalBytes,
-      contentDisposition: fetchResult.contentDisposition,
+      method,
+      hasJwt: !!jwt,
+      jwtLen: jwt?.length,
+      httpStatus,
+      contentType,
+      contentLength,
+      totalBytes,
       first256Hex,
       first50UTF8,
       looksLikeHTML,
-      fetchError: fetchResult.error,
-      verdict: (fetchResult.ok && !looksLikeHTML && fetchResult.totalBytes > 1000) ? 'download_works' : 'download_failed_or_redirect',
+      fetchError,
+      verdict,
       durationMs: Date.now() - startedAt,
     });
   } catch (e) {
