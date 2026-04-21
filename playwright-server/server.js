@@ -660,18 +660,22 @@ async function performJandiLogin(page, { email, password, team }) {
     return { ok: false, status: 'no_form', beforeUrl, finalUrl: page.url() };
   }
 
-  // 캡차/2FA 감지
+  // 캡차/2FA 감지 — invisible reCAPTCHA 는 iframe만 있고 사용자 액션 불필요 → 시도는 해봄
+  // 명시적 캡차 텍스트("로봇이 아닙니다" 등)나 visible 챌린지가 있을 때만 abort
   const preCheck = await page.evaluate(() => {
     const text = document.body?.innerText || '';
+    const visibleCaptcha = /로봇이 아닙니다|체크박스를 클릭|이미지에서|check the box|prove you('?re|\s+are) human/i.test(text);
+    const recaptchaIframe = !!document.querySelector('iframe[src*="recaptcha"]:not([style*="display: none"]):not([width="0"])');
     return {
-      hasCaptcha: /capt(c|ch)a|reCAPTCHA|로봇이 아닙니다/i.test(text) || !!document.querySelector('iframe[src*="recaptcha"], iframe[src*="captcha"]'),
+      hasInvisibleCaptcha: !!document.querySelector('iframe[src*="recaptcha"]'),
+      hasVisibleCaptcha: visibleCaptcha || recaptchaIframe,
       has2FA: /verification code|인증 코드|otp|2단계 인증/i.test(text),
       pageTitle: document.title,
       bodyPreview: text.slice(0, 300),
     };
   });
-  if (preCheck.hasCaptcha) {
-    return { ok: false, status: 'captcha_required', beforeUrl, finalUrl: page.url(), preCheck };
+  if (preCheck.hasVisibleCaptcha || preCheck.has2FA) {
+    return { ok: false, status: preCheck.has2FA ? 'mfa_required' : 'captcha_required', beforeUrl, finalUrl: page.url(), preCheck };
   }
 
   // 입력
