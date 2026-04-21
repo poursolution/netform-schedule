@@ -1021,20 +1021,7 @@ app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
         return '';
       };
 
-      // 옛 로직 복원 — 메시지 블록 안에서 file/attach 클래스 element 텍스트 검사
-      // .msgs-holder/.msgs-stage 가 못 잡아도 broader 스코프로 fallback
-      const messageBlocksWide = [
-        ...document.querySelectorAll('[class*="message" i], [class*="msg-item" i], [class*="msg-attach" i], li[class*="msg" i], article'),
-      ];
-      const all = [];
-      for (const blk of messageBlocksWide) {
-        for (const el of blk.querySelectorAll('[class*="file" i], [class*="attach" i], a[download]')) {
-          all.push(el);
-        }
-      }
-      let leafCheckTotal = 0, leafCheckMatched = 0;
-
-      // 가까운 시간/작성자 찾는 헬퍼 — el 의 ancestors 또는 sibling 에서 .msg-attach/.message 찾고 그 안에서 추출
+      // 가까운 시간/작성자 찾는 헬퍼
       const getMsgContext = (el) => {
         let ancestor = el;
         for (let i = 0; i < 15 && ancestor; i++) {
@@ -1053,48 +1040,57 @@ app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
 
       const messageBlocks = [...document.querySelectorAll('.msg-attach')];
 
-      for (const el of all) {
+      // TextNode TreeWalker — DOM 어디든 파일명 텍스트 노드 추출
+      let leafCheckTotal = 0, leafCheckMatched = 0;
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
         leafCheckTotal++;
-        const text = (el.innerText || '').trim();
-        if (!text || text.length > 300) continue;
-        const firstLine = text.split('\n')[0].trim();
-        if (!extsEnd.test(firstLine)) continue;
+        const filename = (node.nodeValue || '').trim();
+        if (!filename || filename.length < 6 || filename.length > 250) continue;
+        if (!extsEnd.test(filename)) continue;
 
-        // 자식 중 같은 첫 줄 가진 게 있으면 부모 — skip
-        const hasMatchingChild = [...el.children].some(c => {
-          const ct = (c.innerText || '').trim().split('\n')[0].trim();
-          return ct === firstLine;
-        });
-        if (hasMatchingChild) continue;
+        const parent = node.parentElement;
+        if (!parent) continue;
+
+        // sidebar/topic-list 안이면 skip (사이드바엔 .pdf 같은 거 거의 없지만 안전망)
+        let isInSidebar = false, p = parent;
+        for (let i = 0; i < 10 && p; i++) {
+          const cn = (p.className || '').toString();
+          if (/(lnb-|lpanel|topic-list|_lnb)/i.test(cn)) { isInSidebar = true; break; }
+          p = p.parentElement;
+        }
+        if (isInSidebar) continue;
 
         leafCheckMatched++;
-        if (seen.has(firstLine)) continue;
-        seen.add(firstLine);
+        if (seen.has(filename)) continue;
+        seen.add(filename);
 
-        const ctx = getMsgContext(el);
+        const ctx = getMsgContext(parent);
         out.push({
-          filename: firstLine,
-          fileId: findFileId(el) || findFileId(el.parentElement),
-          href: findHref(el) || findHref(el.parentElement || el),
+          filename,
+          fileId: findFileId(parent) || findFileId(parent.parentElement),
+          href: findHref(parent) || findHref(parent.parentElement || parent),
           uploader: ctx.uploader,
           ts: ctx.ts,
-          elClassName: (el.className || '').toString().slice(0, 100),
+          elClassName: (parent.className || '').toString().slice(0, 100),
         });
       }
 
-      // 첫 매칭된 파일의 outerHTML 샘플 (download URL 분석용)
+      // 첫 매칭된 파일 부모의 outerHTML 샘플 (download URL 분석용)
       let fileSampleHTML = null;
-      const sampleEl = [...all].find(el => {
-        const t = (el.innerText || '').trim().split('\n')[0].trim();
-        if (!extsEnd.test(t)) return false;
-        const hasChildSame = [...el.children].some(c => (c.innerText || '').trim().split('\n')[0].trim() === t);
-        return !hasChildSame;
-      });
-      if (sampleEl) {
-        // 부모 2단계까지 outerHTML — download 관련 attribute 위치 확보
-        let target = sampleEl;
-        for (let i = 0; i < 2 && target.parentElement; i++) target = target.parentElement;
-        fileSampleHTML = target.outerHTML.slice(0, 4000);
+      if (out.length > 0) {
+        const w2 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        let n;
+        while ((n = w2.nextNode())) {
+          const t = (n.nodeValue || '').trim();
+          if (extsEnd.test(t) && t.length > 6 && t.length < 250) {
+            let target = n.parentElement;
+            for (let i = 0; i < 3 && target?.parentElement; i++) target = target.parentElement;
+            fileSampleHTML = target?.outerHTML?.slice(0, 4000) || null;
+            break;
+          }
+        }
       }
 
       return {
