@@ -1722,6 +1722,140 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
   }
 });
 
+// === Phase 4: 중복감지 (Type A~D) ===
+// 사용: POST /admin/jandi-detect-duplicates
+// body: { dryRun?=false }
+//
+// Type A: Multi-match — 하나의 evidence 가 여러 PT 에 연결됨
+//         → PT date 최신 것을 primary, 나머지 suppressedBy=최신ptId
+// Type B: Revision — 파일명에 '재공고/정정/v2/특허오기재' 포함
+//         → evidence.isRevision=true, 같은 parsedSiteName 그룹 내 최신 seq 만 primary
+// Type C: 같은 단지 여러 evidence — parsedSiteName+parsedMethod 같은 파일 여러 개
+//         → 최신 seq 만 primary, 나머지 supersededByFileId
+// Type D: SHA-256 중복 — 서로 다른 fileId지만 내용 동일
+//         → sameContentAs=[fileId1,...] 역참조
+app.post('/admin/jandi-detect-duplicates', requireAuth, async (req, res) => {
+  const { dryRun = false } = req.body || {};
+  const startedAt = Date.now();
+  try {
+    await getFirebaseAdmin();
+    const db = admin.database();
+
+    const [evSnap, ptSnap] = await Promise.all([
+      db.ref('evidence').once('value'),
+      db.ref('pt').once('value'),
+    ]);
+    const evidence = evSnap.val() || {};
+    const pts = ptSnap.val() || {};
+    const updates = {};
+    const report = { typeA: [], typeB: [], typeC: [], typeD: [] };
+
+    // ------- Type A: multi-match 정리 -------
+    for (const [fileId, ev] of Object.entries(evidence)) {
+      const ptIds = Object.keys(ev.matchedPtIds || {});
+      if (ptIds.length < 2) continue;
+      // PT date 수집
+      const dated = ptIds
+        .map(pid => ({ pid, date: pts[pid]?.date || '', assignee: pts[pid]?.ptAssignee }))
+        .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      const primary = dated[0];
+      const suppressed = dated.slice(1);
+      report.typeA.push({
+        fileId, filename: ev.filename,
+        primary: { pid: primary.pid, date: primary.date, assignee: primary.assignee },
+        suppressed: suppressed.map(s => ({ pid: s.pid, date: s.date, assignee: s.assignee })),
+      });
+      if (!dryRun) {
+        // pt/{suppressedPid}/evidenceFiles/{fileId}/suppressed = true
+        for (const s of suppressed) {
+          updates[`pt/${s.pid}/evidenceFiles/${fileId}/suppressed`] = true;
+          updates[`pt/${s.pid}/evidenceFiles/${fileId}/supersededBy`] = primary.pid;
+        }
+        updates[`evidence/${fileId}/primaryPtId`] = primary.pid;
+      }
+    }
+
+    // ------- Type B: Revision (재공고/정정) -------
+    const REVISION_RE = /재공고|정정|_v\d+|특허오기재|수정본|재업로드/i;
+    for (const [fileId, ev] of Object.entries(evidence)) {
+      if (!REVISION_RE.test(ev.filename || '')) continue;
+      report.typeB.push({ fileId, filename: ev.filename });
+      if (!dryRun) updates[`evidence/${fileId}/isRevision`] = true;
+    }
+
+    // ------- Type C: 같은 단지 여러 evidence (정식 재공고 아닌 중복) -------
+    // parsedSiteName + parsedMethodPrefix 기준 그룹화 → 최신 seq 만 primary
+    const siteGroups = new Map();
+    for (const [fileId, ev] of Object.entries(evidence)) {
+      if (!ev.parsedSiteName) continue;
+      const key = (ev.parsedSiteName + '|' + (ev.parsedMethodPrefix || '')).toLowerCase().replace(/\s+/g, '');
+      if (!siteGroups.has(key)) siteGroups.set(key, []);
+      siteGroups.get(key).push({ fileId, seq: ev.parsedSeq || 0, filename: ev.filename, isRev: REVISION_RE.test(ev.filename || '') });
+    }
+    for (const [key, arr] of siteGroups.entries()) {
+      if (arr.length < 2) continue;
+      // 최신 seq (또는 revision 포함한 것 중 최신) 를 primary
+      arr.sort((a, b) => b.seq - a.seq);
+      const primary = arr[0];
+      const older = arr.slice(1);
+      report.typeC.push({
+        key, siteName: evidence[primary.fileId]?.parsedSiteName,
+        count: arr.length,
+        primary: { fileId: primary.fileId, seq: primary.seq, filename: primary.filename },
+        older: older.map(o => ({ fileId: o.fileId, seq: o.seq, filename: o.filename, isRevision: o.isRev })),
+      });
+      if (!dryRun) {
+        for (const o of older) {
+          updates[`evidence/${o.fileId}/supersededByFileId`] = primary.fileId;
+        }
+        updates[`evidence/${primary.fileId}/hasOlderVersions`] = older.length;
+      }
+    }
+
+    // ------- Type D: SHA-256 중복 -------
+    const shaGroups = new Map();
+    for (const [fileId, ev] of Object.entries(evidence)) {
+      if (!ev.sha256) continue;
+      if (!shaGroups.has(ev.sha256)) shaGroups.set(ev.sha256, []);
+      shaGroups.get(ev.sha256).push({ fileId, filename: ev.filename });
+    }
+    for (const [sha, arr] of shaGroups.entries()) {
+      if (arr.length < 2) continue;
+      report.typeD.push({
+        sha256: sha.slice(0, 16),
+        count: arr.length,
+        files: arr.map(a => ({ fileId: a.fileId, filename: a.filename })),
+      });
+      if (!dryRun) {
+        const ids = arr.map(a => a.fileId);
+        for (const a of arr) {
+          updates[`evidence/${a.fileId}/sameContentAs`] = ids.filter(x => x !== a.fileId);
+        }
+      }
+    }
+
+    if (!dryRun && Object.keys(updates).length > 0) {
+      await db.ref().update(updates);
+    }
+
+    return res.json({
+      status: 'ok',
+      dryRun,
+      counts: {
+        typeA_multiMatch: report.typeA.length,
+        typeB_revision: report.typeB.length,
+        typeC_siteDuplicates: report.typeC.length,
+        typeD_sha256Duplicates: report.typeD.length,
+      },
+      updateKeys: dryRun ? undefined : Object.keys(updates).length,
+      report,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (e) {
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
 // === Phase 3c+ : 미매칭 evidence 조회 + top 후보 추천 ===
 // 사용: POST /admin/jandi-unmatched-evidence
 // body: { minCandidateScore?=0.3, topN?=3 }
