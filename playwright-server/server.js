@@ -17,7 +17,24 @@ import { promises as fsp } from 'fs';
 import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
+import admin from 'firebase-admin';
 import 'dotenv/config';
+
+// === Firebase Admin SDK 초기화 (lazy) ===
+let firebaseApp = null;
+async function getFirebaseAdmin() {
+  if (firebaseApp) return firebaseApp;
+  const credPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH ||
+    path.join(os.homedir(), 'kapt-playwright-server', 'firebase-admin.json');
+  const raw = await fsp.readFile(credPath, 'utf-8');
+  const serviceAccount = JSON.parse(raw);
+  firebaseApp = admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    databaseURL: process.env.FIREBASE_DATABASE_URL || 'https://test-168a4-default-rtdb.asia-southeast1.firebasedatabase.app',
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'test-168a4.firebasestorage.app',
+  });
+  return firebaseApp;
+}
 
 // HWP/HWPX → 텍스트 변환 (LibreOffice CLI 경유)
 function parseHwpBuffer(buffer) {
@@ -1129,6 +1146,268 @@ app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
     return res.status(500).json({ error: e.message, stack: e.stack });
   }
 });
+
+// === 잔디 채널 파일 일괄 다운로드 + Firebase Storage 업로드 (Phase 3b) ===
+// 사용: POST /admin/jandi-channel-sync
+// body: { channelName?='입찰 공고(POUR공법)', monthsBack?=12, maxFiles?=100, forceReupload?=false }
+// 흐름:
+//   1. 로그인 + 채널 진입 + 스크롤 → 파일 메타 수집
+//   2. 각 파일: RTDB evidence/{fileId} 이미 있으면 skip (forceReupload 제외)
+//   3. i1.jandi.com downloadUrl API → CloudFront signed URL 다운로드
+//   4. Firebase Storage evidence/jandi/{teamId}/{fileId}_{filename} 업로드
+//   5. RTDB evidence/{fileId} 메타 기록
+//   6. 요약 반환
+app.post('/admin/jandi-channel-sync', requireAuth, async (req, res) => {
+  const email = process.env.JANDI_EMAIL;
+  const password = process.env.JANDI_PASSWORD;
+  const team = process.env.JANDI_TEAM;
+  if (!email || !password || !team) {
+    return res.status(400).json({ error: 'JANDI_EMAIL, JANDI_PASSWORD, JANDI_TEAM env vars required' });
+  }
+  const {
+    channelName = '입찰 공고(POUR공법)',
+    monthsBack = 12,
+    maxFiles = 100,
+    maxScrolls = 400,
+    forceReupload = false,
+  } = req.body || {};
+  const cutoff = new Date(Date.now() - monthsBack * 30 * 86400 * 1000);
+  const startedAt = Date.now();
+  let context = null;
+
+  try {
+    // Firebase Admin 초기화
+    const fb = await getFirebaseAdmin();
+    const bucket = admin.storage().bucket();
+    const db = admin.database();
+
+    const browser = await getBrowser();
+    context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      locale: 'ko-KR',
+      ignoreHTTPSErrors: true,
+      acceptDownloads: true,
+    });
+    const page = await context.newPage();
+
+    // 1) 로그인
+    const login = await performJandiLogin(page, { email, password, team });
+    if (!login.ok) {
+      await context.close();
+      return res.json({ status: 'login_failed', login });
+    }
+    await page.waitForTimeout(3000);
+
+    // 2) 채널 진입
+    const itemLocator = page.locator('.lnb-list-item').filter({ hasText: channelName });
+    const itemCount = await itemLocator.count();
+    if (itemCount === 0) {
+      await context.close();
+      return res.json({ status: 'channel_not_found', channelName });
+    }
+    await itemLocator.first().click({ timeout: 10000 });
+    try {
+      await page.waitForURL(u => /#!\/room\/\d+/.test(u.toString()), { timeout: 15000 });
+    } catch (_) {}
+    await page.waitForTimeout(5000);
+
+    // 3) 과거 메시지 스크롤
+    await page.evaluate(async ({ maxScrolls, cutoffMs }) => {
+      const findContainer = () => {
+        const cands = [...document.querySelectorAll('[class*="message-list" i], [class*="messages" i], [class*="msg-list" i], [class*="msgList" i], main [class*="scroll" i], [class*="chat-container" i]')];
+        return cands.find(el => el.scrollHeight > el.clientHeight + 50) || document.scrollingElement;
+      };
+      const container = findContainer();
+      let stagnant = 0, lastHeight = container.scrollHeight;
+      for (let i = 0; i < maxScrolls; i++) {
+        container.scrollTop = 0;
+        await new Promise(r => setTimeout(r, 600));
+        const times = [...document.querySelectorAll('time')].map(t => t.textContent).filter(Boolean);
+        // "2026/03/31" 형식 문자열 → 가장 오래된 것
+        const oldest = times
+          .map(s => { const m = s.match(/(\d{4})\/(\d{2})\/(\d{2})/); return m ? new Date(`${m[1]}-${m[2]}-${m[3]}`).getTime() : null; })
+          .filter(Boolean).reduce((a, b) => Math.min(a, b), Infinity);
+        if (oldest < cutoffMs) break;
+        const h = container.scrollHeight;
+        if (h === lastHeight) { stagnant++; if (stagnant >= 8) break; }
+        else { stagnant = 0; lastHeight = h; }
+      }
+    }, { maxScrolls, cutoffMs: cutoff.getTime() });
+
+    // 4) 파일 메타 추출 (preview-file selected-attachment JSON)
+    const files = await page.evaluate(() => {
+      const out = [];
+      const seen = new Set();
+      for (const el of document.querySelectorAll('.preview-file[file-id]')) {
+        const fileId = el.getAttribute('file-id');
+        if (!fileId || seen.has(fileId)) continue;
+        seen.add(fileId);
+        let att = null;
+        try { att = JSON.parse(el.getAttribute('selected-attachment') || '{}'); } catch (_) {}
+        const c = att?.content || {};
+        if (!c.title) continue;
+        out.push({
+          fileId,
+          filename: c.title,
+          ext: c.ext,
+          size: c.size,
+          mimeType: c.type,
+          storageName: c.filename,
+          originalFileUrl: c.fileUrl,
+        });
+      }
+      return out;
+    });
+
+    // teamId 추출 — 첫 fileUrl 에서
+    let teamId = null;
+    for (const f of files) {
+      const m = (f.originalFileUrl || '').match(/files-private\/(\d+)\//);
+      if (m) { teamId = m[1]; break; }
+    }
+    if (!teamId) teamId = process.env.JANDI_TEAM_ID || '26098605';
+
+    // JWT
+    const cookies = await context.cookies();
+    const jwt = cookies.find(c => c.name === '_jd_.access_token')?.value;
+    if (!jwt) {
+      await context.close();
+      return res.json({ status: 'error', error: 'no_jwt_cookie' });
+    }
+
+    // 5) 각 파일 처리
+    const results = { uploaded: [], skipped: [], failed: [] };
+    const filesToProcess = files.slice(0, maxFiles);
+
+    for (const f of filesToProcess) {
+      try {
+        // 이미 RTDB에 있으면 skip
+        if (!forceReupload) {
+          const snap = await db.ref(`evidence/${f.fileId}`).once('value');
+          if (snap.exists()) {
+            results.skipped.push({ fileId: f.fileId, filename: f.filename, reason: 'already_synced' });
+            continue;
+          }
+        }
+
+        // downloadUrl API
+        const apiUrl = `https://i1.jandi.com/file-api/v1/teams/${teamId}/files/${f.fileId}/downloadUrl?fileId=${f.fileId}`;
+        const r1 = await context.request.get(apiUrl, {
+          headers: {
+            'Authorization': `Bearer ${jwt}`,
+            'Referer': `https://${team}.jandi.com/`,
+            'Accept': 'application/vnd.tosslab.jandi-v1+json',
+          },
+          timeout: 15000,
+        });
+        if (!r1.ok()) {
+          results.failed.push({ fileId: f.fileId, filename: f.filename, step: 'api_downloadUrl', status: r1.status() });
+          continue;
+        }
+        const apiJson = await r1.json();
+        const signedUrl = apiJson?.downloadUrl;
+        if (!signedUrl) {
+          results.failed.push({ fileId: f.fileId, filename: f.filename, step: 'no_signed_url' });
+          continue;
+        }
+
+        // 실제 다운로드
+        const r2 = await context.request.get(signedUrl, { timeout: 60000 });
+        if (!r2.ok()) {
+          results.failed.push({ fileId: f.fileId, filename: f.filename, step: 'cloudfront', status: r2.status() });
+          continue;
+        }
+        const buf = await r2.body();
+        const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+
+        // Firebase Storage 업로드
+        const safeFilename = f.filename.replace(/[^\w.\-가-힣()]/g, '_').slice(0, 100);
+        const storagePath = `evidence/jandi/${teamId}/${f.fileId}_${safeFilename}`;
+        const file = bucket.file(storagePath);
+        await file.save(buf, {
+          metadata: {
+            contentType: f.mimeType || 'application/octet-stream',
+            metadata: {
+              fileId: f.fileId,
+              sha256,
+              originalFilename: f.filename,
+              sourceChannel: channelName,
+              syncedAt: new Date().toISOString(),
+            },
+          },
+          resumable: false,
+        });
+        // 공개 URL 대신 signed read URL 생성 (기본 7일, 필요시 갱신)
+        const [signedReadUrl] = await file.getSignedUrl({
+          action: 'read',
+          expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        });
+
+        // RTDB 메타 기록
+        const parsed = parseFilenameLocal(f.filename);
+        await db.ref(`evidence/${f.fileId}`).set({
+          fileId: f.fileId,
+          filename: f.filename,
+          parsedSeq: parsed.seq,
+          parsedSiteName: parsed.siteName,
+          parsedMethod: parsed.method,
+          ext: f.ext,
+          size: f.size,
+          mimeType: f.mimeType,
+          sha256,
+          teamId,
+          channelName,
+          storagePath,
+          storageBucket: bucket.name,
+          signedReadUrl,
+          signedReadUrlExpiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+          syncedAt: new Date().toISOString(),
+          ptMatchStatus: 'pending',
+        });
+
+        results.uploaded.push({
+          fileId: f.fileId,
+          filename: f.filename,
+          size: buf.length,
+          sha256: sha256.slice(0, 16),
+          storagePath,
+        });
+      } catch (e) {
+        results.failed.push({ fileId: f.fileId, filename: f.filename, error: e.message });
+      }
+    }
+
+    await context.close();
+    return res.json({
+      status: 'ok',
+      channelName,
+      teamId,
+      totalFilesFound: files.length,
+      processed: filesToProcess.length,
+      uploaded: results.uploaded.length,
+      skipped: results.skipped.length,
+      failed: results.failed.length,
+      results,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (e) {
+    if (context) await context.close().catch(() => {});
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
+// 파일명 파서 (server 내부용 — src/utils/jandiFileParser.js 와 동일 로직)
+function parseFilenameLocal(filename) {
+  const extMatch = (filename || '').match(/\.([a-z0-9]+)$/i);
+  if (!extMatch) return { seq: null, siteName: '', method: '' };
+  const base = filename.slice(0, -extMatch[0].length);
+  const m = base.match(/^(?:(\d+)_)?(.+?)(?:\(([^)]+)\))?\s*$/);
+  return {
+    seq: m?.[1] ? parseInt(m[1], 10) : null,
+    siteName: (m?.[2] || '').trim(),
+    method: (m?.[3] || '').trim(),
+  };
+}
 
 // === 잔디 실제 다운로드 URL sniff ===
 // 사용: POST /admin/jandi-download-sniff
