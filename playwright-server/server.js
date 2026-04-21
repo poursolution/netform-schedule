@@ -1021,9 +1021,17 @@ app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
         return '';
       };
 
-      // .msgs-holder 가 메인 메시지 영역 — 그 안 모든 element 순회
-      const scope = document.querySelector('.msgs-holder, .msgs-stage') || document.body;
-      const all = scope.querySelectorAll('*');
+      // 옛 로직 복원 — 메시지 블록 안에서 file/attach 클래스 element 텍스트 검사
+      // .msgs-holder/.msgs-stage 가 못 잡아도 broader 스코프로 fallback
+      const messageBlocksWide = [
+        ...document.querySelectorAll('[class*="message" i], [class*="msg-item" i], [class*="msg-attach" i], li[class*="msg" i], article'),
+      ];
+      const all = [];
+      for (const blk of messageBlocksWide) {
+        for (const el of blk.querySelectorAll('[class*="file" i], [class*="attach" i], a[download]')) {
+          all.push(el);
+        }
+      }
       let leafCheckTotal = 0, leafCheckMatched = 0;
 
       // 가까운 시간/작성자 찾는 헬퍼 — el 의 ancestors 또는 sibling 에서 .msg-attach/.message 찾고 그 안에서 추출
