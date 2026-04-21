@@ -1541,47 +1541,58 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       '창원','마산','진주','통영','사천','김해','밀양','거제','양산','의령','함안','창녕','고성','남해','하동','산청','함양','거창','합천',
     ];
 
-    // parsedSite 의 변형 생성 — 원본 + 지역명 제거 버전들
+    // parsedSite 변형 — 원본 + 지역 prefix 제거 버전 (제거한 토큰 기록)
+    // 반환: [{ text, strippedTokens: [] }, ...]
     const variantsOf = (s) => {
-      const out = [s];
-      let cur = (s || '').trim();
-      // 앞에서 공백 구분 토큰 최대 2개 제거
+      const original = (s || '').trim();
+      const out = [{ text: original, strippedTokens: [] }];
+      let cur = original;
+      const stripped = [];
       for (let step = 0; step < 2; step++) {
         const match = cur.match(/^(\S+)\s+(.+)$/);
         if (!match) break;
         const [, first, rest] = match;
-        // 지역명 리스트에 포함되거나 "○시", "○군", "○구" 로 끝나면 제거
         if (REGIONS.includes(first) || /[시군구읍면동]$/.test(first) || first.length <= 3) {
           cur = rest;
-          if (!out.includes(cur)) out.push(cur);
-        } else {
-          break;
-        }
+          stripped.push(first);
+          if (!out.find(v => v.text === cur)) out.push({ text: cur, strippedTokens: [...stripped] });
+        } else break;
       }
       return out;
     };
 
-    // 복합 매칭 — 원본/변형 parsedSite × (siteName + address) 전체 스캔
+    // 지역 토큰이 PT siteName 또는 address 에 포함되는지 (일부 매칭 허용)
+    const regionInPt = (token, pt) => {
+      if (!token) return true;
+      const t = token.replace(/[시군구읍면동]$/, '');  // "서울시" → "서울"
+      if (!t) return true;
+      const hay = (pt.siteName || '') + ' ' + (pt.address || '');
+      return hay.includes(t);
+    };
+
+    // 복합 매칭 — 변형별로 스코어 계산, 단 지역 stripped 된 variant는 해당 지역이 PT에도 있어야 인정
     const composite = (parsedSite, pt) => {
       const addr = pt.address || '';
       const variants = variantsOf(parsedSite);
-      let bestName = 0, bestAddr = 0;
+      let bestName = 0, bestAddr = 0, bestVariant = null;
       for (const v of variants) {
-        bestName = Math.max(bestName, similarity(v, pt.siteName));
-        if (addr) bestAddr = Math.max(bestAddr, similarity(v, addr));
+        // 지역 stripped 된 variant는 제거한 지역이 PT 에 있어야 함 (오탐 방지)
+        const regionOk = v.strippedTokens.every(tok => regionInPt(tok, pt));
+        if (!regionOk) continue;
+        const ns = similarity(v.text, pt.siteName);
+        const as = addr ? similarity(v.text, addr) : 0;
+        if (ns > bestName) { bestName = ns; bestVariant = v; }
+        if (as > bestAddr) bestAddr = as;
       }
       if (bestName >= 0.95) return { score: bestName, matchedBy: 'name' };
 
-      // 지역명 직접 일치 체크 (firstToken ∈ address)
       let regionBoost = 0;
       const firstToken = (parsedSite.match(/^[가-힣]{2,3}/) || [])[0];
       if (firstToken && addr.includes(firstToken)) regionBoost = 0.3;
 
-      // nameSim 변형 포함해서 0.5 이상 + 지역 매칭 있으면 0.85 보장
       if (bestName >= 0.5 && (bestAddr >= 0.7 || regionBoost > 0)) {
         return { score: Math.max(0.85, bestName + regionBoost * 0.2), matchedBy: 'name+address' };
       }
-      // nameSim 낮지만 address 부분 + 지역 둘 다 일치 → 신중하게 0.85
       if (bestAddr >= 0.6 && regionBoost > 0 && bestName >= 0.3) {
         return { score: 0.85, matchedBy: 'address+region' };
       }
@@ -1752,26 +1763,40 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
       '포항','경주','구미','김천','안동','영주','경산','영천','상주','문경','창원','마산','진주','통영','김해','밀양','거제','양산','사천',
     ];
     const variantsOf = (s) => {
-      const out = [s];
-      let cur = (s || '').trim();
+      const original = (s || '').trim();
+      const out = [{ text: original, strippedTokens: [] }];
+      let cur = original;
+      const stripped = [];
       for (let step = 0; step < 2; step++) {
         const match = cur.match(/^(\S+)\s+(.+)$/);
         if (!match) break;
         const [, first, rest] = match;
         if (REGIONS.includes(first) || /[시군구읍면동]$/.test(first) || first.length <= 3) {
           cur = rest;
-          if (!out.includes(cur)) out.push(cur);
+          stripped.push(first);
+          if (!out.find(v => v.text === cur)) out.push({ text: cur, strippedTokens: [...stripped] });
         } else break;
       }
       return out;
+    };
+    const regionInPt = (token, pt) => {
+      if (!token) return true;
+      const t = token.replace(/[시군구읍면동]$/, '');
+      if (!t) return true;
+      const hay = (pt.siteName || '') + ' ' + (pt.address || '');
+      return hay.includes(t);
     };
     const composite = (parsedSite, pt) => {
       const addr = pt.address || '';
       const variants = variantsOf(parsedSite);
       let bestName = 0, bestAddr = 0;
       for (const v of variants) {
-        bestName = Math.max(bestName, similarity(v, pt.siteName));
-        if (addr) bestAddr = Math.max(bestAddr, similarity(v, addr));
+        const regionOk = v.strippedTokens.every(tok => regionInPt(tok, pt));
+        if (!regionOk) continue;
+        const ns = similarity(v.text, pt.siteName);
+        const as = addr ? similarity(v.text, addr) : 0;
+        if (ns > bestName) bestName = ns;
+        if (as > bestAddr) bestAddr = as;
       }
       if (bestName >= 0.95) return { score: bestName, matchedBy: 'name' };
       let regionBoost = 0;
