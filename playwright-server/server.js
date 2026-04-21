@@ -645,6 +645,69 @@ app.post('/admin/jandi-login-test', requireAuth, async (req, res) => {
   }
 });
 
+// === 잔디 채널 스크롤 헬퍼 — 마우스 wheel 기반 (과거 메시지 lazy-load 트리거) ===
+// cutoffMs 시각보다 오래된 메시지까지 로드되면 중단.
+// 반환: { scrolls, finalHeight, oldestTs }
+async function scrollJandiChannelToCutoff(page, cutoffMs, maxScrolls = 300) {
+  // 메시지 영역 포커스 — 잔디의 메인 채팅 패널
+  const chatArea = page.locator('.cpanel._chatPanel, ._primaryPanel, .msgs-holder, .msgs-stage').first();
+  let box = null;
+  try { box = await chatArea.boundingBox({ timeout: 5000 }); } catch (_) {}
+  if (!box) {
+    // fallback: 뷰포트 중앙
+    const vp = page.viewportSize() || { width: 1280, height: 720 };
+    box = { x: vp.width / 2, y: vp.height / 2, width: 1, height: 1 };
+  }
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  await page.mouse.move(cx, cy);
+
+  let scrolls = 0, stagnant = 0;
+  let oldestTs = null;
+  let lastHeight = await page.evaluate(() => document.documentElement.scrollHeight).catch(() => 0);
+
+  while (scrolls < maxScrolls) {
+    await page.mouse.wheel(0, -1200);
+    await page.waitForTimeout(400);
+    scrolls++;
+
+    // 주기적으로 시간/상태 체크
+    if (scrolls % 5 === 0) {
+      const { oldest, curH } = await page.evaluate(() => {
+        const times = [...document.querySelectorAll('time, .fn-write-time time')]
+          .map(t => (t.textContent || '').trim())
+          .filter(Boolean);
+        let oldest = Infinity;
+        for (const s of times) {
+          const m = s.match(/(\d{4})\/(\d{2})\/(\d{2})/);
+          if (m) {
+            const ts = new Date(`${m[1]}-${m[2]}-${m[3]}`).getTime();
+            if (ts > 0 && ts < oldest) oldest = ts;
+          }
+        }
+        return {
+          oldest: oldest === Infinity ? null : oldest,
+          curH: document.documentElement.scrollHeight,
+        };
+      });
+      if (oldest) oldestTs = oldest;
+      if (oldest && oldest <= cutoffMs) break;
+      if (curH === lastHeight) {
+        stagnant++;
+        if (stagnant >= 4) break;  // 5 × 4 = 20회 wheel해도 변화 없으면 종료
+      } else {
+        stagnant = 0;
+        lastHeight = curH;
+      }
+    }
+  }
+  return {
+    scrolls,
+    finalHeight: lastHeight,
+    oldestTs: oldestTs ? new Date(oldestTs).toISOString() : null,
+  };
+}
+
 // === 잔디 로그인 헬퍼 (재사용) ===
 // 반환: { ok, status, beforeUrl, submitUrl, finalUrl, teamUrl, hasCaptcha?, error? }
 async function performJandiLogin(page, { email, password, team }) {
@@ -966,48 +1029,7 @@ app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
       };
     });
 
-    const scrollResult = await page.evaluate(async ({ maxScrolls, cutoffMs }) => {
-      const findContainer = () => {
-        const cands = [
-          ...document.querySelectorAll('[class*="message-list" i], [class*="messages" i], [class*="msg-list" i], [class*="msgList" i], main [class*="scroll" i], [class*="chat-container" i]')
-        ];
-        return cands.find(el => el.scrollHeight > el.clientHeight + 50)
-          || document.scrollingElement;
-      };
-      const container = findContainer();
-      let scrolls = 0;
-      let lastHeight = container.scrollHeight;
-      let stagnant = 0;
-      let oldestTs = null;
-      while (scrolls < maxScrolls) {
-        container.scrollTop = 0;
-        await new Promise(r => setTimeout(r, 700));
-        scrolls++;
-        // 가장 오래된 메시지 시간 추정
-        const times = [...document.querySelectorAll('time[datetime], [datetime]')]
-          .map(t => t.getAttribute('datetime'))
-          .filter(Boolean)
-          .map(s => new Date(s).getTime())
-          .filter(t => !isNaN(t));
-        if (times.length) {
-          const old = Math.min(...times);
-          oldestTs = old;
-          if (old <= cutoffMs) break;
-        }
-        const h = container.scrollHeight;
-        if (h === lastHeight) {
-          stagnant++;
-          if (stagnant >= 6) break;
-        } else {
-          stagnant = 0; lastHeight = h;
-        }
-      }
-      return {
-        scrolls,
-        finalHeight: container.scrollHeight,
-        oldestTs: oldestTs ? new Date(oldestTs).toISOString() : null,
-      };
-    }, { maxScrolls, cutoffMs: cutoff.getTime() });
+    const scrollResult = await scrollJandiChannelToCutoff(page, cutoff.getTime(), maxScrolls);
 
     // === 첨부파일 추출 — .msg-attach 안에서 확장자 매칭 leaf 엘리먼트 전부 ===
     const fileExtractResult = await page.evaluate(() => {
@@ -1211,28 +1233,9 @@ app.post('/admin/jandi-channel-sync', requireAuth, async (req, res) => {
     } catch (_) {}
     await page.waitForTimeout(5000);
 
-    // 3) 과거 메시지 스크롤
-    await page.evaluate(async ({ maxScrolls, cutoffMs }) => {
-      const findContainer = () => {
-        const cands = [...document.querySelectorAll('[class*="message-list" i], [class*="messages" i], [class*="msg-list" i], [class*="msgList" i], main [class*="scroll" i], [class*="chat-container" i]')];
-        return cands.find(el => el.scrollHeight > el.clientHeight + 50) || document.scrollingElement;
-      };
-      const container = findContainer();
-      let stagnant = 0, lastHeight = container.scrollHeight;
-      for (let i = 0; i < maxScrolls; i++) {
-        container.scrollTop = 0;
-        await new Promise(r => setTimeout(r, 600));
-        const times = [...document.querySelectorAll('time')].map(t => t.textContent).filter(Boolean);
-        // "2026/03/31" 형식 문자열 → 가장 오래된 것
-        const oldest = times
-          .map(s => { const m = s.match(/(\d{4})\/(\d{2})\/(\d{2})/); return m ? new Date(`${m[1]}-${m[2]}-${m[3]}`).getTime() : null; })
-          .filter(Boolean).reduce((a, b) => Math.min(a, b), Infinity);
-        if (oldest < cutoffMs) break;
-        const h = container.scrollHeight;
-        if (h === lastHeight) { stagnant++; if (stagnant >= 8) break; }
-        else { stagnant = 0; lastHeight = h; }
-      }
-    }, { maxScrolls, cutoffMs: cutoff.getTime() });
+    // 3) 과거 메시지 스크롤 (헬퍼 사용)
+    const scrollRes = await scrollJandiChannelToCutoff(page, cutoff.getTime(), maxScrolls);
+    console.log('[channel-sync] scroll:', scrollRes);
 
     // 4) 파일 메타 추출 (preview-file selected-attachment JSON)
     const files = await page.evaluate(() => {
