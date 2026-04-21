@@ -1164,29 +1164,52 @@ app.post('/admin/jandi-file-download-test', requireAuth, async (req, res) => {
       return res.json({ status: 'login_failed', login, durationMs: Date.now() - startedAt });
     }
 
-    // Playwright의 APIRequestContext 가 자동으로 브라우저 컨텍스트의 쿠키 사용
-    const resp = await context.request.get(fileUrl, {
-      headers: {
-        'Referer': `https://${team}.jandi.com/`,
-      },
-      timeout: 30000,
-    });
-    const status = resp.status();
-    const headers = resp.headers();
-    const buf = await resp.body();
-    const isHTML = /text\/html/i.test(headers['content-type'] || '') || buf.slice(0, 50).toString('utf-8').toLowerCase().includes('<html');
+    // 방법 1: page.evaluate 내부 fetch (브라우저 컨텍스트 완전 재사용 — 쿠키/JWT/CORS 자동)
+    const fetchResult = await page.evaluate(async (url) => {
+      try {
+        const resp = await fetch(url, {
+          credentials: 'include',
+          headers: { 'Accept': '*/*' },
+        });
+        const buf = await resp.arrayBuffer();
+        const bytes = Array.from(new Uint8Array(buf).slice(0, 256));
+        return {
+          ok: resp.ok,
+          status: resp.status,
+          contentType: resp.headers.get('content-type'),
+          contentLength: resp.headers.get('content-length'),
+          contentDisposition: resp.headers.get('content-disposition'),
+          totalBytes: buf.byteLength,
+          first256Bytes: bytes,
+        };
+      } catch (e) {
+        return { error: e.message, stack: e.stack };
+      }
+    }, fileUrl);
+
+    // 응답 분석
+    let first256Hex = '', first50UTF8 = '', looksLikeHTML = false;
+    if (fetchResult.first256Bytes) {
+      const u8 = new Uint8Array(fetchResult.first256Bytes);
+      first256Hex = Buffer.from(u8).toString('hex').slice(0, 400);
+      first50UTF8 = Buffer.from(u8).slice(0, 50).toString('utf-8').replace(/[^\x20-\x7e]/g, '.');
+      looksLikeHTML = /text\/html/i.test(fetchResult.contentType || '') || first50UTF8.toLowerCase().includes('<html');
+    }
 
     await context.close();
     return res.json({
       status: 'ok',
-      httpStatus: status,
-      contentType: headers['content-type'],
-      contentLength: buf.length,
-      contentDisposition: headers['content-disposition'],
-      first200HexPreview: buf.slice(0, 200).toString('hex'),
-      first50UTF8: buf.slice(0, 50).toString('utf-8').replace(/[^\x20-\x7e]/g, '.'),
-      looksLikeHTML: isHTML,
-      verdict: !isHTML && status === 200 && buf.length > 1000 ? 'download_works' : 'download_failed_or_redirect',
+      method: 'page.evaluate fetch (browser context)',
+      httpStatus: fetchResult.status,
+      contentType: fetchResult.contentType,
+      contentLength: fetchResult.contentLength,
+      totalBytes: fetchResult.totalBytes,
+      contentDisposition: fetchResult.contentDisposition,
+      first256Hex,
+      first50UTF8,
+      looksLikeHTML,
+      fetchError: fetchResult.error,
+      verdict: (fetchResult.ok && !looksLikeHTML && fetchResult.totalBytes > 1000) ? 'download_works' : 'download_failed_or_redirect',
       durationMs: Date.now() - startedAt,
     });
   } catch (e) {
