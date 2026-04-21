@@ -1021,60 +1021,72 @@ app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
         return '';
       };
 
-      const messageBlocks = [...document.querySelectorAll('.msg-attach')];
+      // .msgs-holder 가 메인 메시지 영역 — 그 안 모든 element 순회
+      const scope = document.querySelector('.msgs-holder, .msgs-stage') || document.body;
+      const all = scope.querySelectorAll('*');
       let leafCheckTotal = 0, leafCheckMatched = 0;
 
-      for (const block of messageBlocks) {
-        // 헤더 시간/작성자
-        const timeEl = block.querySelector('time');
-        const tsRaw = timeEl ? (timeEl.textContent || '').trim() : null;
-        const profileEl = block.querySelector('._profileName, .fn-user-name');
-        const uploader = profileEl ? (profileEl.innerText || '').trim() : null;
-
-        // block 내 모든 element 순회 — innerText 첫 줄이 확장자로 끝나는 leaf 찾기
-        const all = block.querySelectorAll('*');
-        for (const el of all) {
-          leafCheckTotal++;
-          const text = (el.innerText || '').trim();
-          if (!text || text.length > 300) continue;
-          const firstLine = text.split('\n')[0].trim();
-          if (!extsEnd.test(firstLine)) continue;  // 확장자로 끝나야 진짜 파일명
-
-          // 자식 element 중 같은 첫 줄을 가진 게 있으면 부모 — skip
-          const hasMatchingChild = [...el.children].some(c => {
-            const ct = (c.innerText || '').trim().split('\n')[0].trim();
-            return ct === firstLine;
-          });
-          if (hasMatchingChild) continue;
-
-          leafCheckMatched++;
-          const key = firstLine + '|' + block.getBoundingClientRect().top;
-          if (seen.has(key)) continue;
-          seen.add(key);
-
-          out.push({
-            filename: firstLine,
-            fileId: findFileId(el) || findFileId(el.parentElement),
-            href: findHref(el) || findHref(el.parentElement || el),
-            uploader,
-            ts: tsRaw,
-            elClassName: (el.className || '').toString().slice(0, 100),
-          });
+      // 가까운 시간/작성자 찾는 헬퍼 — el 의 ancestors 또는 sibling 에서 .msg-attach/.message 찾고 그 안에서 추출
+      const getMsgContext = (el) => {
+        let ancestor = el;
+        for (let i = 0; i < 15 && ancestor; i++) {
+          if (/(msg-attach|message|_messageBubbleTarget|msgs-stage)/.test((ancestor.className || '').toString())) {
+            const timeEl = ancestor.querySelector('time, .fn-write-time');
+            const profileEl = ancestor.querySelector('._profileName, .fn-user-name, .member-name');
+            return {
+              ts: timeEl ? (timeEl.textContent || '').trim() : null,
+              uploader: profileEl ? (profileEl.innerText || '').trim() : null,
+            };
+          }
+          ancestor = ancestor.parentElement;
         }
+        return { ts: null, uploader: null };
+      };
+
+      const messageBlocks = [...document.querySelectorAll('.msg-attach')];
+
+      for (const el of all) {
+        leafCheckTotal++;
+        const text = (el.innerText || '').trim();
+        if (!text || text.length > 300) continue;
+        const firstLine = text.split('\n')[0].trim();
+        if (!extsEnd.test(firstLine)) continue;
+
+        // 자식 중 같은 첫 줄 가진 게 있으면 부모 — skip
+        const hasMatchingChild = [...el.children].some(c => {
+          const ct = (c.innerText || '').trim().split('\n')[0].trim();
+          return ct === firstLine;
+        });
+        if (hasMatchingChild) continue;
+
+        leafCheckMatched++;
+        if (seen.has(firstLine)) continue;
+        seen.add(firstLine);
+
+        const ctx = getMsgContext(el);
+        out.push({
+          filename: firstLine,
+          fileId: findFileId(el) || findFileId(el.parentElement),
+          href: findHref(el) || findHref(el.parentElement || el),
+          uploader: ctx.uploader,
+          ts: ctx.ts,
+          elClassName: (el.className || '').toString().slice(0, 100),
+        });
       }
 
-      // 첫 번째 매칭된 파일의 outerHTML 샘플 (다운로드 URL 분석용)
+      // 첫 매칭된 파일의 outerHTML 샘플 (download URL 분석용)
       let fileSampleHTML = null;
-      if (out.length > 0 && messageBlocks.length > 0) {
-        const sampleEl = [...messageBlocks[0].querySelectorAll('*')].find(el => {
-          const t = (el.innerText || '').trim().split('\n')[0].trim();
-          return extsEnd.test(t);
-        });
-        if (sampleEl) {
-          // 부모 1단계 + self 의 HTML (download 관련 attribute 확보)
-          const parent = sampleEl.parentElement;
-          fileSampleHTML = (parent ? parent.outerHTML : sampleEl.outerHTML).slice(0, 4000);
-        }
+      const sampleEl = [...all].find(el => {
+        const t = (el.innerText || '').trim().split('\n')[0].trim();
+        if (!extsEnd.test(t)) return false;
+        const hasChildSame = [...el.children].some(c => (c.innerText || '').trim().split('\n')[0].trim() === t);
+        return !hasChildSame;
+      });
+      if (sampleEl) {
+        // 부모 2단계까지 outerHTML — download 관련 attribute 위치 확보
+        let target = sampleEl;
+        for (let i = 0; i < 2 && target.parentElement; i++) target = target.parentElement;
+        fileSampleHTML = target.outerHTML.slice(0, 4000);
       }
 
       return {
