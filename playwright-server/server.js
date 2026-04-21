@@ -1130,6 +1130,114 @@ app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
   }
 });
 
+// === 잔디 실제 다운로드 URL sniff ===
+// 사용: POST /admin/jandi-download-sniff
+// body: { channelName?='입찰 공고(POUR공법)' }
+// 흐름: 로그인 → 채널 진입 → 네트워크 인터셉트 → 첫 파일 카드 클릭 → 실제 발생 요청 로그
+app.post('/admin/jandi-download-sniff', requireAuth, async (req, res) => {
+  const email = process.env.JANDI_EMAIL;
+  const password = process.env.JANDI_PASSWORD;
+  const team = process.env.JANDI_TEAM;
+  if (!email || !password || !team) {
+    return res.status(400).json({ error: 'env vars required' });
+  }
+  const { channelName = '입찰 공고(POUR공법)' } = req.body || {};
+  const startedAt = Date.now();
+  let context = null;
+  try {
+    const browser = await getBrowser();
+    context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      locale: 'ko-KR',
+      ignoreHTTPSErrors: true,
+      acceptDownloads: true,
+    });
+    const page = await context.newPage();
+
+    // 네트워크 인터셉트
+    const interestingRequests = [];
+    page.on('request', r => {
+      const u = r.url();
+      if (/files|download|attach|s3|cloudfront|jandi\.com\/api/i.test(u) && !u.includes('.css') && !u.includes('.svg') && !u.includes('.png') && !u.includes('.jpg')) {
+        interestingRequests.push({ method: r.method(), url: u.slice(0, 250), headers: r.headers() });
+      }
+    });
+    page.on('response', async r => {
+      // 404/200 response of download-ish URLs
+      const u = r.url();
+      if (/files-down|download|\/files\//i.test(u) && !u.includes('.css')) {
+        const idx = interestingRequests.findIndex(x => x.url.slice(0, 100) === u.slice(0, 100));
+        if (idx >= 0) {
+          interestingRequests[idx].responseStatus = r.status();
+          interestingRequests[idx].responseHeaders = r.headers();
+        }
+      }
+    });
+
+    const login = await performJandiLogin(page, { email, password, team });
+    if (!login.ok) {
+      await context.close();
+      return res.json({ status: 'login_failed', login });
+    }
+    await page.waitForTimeout(3000);
+
+    // 채널 클릭
+    const itemLocator = page.locator('.lnb-list-item').filter({ hasText: channelName });
+    await itemLocator.first().click({ timeout: 10000 });
+    await page.waitForURL(u => /#!\/room\/\d+/.test(u.toString()), { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(6000);
+
+    // 첫 preview-file 발견 → download 클릭/hover 시도
+    const fileCount = await page.locator('.preview-file[file-id]').count();
+    let clickedFileId = null, downloadEvent = null;
+    if (fileCount > 0) {
+      // 첫 파일의 file-id 확보
+      clickedFileId = await page.locator('.preview-file[file-id]').first().getAttribute('file-id');
+
+      // download 이벤트 listen (클릭으로 trigger될 경우)
+      const downloadPromise = page.waitForEvent('download', { timeout: 20000 }).catch(() => null);
+
+      // preview-file 또는 인접 download 버튼 클릭
+      // 잔디는 파일카드 hover 시 다운로드 아이콘 표시 → 먼저 hover, 그 다음 click
+      await page.locator('.preview-file[file-id]').first().hover({ timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(1000);
+      // 다운로드 버튼 탐색
+      const downloadBtn = page.locator('.preview-file[file-id]').first().locator('xpath=ancestor::*[.//button or .//a][1]//*[contains(@class,"download") or contains(@class,"save") or contains(@class,"icon-ic-save")]').first();
+      const btnCount = await downloadBtn.count().catch(() => 0);
+      if (btnCount > 0) {
+        await downloadBtn.click({ timeout: 5000 }).catch(() => {});
+      } else {
+        // fallback — 파일카드 자체 click
+        await page.locator('.preview-file[file-id]').first().click({ timeout: 5000 }).catch(() => {});
+      }
+      const dl = await downloadPromise;
+      if (dl) {
+        downloadEvent = {
+          url: dl.url(),
+          suggestedFilename: dl.suggestedFilename(),
+        };
+      }
+    }
+
+    // 추가 1초 대기 — 비동기 요청 잡기
+    await page.waitForTimeout(1500);
+
+    await context.close();
+    return res.json({
+      status: 'ok',
+      fileCount,
+      clickedFileId,
+      downloadEvent,
+      requestCount: interestingRequests.length,
+      requests: interestingRequests.slice(-30),
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (e) {
+    if (context) await context.close().catch(() => {});
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
 // === 잔디 파일 다운로드 검증 (Phase 3a) ===
 // 사용: POST /admin/jandi-file-download-test
 // body: { fileUrl: "https://files.jandi.com/files-private/.../..." }
