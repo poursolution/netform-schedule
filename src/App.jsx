@@ -8946,12 +8946,28 @@ import { sendJandiNotification } from './utils/jandi.js';
                             return acc;
                           }, { pending: 0, requested: 0, completed: 0 });
 
+                          // 미검증 판정 헬퍼: 정산대상(승/무/지원 + !정산완료·!selfPT·!감리) 인데 공고문·K-APT 증빙 둘 다 없으면 미검증
+                          const isUnverified = (c) => {
+                            const s = c.rawData;
+                            if (!s) return false;
+                            if (s.selfPT) return false;
+                            if (/감리/.test((s.workType || '') + '|' + (s.siteName || ''))) return false; // 감리는 공고문 불필요
+                            const isSettledResult = c._type === 'win' || c._type === 'draw' || c._type === 'support';
+                            if (!isSettledResult) return false;
+                            const stl = s.settlement?.[c.manager] || {};
+                            if (stl.completed || stl.selfSales) return false;
+                            const hasEvidence = s.evidenceFiles && Object.keys(s.evidenceFiles).length > 0;
+                            const kaptVerified = s.kaptVerified?.status === 'verified';
+                            return !hasEvidence && !kaptVerified;
+                          };
+
                           // 상태 필터 적용
                           const statusFiltered = siteListTab === 'all' ? allRows
                             : siteListTab === 'win' ? allRows.filter(c => c._type === 'win')
                             : siteListTab === 'draw' ? allRows.filter(c => c._type === 'draw')
                             : siteListTab === 'lose' ? allRows.filter(c => c._type === 'lose')
                             : siteListTab === 'support' ? allRows.filter(c => c._type === 'support')
+                            : siteListTab === 'unverified' ? allRows.filter(isUnverified)
                             : allRows.filter(c => c._type === 'inProgress');
 
                           // 정산 필터 적용 (협약사자체PT 제외)
@@ -8974,13 +8990,15 @@ import { sendJandiNotification } from './utils/jandi.js';
                               return searchable.includes(q);
                             });
 
+                          const unverifiedCount = allRows.filter(isUnverified).length;
                           const statusTabs = [
                             { key: 'all', label: '전체', count: allRows.length },
                             { key: 'win', label: '승리', count: listKanban.win.length },
                             { key: 'draw', label: '무승부', count: listKanban.draw.length },
                             { key: 'lose', label: '패배', count: listKanban.lose.length },
                             { key: 'support', label: '지원', count: listKanban.support.length },
-                            { key: 'inProgress', label: '진행중', count: listKanban.inProgress.length }
+                            { key: 'inProgress', label: '진행중', count: listKanban.inProgress.length },
+                            { key: 'unverified', label: '⚠ 미검증', count: unverifiedCount, highlight: true },
                           ];
                           const getStatusStyle = (type) => {
                             if (type === 'win') return { border: '#3b82f6', badge: '#dbeafe', text: '#1d4ed8', label: '승' };
@@ -9012,15 +9030,21 @@ import { sendJandiNotification } from './utils/jandi.js';
 
                               {/* 상태 필터 탭 */}
                               <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', overflowX: 'auto', paddingBottom: '2px' }}>
-                                {statusTabs.map(tab => (
-                                  <button key={tab.key} onClick={() => setSiteListTab(tab.key)} style={{
+                                {statusTabs.map(tab => {
+                                  const active = siteListTab === tab.key;
+                                  const highlight = tab.highlight && tab.count > 0;
+                                  return (
+                                  <button key={tab.key} onClick={() => setSiteListTab(tab.key)}
+                                    title={tab.key === 'unverified' ? '잔디 공고문·K-APT 검증 둘 다 없는 정산대상 (감리 제외)' : undefined}
+                                    style={{
                                     flex: isMobile ? '1' : '0 0 auto', padding: '8px 16px', borderRadius: '8px',
-                                    border: siteListTab === tab.key ? '1px solid #1e293b' : '1px solid #e2e8f0',
-                                    background: siteListTab === tab.key ? '#1e293b' : '#ffffff',
-                                    color: siteListTab === tab.key ? '#ffffff' : '#64748b',
+                                    border: active ? '1px solid #1e293b' : (highlight ? '1px solid #f59e0b' : '1px solid #e2e8f0'),
+                                    background: active ? '#1e293b' : (highlight ? '#fffbeb' : '#ffffff'),
+                                    color: active ? '#ffffff' : (highlight ? '#92400e' : '#64748b'),
                                     fontSize: '12px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.2s'
                                   }}>{tab.label} {tab.count}</button>
-                                ))}
+                                  );
+                                })}
                               </div>
 
                               {/* 정산 필터 */}
