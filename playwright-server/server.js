@@ -1528,27 +1528,66 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       return Math.max(substringScore, subseqScore);
     };
 
-    // 복합 매칭 — siteName + address 둘 다 고려
-    //  - nameSim 이 이미 높으면 (>=0.95) 그대로
-    //  - 아니면 nameSim 과 addressSim 둘 다 계산 → 조합
-    //     * nameSim >= 0.5 AND addressSim >= 0.7 → 지역 매칭 + 이름 부분일치 = 0.85 보장
-    //     * 외엔 max(nameSim, addressSim * 0.8)  (address 단독 매칭은 약간 penalty)
+    // 한국 주요 시·군·구 리스트 (지역명 prefix 제거용)
+    const REGIONS = [
+      '서울','부산','인천','대구','대전','광주','울산','세종','제주',
+      '수원','성남','용인','고양','부천','안산','남양주','안양','평택','의정부','시흥','파주','김포','광명','군포','광주','하남','이천','안성','구리','양주','오산','포천','의왕','여주','과천','연천','가평','양평','화성',
+      '춘천','원주','강릉','속초','동해','태백','삼척','홍천','횡성','평창','영월','정선','철원','양구','인제','고성','양양',
+      '청주','충주','제천','음성','단양','보은','옥천','영동','진천','괴산','증평',
+      '천안','공주','보령','아산','논산','계룡','당진','금산','부여','서산','서천','예산','청양','홍성','태안',
+      '전주','군산','익산','정읍','남원','김제','완주','진안','무주','장수','임실','순창','고창','부안',
+      '목포','여수','순천','나주','광양','담양','곡성','구례','고흥','보성','화순','장흥','강진','해남','영암','무안','함평','영광','장성','완도','진도','신안',
+      '포항','경주','김천','안동','구미','영주','영천','상주','문경','경산','군위','의성','청송','영양','영덕','청도','고령','성주','칠곡','예천','봉화','울진','울릉',
+      '창원','마산','진주','통영','사천','김해','밀양','거제','양산','의령','함안','창녕','고성','남해','하동','산청','함양','거창','합천',
+    ];
+
+    // parsedSite 의 변형 생성 — 원본 + 지역명 제거 버전들
+    const variantsOf = (s) => {
+      const out = [s];
+      let cur = (s || '').trim();
+      // 앞에서 공백 구분 토큰 최대 2개 제거
+      for (let step = 0; step < 2; step++) {
+        const match = cur.match(/^(\S+)\s+(.+)$/);
+        if (!match) break;
+        const [, first, rest] = match;
+        // 지역명 리스트에 포함되거나 "○시", "○군", "○구" 로 끝나면 제거
+        if (REGIONS.includes(first) || /[시군구읍면동]$/.test(first) || first.length <= 3) {
+          cur = rest;
+          if (!out.includes(cur)) out.push(cur);
+        } else {
+          break;
+        }
+      }
+      return out;
+    };
+
+    // 복합 매칭 — 원본/변형 parsedSite × (siteName + address) 전체 스캔
     const composite = (parsedSite, pt) => {
-      const nameSim = similarity(parsedSite, pt.siteName);
-      if (nameSim >= 0.95) return { score: nameSim, matchedBy: 'name' };
       const addr = pt.address || '';
-      const addrSim = addr ? similarity(parsedSite, addr) : 0;
-      // 지역명(2~3자) 직접 일치 검사 — parsedSite 앞 2~3글자가 address 안에 등장하는지
+      const variants = variantsOf(parsedSite);
+      let bestName = 0, bestAddr = 0;
+      for (const v of variants) {
+        bestName = Math.max(bestName, similarity(v, pt.siteName));
+        if (addr) bestAddr = Math.max(bestAddr, similarity(v, addr));
+      }
+      if (bestName >= 0.95) return { score: bestName, matchedBy: 'name' };
+
+      // 지역명 직접 일치 체크 (firstToken ∈ address)
       let regionBoost = 0;
       const firstToken = (parsedSite.match(/^[가-힣]{2,3}/) || [])[0];
       if (firstToken && addr.includes(firstToken)) regionBoost = 0.3;
-      // 합성: nameSim 이 절반 이상 + 주소까지 잡히면 확신
-      if (nameSim >= 0.5 && (addrSim >= 0.7 || regionBoost > 0)) {
-        return { score: Math.max(0.85, nameSim + regionBoost * 0.3), matchedBy: 'name+address' };
+
+      // nameSim 변형 포함해서 0.5 이상 + 지역 매칭 있으면 0.85 보장
+      if (bestName >= 0.5 && (bestAddr >= 0.7 || regionBoost > 0)) {
+        return { score: Math.max(0.85, bestName + regionBoost * 0.2), matchedBy: 'name+address' };
       }
-      const addrOnly = addrSim * 0.8;
-      if (addrOnly > nameSim) return { score: addrOnly, matchedBy: 'address' };
-      return { score: nameSim, matchedBy: 'name' };
+      // nameSim 낮지만 address 부분 + 지역 둘 다 일치 → 신중하게 0.85
+      if (bestAddr >= 0.6 && regionBoost > 0 && bestName >= 0.3) {
+        return { score: 0.85, matchedBy: 'address+region' };
+      }
+      const addrOnly = bestAddr * 0.8;
+      if (addrOnly > bestName) return { score: addrOnly, matchedBy: 'address' };
+      return { score: bestName, matchedBy: 'name' };
     };
 
     // 1. evidence 로드
@@ -1703,21 +1742,50 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
       .filter(([, v]) => v?.siteName)
       .map(([id, v]) => ({ id, siteName: v.siteName, address: v.address || '', ptAssignee: v.ptAssignee, date: v.date, result: v.results }));
 
-    // composite: siteName + address 조합 (위 jandi-pt-match 와 동일 로직)
+    // composite: siteName + address 조합 + 지역명 prefix 제거 변형 (위 jandi-pt-match 와 동일)
+    const REGIONS = [
+      '서울','부산','인천','대구','대전','광주','울산','세종','제주',
+      '수원','성남','용인','고양','부천','안산','남양주','안양','평택','의정부','시흥','파주','김포','광명','군포','하남','이천','안성','구리','양주','오산','화성','의왕','여주','과천',
+      '춘천','원주','강릉','속초','동해','태백',
+      '청주','충주','제천','천안','공주','보령','아산','논산','당진','서산','홍성','예산','태안',
+      '전주','군산','익산','정읍','남원','목포','여수','순천','나주','광양',
+      '포항','경주','구미','김천','안동','영주','경산','영천','상주','문경','창원','마산','진주','통영','김해','밀양','거제','양산','사천',
+    ];
+    const variantsOf = (s) => {
+      const out = [s];
+      let cur = (s || '').trim();
+      for (let step = 0; step < 2; step++) {
+        const match = cur.match(/^(\S+)\s+(.+)$/);
+        if (!match) break;
+        const [, first, rest] = match;
+        if (REGIONS.includes(first) || /[시군구읍면동]$/.test(first) || first.length <= 3) {
+          cur = rest;
+          if (!out.includes(cur)) out.push(cur);
+        } else break;
+      }
+      return out;
+    };
     const composite = (parsedSite, pt) => {
-      const nameSim = similarity(parsedSite, pt.siteName);
-      if (nameSim >= 0.95) return { score: nameSim, matchedBy: 'name' };
       const addr = pt.address || '';
-      const addrSim = addr ? similarity(parsedSite, addr) : 0;
+      const variants = variantsOf(parsedSite);
+      let bestName = 0, bestAddr = 0;
+      for (const v of variants) {
+        bestName = Math.max(bestName, similarity(v, pt.siteName));
+        if (addr) bestAddr = Math.max(bestAddr, similarity(v, addr));
+      }
+      if (bestName >= 0.95) return { score: bestName, matchedBy: 'name' };
       let regionBoost = 0;
       const firstToken = (parsedSite.match(/^[가-힣]{2,3}/) || [])[0];
       if (firstToken && addr.includes(firstToken)) regionBoost = 0.3;
-      if (nameSim >= 0.5 && (addrSim >= 0.7 || regionBoost > 0)) {
-        return { score: Math.max(0.85, nameSim + regionBoost * 0.3), matchedBy: 'name+address' };
+      if (bestName >= 0.5 && (bestAddr >= 0.7 || regionBoost > 0)) {
+        return { score: Math.max(0.85, bestName + regionBoost * 0.2), matchedBy: 'name+address' };
       }
-      const addrOnly = addrSim * 0.8;
-      if (addrOnly > nameSim) return { score: addrOnly, matchedBy: 'address' };
-      return { score: nameSim, matchedBy: 'name' };
+      if (bestAddr >= 0.6 && regionBoost > 0 && bestName >= 0.3) {
+        return { score: 0.85, matchedBy: 'address+region' };
+      }
+      const addrOnly = bestAddr * 0.8;
+      if (addrOnly > bestName) return { score: addrOnly, matchedBy: 'address' };
+      return { score: bestName, matchedBy: 'name' };
     };
 
     const unmatched = [];
