@@ -2569,18 +2569,19 @@ import { sendJandiNotification } from './utils/jandi.js';
           }
           setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), requested: true } } } : s));
 
-          // 2) K-APT 검증 (Worker 호출 → 우리 회사 낙찰 확인)
-          //    Worker가 검증 결과에 따라 잔디 알림 발송
-          //    Worker 미배포 상태면 fallback으로 클라이언트에서 잔디 직접 호출
-          verifyKaptForPt({
-            scheduleId,
-            assignee: targetAssignee,
-            siteName: updatedSchedule.siteName,
-            workType: updatedSchedule.workType,
-            bidNo: updatedSchedule.bidNo,
-            ptDate: updatedSchedule.date,
-            by: currentUser?.name,
-          });
+          // 2) K-APT 검증 — 감리 공종은 공고문 자체가 없으므로 검증 skip
+          const isSupervisionPt = updatedSchedule.workType && /감리/.test(String(updatedSchedule.workType));
+          if (!isSupervisionPt) {
+            verifyKaptForPt({
+              scheduleId,
+              assignee: targetAssignee,
+              siteName: updatedSchedule.siteName,
+              workType: updatedSchedule.workType,
+              bidNo: updatedSchedule.bidNo,
+              ptDate: updatedSchedule.date,
+              by: currentUser?.name,
+            });
+          }
         }
 
         // === 무 결과 → 정산요청 confirm (기존 흐름 유지) ===
@@ -9287,8 +9288,8 @@ tr.suppressed td.fname{color:#64748b;}
                                                 </button>
                                               );
                                             })()}
-                                            {/* 🔍 K-APT 개별 검증 버튼 (모든 결과 - 승·무·패·지원·진행중, 단 승+정산완료는 숨김) */}
-                                            {!isSelfPT && !isSuperseded && kaptWorkerUrl && !(currentResult === '승' && (settlement.completed || settlement.selfSales)) && (() => {
+                                            {/* 🔍 K-APT 개별 검증 버튼 (모든 결과 - 승·무·패·지원·진행중, 단 승+정산완료·감리는 숨김) */}
+                                            {!isSelfPT && !isSuperseded && kaptWorkerUrl && !(currentResult === '승' && (settlement.completed || settlement.selfSales)) && !(s?.workType && /감리/.test(String(s.workType))) && (() => {
                                               const vkey = `${card.id}_${card.manager}`;
                                               const busy = kaptVerifyingId === vkey;
                                               const kv = s?.kaptVerified;
