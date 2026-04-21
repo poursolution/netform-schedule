@@ -1130,6 +1130,71 @@ app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
   }
 });
 
+// === 잔디 파일 다운로드 검증 (Phase 3a) ===
+// 사용: POST /admin/jandi-file-download-test
+// body: { fileUrl: "https://files.jandi.com/files-private/.../..." }
+// 흐름: 로그인 → context.request.get(fileUrl) → 응답 메타 + 첫 200바이트 hex 반환
+//       (성공 시 binary content-type / 실패 시 HTML 로그인 redirect)
+app.post('/admin/jandi-file-download-test', requireAuth, async (req, res) => {
+  const email = process.env.JANDI_EMAIL;
+  const password = process.env.JANDI_PASSWORD;
+  const team = process.env.JANDI_TEAM;
+  if (!email || !password || !team) {
+    return res.status(400).json({ error: 'JANDI_EMAIL, JANDI_PASSWORD, JANDI_TEAM env vars required' });
+  }
+  const { fileUrl } = req.body || {};
+  if (!fileUrl || !/^https?:\/\//i.test(fileUrl)) {
+    return res.status(400).json({ error: 'fileUrl required (full URL)' });
+  }
+  const startedAt = Date.now();
+  let context = null;
+  try {
+    const browser = await getBrowser();
+    context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      locale: 'ko-KR',
+      ignoreHTTPSErrors: true,
+      acceptDownloads: true,
+    });
+    const page = await context.newPage();
+
+    const login = await performJandiLogin(page, { email, password, team });
+    if (!login.ok) {
+      await context.close();
+      return res.json({ status: 'login_failed', login, durationMs: Date.now() - startedAt });
+    }
+
+    // Playwright의 APIRequestContext 가 자동으로 브라우저 컨텍스트의 쿠키 사용
+    const resp = await context.request.get(fileUrl, {
+      headers: {
+        'Referer': `https://${team}.jandi.com/`,
+      },
+      timeout: 30000,
+    });
+    const status = resp.status();
+    const headers = resp.headers();
+    const buf = await resp.body();
+    const isHTML = /text\/html/i.test(headers['content-type'] || '') || buf.slice(0, 50).toString('utf-8').toLowerCase().includes('<html');
+
+    await context.close();
+    return res.json({
+      status: 'ok',
+      httpStatus: status,
+      contentType: headers['content-type'],
+      contentLength: buf.length,
+      contentDisposition: headers['content-disposition'],
+      first200HexPreview: buf.slice(0, 200).toString('hex'),
+      first50UTF8: buf.slice(0, 50).toString('utf-8').replace(/[^\x20-\x7e]/g, '.'),
+      looksLikeHTML: isHTML,
+      verdict: !isHTML && status === 200 && buf.length > 1000 ? 'download_works' : 'download_failed_or_redirect',
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (e) {
+    if (context) await context.close().catch(() => {});
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
 // === Phase 1: K-APT 전체 공고 리스트 크롤링 (aptName 필터 없이) ===
 // 사용: POST /admin/kapt-list-crawl { startDate, endDate, pageNo, bidGb }
 // 목적: aptName 없어도 bidList.do 가 결과 반환하는지 검증 + 초기 캐시 구축용
