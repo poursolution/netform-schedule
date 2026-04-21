@@ -1298,7 +1298,8 @@ app.post('/admin/jandi-file-download-test', requireAuth, async (req, res) => {
         headers: {
           'Authorization': `Bearer ${jwt}`,
           'Referer': `https://${team}.jandi.com/`,
-          'Accept': 'application/json',
+          'Accept': 'application/vnd.tosslab.jandi-v2+json',
+          'Content-Type': 'application/json',
         },
         timeout: 15000,
       });
