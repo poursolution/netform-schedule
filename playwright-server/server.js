@@ -1040,58 +1040,49 @@ app.post('/admin/jandi-channel-fetch', requireAuth, async (req, res) => {
 
       const messageBlocks = [...document.querySelectorAll('.msg-attach')];
 
-      // TextNode TreeWalker — DOM 어디든 파일명 텍스트 노드 추출
-      let leafCheckTotal = 0, leafCheckMatched = 0;
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      let node;
-      while ((node = walker.nextNode())) {
-        leafCheckTotal++;
-        const filename = (node.nodeValue || '').trim();
-        if (!filename || filename.length < 6 || filename.length > 250) continue;
-        if (!extsEnd.test(filename)) continue;
+      // 잔디는 각 파일을 .preview-file [file-id="X"] [selected-attachment="{JSON}"] 구조로 렌더
+      // selected-attachment JSON 안에 fileUrl, filename(storage hash), title(원본), size, ext 모두 있음
+      const previewFiles = [...document.querySelectorAll('.preview-file[file-id], [chat-viewer-for-viewer-origin-file-id]')];
+      let leafCheckTotal = previewFiles.length, leafCheckMatched = 0;
 
-        const parent = node.parentElement;
-        if (!parent) continue;
+      for (const el of previewFiles) {
+        const fileId = el.getAttribute('file-id') || el.getAttribute('chat-viewer-for-viewer-origin-file-id');
+        if (!fileId || seen.has(fileId)) continue;
+        seen.add(fileId);
 
-        // sidebar/topic-list 안이면 skip (사이드바엔 .pdf 같은 거 거의 없지만 안전망)
-        let isInSidebar = false, p = parent;
-        for (let i = 0; i < 10 && p; i++) {
-          const cn = (p.className || '').toString();
-          if (/(lnb-|lpanel|topic-list|_lnb)/i.test(cn)) { isInSidebar = true; break; }
-          p = p.parentElement;
+        let attachJson = null;
+        const rawJson = el.getAttribute('selected-attachment');
+        if (rawJson) {
+          try { attachJson = JSON.parse(rawJson); } catch (_) {}
         }
-        if (isInSidebar) continue;
 
+        const content = attachJson?.content || {};
+        const filename = content.title || content.name || (el.querySelector('.info-title')?.innerText || '').trim();
+        const fileUrl = content.fileUrl || null;
+        const storageName = content.filename || null; // 잔디 storage hash
+        const ext = content.ext || (filename.match(/\.([a-z0-9]+)$/i) || [])[1] || null;
+        const size = content.size || null;
+        const mimeType = content.type || null;
+
+        if (!filename || !extsEnd.test(filename)) continue;
         leafCheckMatched++;
-        if (seen.has(filename)) continue;
-        seen.add(filename);
 
-        const ctx = getMsgContext(parent);
+        const ctx = getMsgContext(el);
         out.push({
           filename,
-          fileId: findFileId(parent) || findFileId(parent.parentElement),
-          href: findHref(parent) || findHref(parent.parentElement || parent),
+          fileId,
+          fileUrl,
+          storageName,
+          ext,
+          size,
+          mimeType,
           uploader: ctx.uploader,
           ts: ctx.ts,
-          elClassName: (parent.className || '').toString().slice(0, 100),
         });
       }
 
-      // 첫 매칭된 파일 부모의 outerHTML 샘플 (download URL 분석용)
-      let fileSampleHTML = null;
-      if (out.length > 0) {
-        const w2 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-        let n;
-        while ((n = w2.nextNode())) {
-          const t = (n.nodeValue || '').trim();
-          if (extsEnd.test(t) && t.length > 6 && t.length < 250) {
-            let target = n.parentElement;
-            for (let i = 0; i < 3 && target?.parentElement; i++) target = target.parentElement;
-            fileSampleHTML = target?.outerHTML?.slice(0, 4000) || null;
-            break;
-          }
-        }
-      }
+      // 첫 .preview-file outerHTML (디버그용)
+      const fileSampleHTML = previewFiles[0] ? previewFiles[0].outerHTML.slice(0, 4000) : null;
 
       return {
         files: out,
