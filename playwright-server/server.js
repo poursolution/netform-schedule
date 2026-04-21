@@ -1409,6 +1409,146 @@ function parseFilenameLocal(filename) {
   };
 }
 
+// === Phase 3c: evidence ↔ PT 자동 매칭 ===
+// 사용: POST /admin/jandi-pt-match
+// body: { minScore?=0.75, dryRun?=false, onlyUnmatched?=true }
+// 흐름:
+//   1. RTDB evidence/ 전체 로드
+//   2. RTDB pt/ 전체 로드 (siteName 인덱스 구축)
+//   3. 각 evidence: parsedSiteName 으로 PT 후보 매칭 (normalize + substring score)
+//   4. 매칭 score >= minScore 이면:
+//        pt/{ptId}/evidenceFiles/{fileId} = { filename, storagePath, matchScore, matchedAt }
+//        evidence/{fileId}/matchedPtIds/{ptId} = matchScore
+app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
+  const { minScore = 0.75, dryRun = false, onlyUnmatched = true } = req.body || {};
+  const startedAt = Date.now();
+  try {
+    await getFirebaseAdmin();
+    const db = admin.database();
+
+    // 단지명 정규화 — 공백/괄호/숫자단지 제거
+    const norm = (s) => (s || '').toString()
+      .replace(/\s+/g, '')
+      .replace(/[()()[\]【】]/g, '')
+      .toLowerCase();
+
+    // 유사도 — 공통 최장 substring 기반
+    const similarity = (a, b) => {
+      const na = norm(a), nb = norm(b);
+      if (!na || !nb) return 0;
+      if (na === nb) return 1;
+      if (na.includes(nb) || nb.includes(na)) return 0.9;
+      const longer = na.length >= nb.length ? na : nb;
+      const shorter = na.length >= nb.length ? nb : na;
+      let best = 0;
+      for (let len = shorter.length; len >= 3 && len > best; len--) {
+        for (let i = 0; i + len <= shorter.length; i++) {
+          if (longer.includes(shorter.slice(i, i + len))) { best = len; break; }
+        }
+      }
+      return best / longer.length;
+    };
+
+    // 1. evidence 로드
+    const evSnap = await db.ref('evidence').once('value');
+    const evidence = evSnap.val() || {};
+    const evCount = Object.keys(evidence).length;
+
+    // 2. pt 로드 (대용량 — siteName 만 뽑아서 인덱스)
+    const ptSnap = await db.ref('pt').once('value');
+    const pts = ptSnap.val() || {};
+    const ptEntries = Object.entries(pts)
+      .filter(([, v]) => v?.siteName)
+      .map(([id, v]) => ({ id, siteName: v.siteName, normSite: norm(v.siteName), ptAssignee: v.ptAssignee, date: v.date }));
+
+    // 3. 매칭
+    const updates = {}; // flat update object for atomic multi-path write
+    const results = { evidenceProcessed: 0, matched: 0, multiMatch: 0, unmatched: 0, matches: [] };
+
+    for (const [fileId, ev] of Object.entries(evidence)) {
+      results.evidenceProcessed++;
+      if (onlyUnmatched && ev.matchedPtIds && Object.keys(ev.matchedPtIds).length > 0) continue;
+
+      const evSite = ev.parsedSiteName;
+      if (!evSite) { results.unmatched++; continue; }
+
+      // 모든 PT 후보와 유사도 계산
+      const candidates = ptEntries
+        .map(p => ({ ...p, score: similarity(evSite, p.siteName) }))
+        .filter(p => p.score >= minScore)
+        .sort((a, b) => b.score - a.score);
+
+      if (candidates.length === 0) {
+        results.unmatched++;
+        if (!dryRun) updates[`evidence/${fileId}/ptMatchStatus`] = 'no_match';
+        continue;
+      }
+
+      // 상위 후보들 — score 1.0 인 정확 일치 여러 개면 전부 연결, 부분 일치면 top 1 만
+      const topScore = candidates[0].score;
+      const toLink = topScore >= 0.95
+        ? candidates.filter(c => c.score >= topScore - 0.01)  // 다 연결
+        : [candidates[0]];  // top 1 만
+
+      if (toLink.length > 1) results.multiMatch++;
+      results.matched++;
+
+      const matchedIdsObj = {};
+      for (const c of toLink) {
+        matchedIdsObj[c.id] = Number(c.score.toFixed(3));
+        if (!dryRun) {
+          updates[`pt/${c.id}/evidenceFiles/${fileId}`] = {
+            filename: ev.filename,
+            storagePath: ev.storagePath,
+            ext: ev.ext,
+            size: ev.size,
+            parsedSeq: ev.parsedSeq,
+            parsedMethod: ev.parsedMethod,
+            matchScore: Number(c.score.toFixed(3)),
+            matchedAt: new Date().toISOString(),
+            matchedBy: 'jandi-auto-sync',
+          };
+        }
+      }
+      if (!dryRun) {
+        updates[`evidence/${fileId}/matchedPtIds`] = matchedIdsObj;
+        updates[`evidence/${fileId}/ptMatchStatus`] = 'matched';
+        updates[`evidence/${fileId}/matchedAt`] = new Date().toISOString();
+      }
+
+      results.matches.push({
+        fileId,
+        filename: ev.filename,
+        parsedSiteName: evSite,
+        matchedPts: toLink.map(c => ({ id: c.id, siteName: c.siteName, score: Number(c.score.toFixed(3)), ptAssignee: c.ptAssignee, date: c.date })),
+      });
+    }
+
+    if (!dryRun && Object.keys(updates).length > 0) {
+      await db.ref().update(updates);
+    }
+
+    return res.json({
+      status: 'ok',
+      dryRun,
+      minScore,
+      evidenceCount: evCount,
+      ptCount: ptEntries.length,
+      summary: {
+        processed: results.evidenceProcessed,
+        matched: results.matched,
+        multiMatch: results.multiMatch,
+        unmatched: results.unmatched,
+      },
+      updateKeys: dryRun ? undefined : Object.keys(updates).length,
+      sampleMatches: results.matches.slice(0, 15),
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (e) {
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
 // === 잔디 실제 다운로드 URL sniff ===
 // 사용: POST /admin/jandi-download-sniff
 // body: { channelName?='입찰 공고(POUR공법)' }
