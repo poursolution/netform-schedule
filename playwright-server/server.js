@@ -1272,88 +1272,72 @@ app.post('/admin/jandi-file-download-test', requireAuth, async (req, res) => {
       return res.json({ status: 'login_failed', login, durationMs: Date.now() - startedAt });
     }
 
-    // 방법 A: JWT Bearer 헤더로 시도 (쿠키 + Authorization)
+    // body 에서 fileId / teamId 추출 (fileUrl 에서 자동 파싱)
+    let fileId = req.body?.fileId;
+    let teamId = req.body?.teamId;
+    if (!fileId || !teamId) {
+      // fileUrl 패턴 https://files.jandi.com/files-private/{teamId}/{hash}
+      const m = fileUrl.match(/files-private\/(\d+)\/([a-f0-9]+)/);
+      if (m) { teamId = teamId || m[1]; }
+    }
+
+    // JWT 쿠키 추출
     const cookies = await context.cookies();
     const jwt = cookies.find(c => c.name === '_jd_.access_token')?.value;
 
-    let method = 'unknown', verdict = 'unknown';
-    let httpStatus, contentType, contentLength, totalBytes, first50UTF8 = '', first256Hex = '', looksLikeHTML = false, fetchError;
-
-    if (jwt) {
-      try {
-        method = 'context.request.get + Bearer JWT';
-        const resp = await context.request.get(fileUrl, {
-          headers: {
-            'Authorization': `Bearer ${jwt}`,
-            'Referer': `https://${team}.jandi.com/`,
-            'Accept': '*/*',
-          },
-          timeout: 45000,
-        });
-        httpStatus = resp.status();
-        contentType = resp.headers()['content-type'];
-        contentLength = resp.headers()['content-length'];
-        const buf = await resp.body();
-        totalBytes = buf.length;
-        first256Hex = buf.slice(0, 256).toString('hex');
-        first50UTF8 = buf.slice(0, 50).toString('utf-8').replace(/[^\x20-\x7e]/g, '.');
-        looksLikeHTML = /text\/html/i.test(contentType || '') || first50UTF8.toLowerCase().includes('<html');
-        verdict = (resp.ok() && !looksLikeHTML && totalBytes > 1000) ? 'download_works' : 'download_failed_or_redirect';
-      } catch (e) {
-        fetchError = `bearer_request_failed: ${e.message}`;
-      }
+    if (!fileId) {
+      await context.close();
+      return res.json({ status: 'error', error: 'fileId required (from channel-fetch output)', hasJwt: !!jwt, teamId });
     }
 
-    // 방법 B (verdict != download_works 이면): 브라우저 네이티브 download 이벤트
-    if (verdict !== 'download_works') {
-      try {
-        method += ' → download-event fallback';
-        const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
-        // <a href=url download> 클릭 트리거
-        await page.evaluate((url) => {
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = '';
-          a.target = '_self';
-          a.style.display = 'none';
-          document.body.appendChild(a);
-          a.click();
-        }, fileUrl);
-        const download = await downloadPromise;
-        if (download) {
-          const tmpPath = await download.path();
-          if (tmpPath) {
-            const fs = await import('fs/promises');
-            const buf = await fs.readFile(tmpPath);
-            totalBytes = buf.length;
-            first256Hex = buf.slice(0, 256).toString('hex');
-            first50UTF8 = buf.slice(0, 50).toString('utf-8').replace(/[^\x20-\x7e]/g, '.');
-            contentType = download.suggestedFilename(); // 대충 파일명 확장자로
-            httpStatus = 200;
-            verdict = 'download_works_via_event';
-          }
-        } else {
-          fetchError = (fetchError || '') + ' | download_event_timeout';
-        }
-      } catch (e) {
-        fetchError = (fetchError || '') + ` | download_event_failed: ${e.message}`;
+    // Step 1: i1.jandi.com/file-api 에서 signed downloadUrl 획득
+    let step1 = {}, step2 = {};
+    try {
+      const apiUrl = `https://i1.jandi.com/file-api/v1/teams/${teamId}/files/${fileId}/downloadUrl?fileId=${fileId}`;
+      const r1 = await context.request.get(apiUrl, {
+        headers: {
+          'Authorization': `Bearer ${jwt}`,
+          'Referer': `https://${team}.jandi.com/`,
+          'Accept': 'application/json',
+        },
+        timeout: 15000,
+      });
+      step1 = {
+        httpStatus: r1.status(),
+        contentType: r1.headers()['content-type'],
+      };
+      const apiJson = await r1.json().catch(() => null);
+      step1.responseBody = apiJson;
+      const signedUrl = apiJson?.downloadUrl || apiJson?.url || apiJson?.data?.downloadUrl;
+      step1.signedUrl = signedUrl ? signedUrl.slice(0, 180) + '...' : null;
+
+      // Step 2: signed URL로 실제 다운로드
+      if (signedUrl) {
+        const r2 = await context.request.get(signedUrl, { timeout: 60000 });
+        const buf = await r2.body();
+        step2 = {
+          httpStatus: r2.status(),
+          contentType: r2.headers()['content-type'],
+          contentLength: r2.headers()['content-length'],
+          totalBytes: buf.length,
+          first50UTF8: buf.slice(0, 50).toString('utf-8').replace(/[^\x20-\x7e]/g, '.'),
+          first64Hex: buf.slice(0, 64).toString('hex'),
+        };
       }
+    } catch (e) {
+      step1.error = e.message;
     }
+
+    const verdict = (step2.httpStatus === 200 && step2.totalBytes > 1000) ? 'download_works' : 'download_failed';
 
     await context.close();
     return res.json({
       status: 'ok',
-      method,
+      method: '2-step api call (downloadUrl → signed cloudfront)',
+      teamId, fileId,
       hasJwt: !!jwt,
-      jwtLen: jwt?.length,
-      httpStatus,
-      contentType,
-      contentLength,
-      totalBytes,
-      first256Hex,
-      first50UTF8,
-      looksLikeHTML,
-      fetchError,
+      step1,
+      step2,
       verdict,
       durationMs: Date.now() - startedAt,
     });
