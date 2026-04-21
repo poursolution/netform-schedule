@@ -1455,8 +1455,9 @@ app.post('/admin/jandi-reparse-evidence', requireAuth, async (req, res) => {
         updates[`evidence/${fileId}/parsedSeq`] = parsed.seq;
         updates[`evidence/${fileId}/parsedMethod`] = parsed.method;
         updates[`evidence/${fileId}/parsedMethodPrefix`] = parsed.methodPrefix || null;
-        // 매칭상태 초기화해서 다음 match에서 재평가되게
-        updates[`evidence/${fileId}/ptMatchStatus`] = 'pending';
+        // 매칭상태: 이미 matched 인 건 유지, 그 외만 pending 으로 초기화
+        const hasMatch = ev.matchedPtIds && Object.keys(ev.matchedPtIds).length > 0;
+        updates[`evidence/${fileId}/ptMatchStatus`] = hasMatch ? 'matched' : 'pending';
       }
     }
     if (!dryRun && Object.keys(updates).length > 0) {
