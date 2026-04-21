@@ -1346,20 +1346,21 @@ app.post('/admin/jandi-channel-sync', requireAuth, async (req, res) => {
           expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
         });
 
-        // RTDB 메타 기록
+        // RTDB 메타 기록 — undefined 필드 null 로 치환
         const parsed = parseFilenameLocal(f.filename);
         await db.ref(`evidence/${f.fileId}`).set({
           fileId: f.fileId,
-          filename: f.filename,
-          parsedSeq: parsed.seq,
-          parsedSiteName: parsed.siteName,
-          parsedMethod: parsed.method,
-          ext: f.ext,
-          size: f.size,
-          mimeType: f.mimeType,
+          filename: f.filename || null,
+          parsedSeq: parsed.seq == null ? null : parsed.seq,
+          parsedSiteName: parsed.siteName || null,
+          parsedMethod: parsed.method || null,
+          parsedMethodPrefix: parsed.methodPrefix || null,
+          ext: f.ext || null,
+          size: f.size == null ? null : f.size,
+          mimeType: f.mimeType || null,
           sha256,
-          teamId,
-          channelName,
+          teamId: teamId || null,
+          channelName: channelName || null,
           storagePath,
           storageBucket: bucket.name,
           signedReadUrl,
@@ -1654,16 +1655,17 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       for (const c of toLink) {
         matchedIdsObj[c.id] = Number(c.score.toFixed(3));
         if (!dryRun) {
+          // undefined 는 Firebase 가 reject — null 로 치환
           updates[`pt/${c.id}/evidenceFiles/${fileId}`] = {
-            filename: ev.filename,
-            storagePath: ev.storagePath,
-            ext: ev.ext,
-            size: ev.size,
-            parsedSeq: ev.parsedSeq,
-            parsedMethod: ev.parsedMethod,
+            filename: ev.filename || null,
+            storagePath: ev.storagePath || null,
+            ext: ev.ext || null,
+            size: ev.size == null ? null : ev.size,
+            parsedSeq: ev.parsedSeq == null ? null : ev.parsedSeq,
+            parsedMethod: ev.parsedMethod || null,
             matchScore: Number(c.score.toFixed(3)),
             matchedAt: new Date().toISOString(),
-            matchedBy: 'jandi-auto-sync',
+            matchedBy: c.matchedBy || 'jandi-auto-sync',
           };
         }
       }
