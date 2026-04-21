@@ -629,29 +629,51 @@ app.post('/admin/jandi-login-test', requireAuth, async (req, res) => {
 });
 
 // === 잔디 로그인 헬퍼 (재사용) ===
-// 반환: { ok, status, beforeUrl, afterUrl, teamUrl? }
+// 반환: { ok, status, beforeUrl, submitUrl, finalUrl, teamUrl, hasCaptcha?, error? }
 async function performJandiLogin(page, { email, password, team }) {
-  await page.goto('https://www.jandi.com/login/ko', { waitUntil: 'networkidle', timeout: 45000 }).catch(async () => {
-    await page.goto('https://www.jandi.com/login/ko', { waitUntil: 'domcontentloaded', timeout: 30000 });
-  });
+  // 1) 팀 워크스페이스 직접 접근 → 로그인 안 돼있으면 자동으로 signin 으로 리디렉트됨
+  const teamUrl = `https://${team}.jandi.com/`;
+  await page.goto(teamUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(2500);
   const beforeUrl = page.url();
 
-  try {
-    await page.waitForSelector('input[type="email"], input[name="email"], input[type="password"]', { timeout: 10000 });
-  } catch (_) {
-    return { ok: false, status: 'no_form', beforeUrl, afterUrl: page.url() };
+  // 이미 로그인 상태면 바로 종료
+  if (beforeUrl.includes(`${team}.jandi.com`) && !/login|signin/i.test(beforeUrl)) {
+    return { ok: true, status: 'already_logged_in', beforeUrl, finalUrl: beforeUrl, teamUrl };
   }
 
+  // 로그인 폼 감지
+  try {
+    await page.waitForSelector('input[type="email"], input[name="email"], input[type="password"]', { timeout: 12000 });
+  } catch (_) {
+    return { ok: false, status: 'no_form', beforeUrl, finalUrl: page.url() };
+  }
+
+  // 캡차/2FA 감지
+  const preCheck = await page.evaluate(() => {
+    const text = document.body?.innerText || '';
+    return {
+      hasCaptcha: /capt(c|ch)a|reCAPTCHA|로봇이 아닙니다/i.test(text) || !!document.querySelector('iframe[src*="recaptcha"], iframe[src*="captcha"]'),
+      has2FA: /verification code|인증 코드|otp|2단계 인증/i.test(text),
+      pageTitle: document.title,
+      bodyPreview: text.slice(0, 300),
+    };
+  });
+  if (preCheck.hasCaptcha) {
+    return { ok: false, status: 'captcha_required', beforeUrl, finalUrl: page.url(), preCheck };
+  }
+
+  // 입력
   const emailEl = await page.$('input[type="email"], input[name="email"], input#email');
   const passEl = await page.$('input[type="password"], input[name="password"]');
   if (!emailEl || !passEl) {
-    return { ok: false, status: 'no_form', beforeUrl, afterUrl: page.url() };
+    return { ok: false, status: 'no_form', beforeUrl, finalUrl: page.url(), preCheck };
   }
   await emailEl.fill(email);
   await passEl.fill(password);
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(400);
 
+  // 제출
   const clicked = await page.evaluate(() => {
     const btn = document.querySelector('button[type="submit"], input[type="submit"]')
       || [...document.querySelectorAll('button')].find(b => /로그인|log\s*in|sign\s*in/i.test(b.innerText || ''));
@@ -660,32 +682,42 @@ async function performJandiLogin(page, { email, password, team }) {
     if (form) { form.submit(); return 'form'; }
     return null;
   });
-  if (!clicked) return { ok: false, status: 'no_submit', beforeUrl, afterUrl: page.url() };
+  if (!clicked) return { ok: false, status: 'no_submit_button', beforeUrl, finalUrl: page.url() };
 
+  // 제출 후 — URL 바뀌거나 사이드바 뜨거나 5초 중 빠른 거
   await Promise.race([
-    page.waitForURL(url => !/\/login/i.test(url.toString()), { timeout: 15000 }).catch(() => {}),
-    page.waitForSelector('aside, [class*="sidebar" i], [class*="topic" i]', { timeout: 15000 }).catch(() => {}),
+    page.waitForURL(url => {
+      const u = url.toString();
+      return u.includes(`${team}.jandi.com`) || /app\/#/.test(u);
+    }, { timeout: 15000 }).catch(() => {}),
+    page.waitForSelector('aside, [class*="sidebar" i], nav[class*="lnb" i]', { timeout: 15000 }).catch(() => {}),
+    page.waitForSelector('.error-message, [class*="error" i], [role="alert"]', { timeout: 12000 }).catch(() => {}),
   ]);
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(2500);
+  const submitUrl = page.url();
 
-  let afterUrl = page.url();
-  const loggedIn = !/\/login|\/landing/i.test(afterUrl);
+  // 로그인 직후 에러 메시지 감지
+  const postCheck = await page.evaluate(() => {
+    const errEls = [...document.querySelectorAll('.error-message, [class*="error" i], [role="alert"], [class*="invalid" i]')];
+    const errTexts = errEls.map(e => (e.innerText || '').trim()).filter(t => t && t.length < 200 && t.length > 3);
+    return {
+      hasErrors: errTexts.length > 0,
+      errors: errTexts.slice(0, 5),
+      bodyPreview: (document.body?.innerText || '').slice(0, 300),
+    };
+  });
 
-  // 팀 워크스페이스로 이동 (로그인 후 팀 선택 페이지일 수 있음)
-  let teamUrl = null;
-  if (loggedIn && team) {
-    teamUrl = `https://${team}.jandi.com/`;
-    if (!afterUrl.includes(`${team}.jandi.com`)) {
-      await page.goto(teamUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-      await page.waitForTimeout(3000);
-      afterUrl = page.url();
-    }
-  }
+  // 팀 워크스페이스로 강제 이동 (로그인 성공했으면 그대로 있고, 실패면 다시 signin으로 튕김)
+  await page.goto(teamUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(3500);
+  const finalUrl = page.url();
 
+  const loggedIn = finalUrl.includes(`${team}.jandi.com`) && !/login|signin/i.test(finalUrl);
   return {
     ok: loggedIn,
-    status: loggedIn ? 'logged_in' : 'login_uncertain',
-    beforeUrl, afterUrl, teamUrl,
+    status: loggedIn ? 'logged_in' : (postCheck.hasErrors ? 'login_rejected' : 'login_uncertain'),
+    beforeUrl, submitUrl, finalUrl, teamUrl,
+    preCheck, postCheck,
   };
 }
 
