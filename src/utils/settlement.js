@@ -33,6 +33,7 @@ export const EXCLUSION_REASONS = {
   MAIN_LOST: 'main_lost',               // 주담 패배로 지원자 제외
   DRAW_SUPPORT_EXCLUDED: 'draw_support_excluded',  // 주담 무승부 → 지원자 관리자예외승인 필요
   LOSS: 'loss',                         // 결과가 패배
+  CANCELLED_NOTICE: 'cancelled_notice', // K-APT 취소공고 (공고 올라왔지만 발주처 취소) — 재공고 대기
 };
 
 // ===== 금액 테이블 =====
@@ -102,6 +103,11 @@ export function calculateSettlementAmount(pt, assignee, opts = {}) {
   const stl = pt.settlement?.[assignee] || {};
   if (stl.selfSales) {
     return { amount: 0, reason: EXCLUSION_REASONS.SELF_SALES, result: '제외' };
+  }
+
+  // 2.5) K-APT 취소공고 — 공고 있었으나 발주처 취소 → 정산 제외 (재공고 대기)
+  if (pt.kaptVerified?.status === 'cancelled') {
+    return { amount: 0, reason: EXCLUSION_REASONS.CANCELLED_NOTICE, result: '제외' };
   }
 
   // 3) 감리 건 — 결과 무관 건당 80k
@@ -306,6 +312,7 @@ export function shouldAutoTransitionToTarget(pt, assignee) {
   if (!pt || !assignee || !pt.date) return false;
   if (pt.date < AUTO_TRANSITION_START) return false;  // Q1 이전은 제외
   if (pt.selfPT) return false;
+  if (pt.kaptVerified?.status === 'cancelled') return false;  // 취소공고 제외
   const stl = pt.settlement?.[assignee] || {};
   if (stl.selfSales) return false;
   if (stl.requested || stl.completed) return false;  // 이미 전환됨

@@ -45,6 +45,7 @@ const EXCLUSION_REASON_LABEL = {
   [EXCLUSION_REASONS.MAIN_LOST]: '주담패배',
   [EXCLUSION_REASONS.DRAW_SUPPORT_EXCLUDED]: '주담무승부',
   [EXCLUSION_REASONS.LOSS]: '패배',
+  [EXCLUSION_REASONS.CANCELLED_NOTICE]: '취소공고',
 };
 import { normalizeApartmentName, addApartmentAlias } from './utils/apartmentMatch.js';
 
@@ -9323,7 +9324,7 @@ const SETTLEMENT_BADGE_STYLE = {
                                             {(() => {
                                               const kv = s?.kaptVerified || {};
                                               const hasCands = (kv.candidates?.list?.length || 0) > 0;
-                                              if (!hasCands || kv.status === 'verified') return null;
+                                              if (!hasCands || kv.status === 'verified' || kv.status === 'cancelled') return null;
                                               const n = kv.candidates.list.length;
                                               const picked = kv.candidates.selectedBidNum;
                                               return (
@@ -9332,6 +9333,22 @@ const SETTLEMENT_BADGE_STYLE = {
                                                 </span>
                                               );
                                             })()}
+                                            {/* 취소공고 배지 — kaptVerified.status === 'cancelled' */}
+                                            {s?.kaptVerified?.status === 'cancelled' && (
+                                              <span
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  const reason = s.kaptVerified.cancelReason || '사유 미입력';
+                                                  const confirmedAt = (s.kaptVerified.cancelledAt || '').slice(0, 16).replace('T', ' ');
+                                                  const by = s.kaptVerified.cancelledBy || '-';
+                                                  alert(`🚫 K-APT 취소공고 확인됨\n\n단지: ${card.siteName || ''}\n취소사유: ${reason}\n\n확인시각: ${confirmedAt}\n확인자: ${by}\n\n※ 이 PT 는 정산 대상에서 제외됩니다.\n※ 재공고 나오면 신규 PT 로 추가 입력해주세요.`);
+                                                }}
+                                                style={{ fontSize: '10px', fontWeight: '800', padding: '2px 10px', borderRadius: '10px', background: '#fef2f2', color: '#991b1b', border: '1.5px solid #fca5a5', letterSpacing: '0.02em', cursor: 'pointer' }}
+                                                title="K-APT 취소공고 확인됨 — 클릭시 상세"
+                                              >
+                                                🚫 취소공고
+                                              </span>
+                                            )}
                                             {currentResult && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: ss.badge, color: ss.text }}>{ss.label}</span>}
                                             {card._type === 'inProgress' && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: '#dbeafe', color: '#1d4ed8' }}>진행중</span>}
                                             {/* PT 리스크 뱃지 (진행중 PT 승률 예측 35% 미만) */}
@@ -11438,14 +11455,41 @@ tr.suppressed td.fname{color:#64748b;}
                       </div>
                     </div>
 
-                    {/* ③ 신규 — 1분기 실적 확인 패널 (확인완료 / 검증요청) */}
+                    {/* ③ 신규 — 1분기 실적 확인 패널 (확인완료 / 검증요청 / 최종확정) */}
                     {(() => {
                       const qKey = `${nowY}-Q${nowQ}`;
                       const myConfirmation = quarterConfirmations[qKey]?.[viewingUser] || {};
                       const isConfirmed = myConfirmation.confirmed === true;
+                      const finalRequested = !!myConfirmation.finalRequestedAt;
+                      const isFinalConfirmed = myConfirmation.finalConfirmed === true;
                       const reviewRequests = myConfirmation.reviewRequests || {};
                       const reviewRequestArr = Object.entries(reviewRequests).map(([k, v]) => ({ id: k, ...v }));
                       const deadlineStr = `${nowY}-${String(nowQ * 3 + 1).padStart(2, '0')}-24`; // 분기 종료 익월 24일
+
+                      const handleFinalConfirm = async () => {
+                        if (!window.confirm(`${qKey} 실적을 "최종 확정" 처리합니다.\n\n이후 김유림님에게 분기 보고서가 발송됩니다. 진행?`)) return;
+                        try {
+                          await database.ref(`quarterConfirmations/${qKey}/${viewingUser}`).update({
+                            finalConfirmed: true,
+                            finalConfirmedAt: new Date().toISOString(),
+                            finalConfirmedBy: currentUser?.name || viewingUser,
+                          });
+                          if (jandiUrl) {
+                            try {
+                              await fetch(jandiUrl, {
+                                method: 'POST', mode: 'no-cors',
+                                headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  body: `✅ ${qKey} 최종 확정 — ${viewingUser}`,
+                                  connectColor: '#7c3aed',
+                                  connectInfo: [{ title: '담당자 2라운드 최종 확정', description: `${viewingUser}님이 ${qKey} 실적을 최종 확정 처리했습니다.` }],
+                                }),
+                              });
+                            } catch {}
+                          }
+                          alert('✅ 최종 확정 완료');
+                        } catch (e) { alert('저장 실패: ' + e.message); }
+                      };
                       const handleConfirm = async () => {
                         if (!window.confirm(`${qKey} 실적을 "확인완료" 처리합니다.\n\n이후 수정이 필요하면 관리자에게 요청해야 합니다. 진행?`)) return;
                         try {
@@ -11504,8 +11548,8 @@ tr.suppressed td.fname{color:#64748b;}
                         <div style={cardStyle}>
                           <div style={{ padding: '16px 20px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>📋 {qKey} 실적 확인</span>
-                            <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 10, background: isConfirmed ? '#dcfce7' : '#fef3c7', color: isConfirmed ? '#166534' : '#92400e' }}>
-                              {isConfirmed ? '✅ 확인완료' : '⏳ 확인 대기'}
+                            <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 10, background: isFinalConfirmed ? '#ede9fe' : isConfirmed ? '#dcfce7' : '#fef3c7', color: isFinalConfirmed ? '#5b21b6' : isConfirmed ? '#166534' : '#92400e' }}>
+                              {isFinalConfirmed ? '✅ 최종확정' : finalRequested ? '📝 최종확정 대기' : isConfirmed ? '✅ 1차 확인완료' : '⏳ 확인 대기'}
                             </span>
                           </div>
                           <div style={{ padding: '0 16px 14px' }}>
@@ -11534,6 +11578,21 @@ tr.suppressed td.fname{color:#64748b;}
                                 ))}
                               </div>
                             )}
+                            {/* 2라운드 최종확정 요청 배너 */}
+                            {finalRequested && !isFinalConfirmed && (
+                              <div style={{ padding: '12px 14px', background: '#ede9fe', border: '1.5px solid #c4b5fd', borderRadius: 10, marginBottom: 10 }}>
+                                <div style={{ fontSize: 12, fontWeight: 800, color: '#5b21b6', marginBottom: 4 }}>📝 관리자가 최종 확정을 요청했습니다</div>
+                                <div style={{ fontSize: 11, color: '#6d28d9', lineHeight: 1.6 }}>
+                                  검증/수정 요청이 모두 처리되었습니다. 아래 [최종 확정] 버튼을 눌러주세요.<br />
+                                  최종 확정 후 김유림님에게 분기 보고서가 자동 발송됩니다.
+                                </div>
+                              </div>
+                            )}
+                            {isFinalConfirmed && (
+                              <div style={{ padding: '10px 12px', background: '#ede9fe', borderRadius: 8, border: '1px solid #c4b5fd', fontSize: 11, color: '#5b21b6', marginBottom: 10 }}>
+                                ✅ 최종 확정 완료: {(myConfirmation.finalConfirmedAt || '').slice(0, 16).replace('T', ' ')}
+                              </div>
+                            )}
                             <div style={{ display: 'flex', gap: 6 }}>
                               {!isConfirmed ? (
                                 <>
@@ -11545,6 +11604,17 @@ tr.suppressed td.fname{color:#64748b;}
                                     onClick={handleReviewRequest}
                                     style={{ flex: 1, padding: '10px', borderRadius: 8, border: '1px solid #d97706', background: '#fff7ed', color: '#9a3412', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                                   >⚠ 검증/수정 요청</button>
+                                </>
+                              ) : finalRequested && !isFinalConfirmed ? (
+                                <>
+                                  <button
+                                    onClick={handleFinalConfirm}
+                                    style={{ flex: 1, padding: '12px', borderRadius: 8, border: 'none', background: '#7c3aed', color: 'white', fontSize: 14, fontWeight: 800, cursor: 'pointer' }}
+                                  >📝 최종 확정</button>
+                                  <button
+                                    onClick={handleReviewRequest}
+                                    style={{ flex: '0 0 auto', padding: '12px 14px', borderRadius: 8, border: '1px solid #d97706', background: '#fff7ed', color: '#9a3412', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                                  >⚠ 추가 요청</button>
                                 </>
                               ) : (
                                 <button
@@ -13723,6 +13793,36 @@ tr.suppressed td.fname{color:#64748b;}
                           <div style={{ fontSize: '13px', fontWeight: '800', color: '#92400e', marginBottom: '6px' }}>⚠ 자동 판정 불가 — 수동 확인 필요</div>
                           <div style={{ fontSize: '12px', color: '#92400e' }}>사유: {r.reason || '알 수 없음'}</div>
                           {r.message && <div style={{ fontSize: '12px', color: '#92400e', marginTop: '4px' }}>{r.message}</div>}
+                          {/* 취소공고 수동 처리 버튼 */}
+                          <button
+                            onClick={async () => {
+                              const reason = window.prompt('K-APT 에서 공고가 "취소" 상태로 확인되었나요?\n\n취소 사유를 입력해주세요 (예: 재공고 예정 / 원자재 상승 / 기타):');
+                              if (reason === null) return;
+                              const trimmed = (reason || '').trim() || '사유 미입력';
+                              try {
+                                await database.ref(`pt/${kaptVerifyModal.scheduleId}/kaptVerified`).update({
+                                  status: 'cancelled',
+                                  cancelReason: trimmed,
+                                  cancelledAt: new Date().toISOString(),
+                                  cancelledBy: currentUser?.name || 'manual',
+                                  bidNum: kaptVerifyModal.bidNum || null,
+                                });
+                                setPtSchedules(prev => prev.map(ps => ps.id === kaptVerifyModal.scheduleId ? ({
+                                  ...ps,
+                                  kaptVerified: {
+                                    ...(ps.kaptVerified || {}),
+                                    status: 'cancelled',
+                                    cancelReason: trimmed,
+                                    cancelledAt: new Date().toISOString(),
+                                    cancelledBy: currentUser?.name || 'manual',
+                                  },
+                                }) : ps));
+                                setKaptVerifyModal(null); setKaptVerifyBidInput('');
+                                alert(`🚫 취소공고로 표시됨\n\n${kaptVerifyModal.siteName}\n사유: ${trimmed}\n\n이 PT 는 정산 대상에서 제외됩니다. 재공고 나오면 신규 PT 로 추가 입력해주세요.`);
+                              } catch (e) { alert('저장 실패: ' + e.message); }
+                            }}
+                            style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '6px', border: '1.5px solid #dc2626', background: 'white', color: '#dc2626', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                          >🚫 취소공고로 표시</button>
                         </div>
                       )}
                       {isError && (
@@ -13787,10 +13887,94 @@ tr.suppressed td.fname{color:#64748b;}
             const data = monthlySettlementData;
             const perAssignee = data?.perAssignee || {};
             const totals = data?.totals || null;
+            // 담당자 확인 상태 + reviewRequests 주입 (quarterConfirmations 에서)
+            const confByName = quarterConfirmations[monthlySettlementMonth] || {};
             const rows = Object.values(perAssignee)
               .filter(a => a.totalCount > 0)
               .filter(a => monthlySettlementStatusFilter === 'all' || a.status === monthlySettlementStatusFilter)
+              .map(a => {
+                const conf = confByName[a.assignee] || {};
+                const reviewArr = Object.entries(conf.reviewRequests || {}).map(([k, v]) => ({ id: k, ...v }));
+                const openCount = reviewArr.filter(r => r.status !== 'resolved').length;
+                return { ...a, _conf: conf, _reviewRequests: reviewArr, _openReviewCount: openCount };
+              })
               .sort((a, b) => (b.estimatedAmount || 0) - (a.estimatedAmount || 0));
+            // 검토요청 처리 (관리자)
+            const resolveReviewRequest = async (assignee, reqId) => {
+              if (!window.confirm('이 검증/수정 요청을 "처리완료" 로 표시합니다. 진행?')) return;
+              try {
+                await database.ref(`quarterConfirmations/${monthlySettlementMonth}/${assignee}/reviewRequests/${reqId}`).update({
+                  status: 'resolved',
+                  resolvedAt: new Date().toISOString(),
+                  resolvedBy: currentUser?.name || 'admin',
+                });
+                // 담당자 개인 잔디 알림
+                const hook = jandiUserWebhooks?.[assignee];
+                if (hook?.url && hook.enabled !== false) {
+                  try {
+                    await fetch(hook.url, {
+                      method: 'POST', mode: 'no-cors',
+                      headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        body: `✅ ${monthlySettlementMonth} 검증/수정 요청 처리 완료`,
+                        connectColor: '#16a34a',
+                        connectInfo: [{ title: `${assignee}님 요청 반영됨`, description: '관리자가 요청을 처리했습니다. 마이페이지에서 확인해주세요.' }],
+                      }),
+                    });
+                  } catch {}
+                }
+              } catch (e) { alert('처리 실패: ' + e.message); }
+            };
+            const toggleReviewExpand = (assignee) => {
+              setMonthlySettlementData(prev => prev ? ({ ...prev, _expandedReview: prev._expandedReview === assignee ? null : assignee }) : prev);
+            };
+            const currentExpanded = data?._expandedReview;
+            const totalOpenReviews = rows.reduce((sum, r) => sum + (r._openReviewCount || 0), 0);
+            const confirmedCount = rows.filter(r => r._conf?.confirmed === true).length;
+            const finalConfirmedCount = rows.filter(r => r._conf?.finalConfirmed === true).length;
+            const finalRequestedCount = rows.filter(r => r._conf?.finalRequestedAt).length;
+
+            // 최종확정 요청 발송 (2라운드 시작)
+            //  조건: 모든 담당자 자가확인 완료 + open reviewRequest 0건
+            const canRequestFinal = rows.length > 0 && confirmedCount === rows.length && totalOpenReviews === 0;
+            const requestFinalConfirmation = async () => {
+              if (!canRequestFinal) { alert('모든 담당자 자가확인 완료 + 검증요청 0건 상태여야 합니다.'); return; }
+              if (!window.confirm(`${rows.length}명 담당자에게 최종확정 요청을 발송합니다.\n\n이후 담당자가 "최종 확정" 누르면 김유림 발송 단계로 넘어갑니다. 진행?`)) return;
+              const now = new Date().toISOString();
+              const updates = {};
+              const notifyFailed = [];
+              for (const r of rows) {
+                updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalRequestedAt`] = now;
+                updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalRequestedBy`] = currentUser?.name || 'admin';
+              }
+              try { await database.ref().update(updates); }
+              catch (e) { alert('저장 실패: ' + e.message); return; }
+              // 잔디 발송 (담당자 개인 webhook)
+              for (const r of rows) {
+                const hook = jandiUserWebhooks?.[r.assignee];
+                if (!hook?.url || hook.enabled === false) { notifyFailed.push(r.assignee); continue; }
+                try {
+                  await fetch(hook.url, {
+                    method: 'POST', mode: 'no-cors',
+                    headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      body: `📝 [${monthlySettlementMonth} 최종확정 요청]`,
+                      connectColor: '#2563eb',
+                      connectInfo: [{
+                        title: `${r.assignee}님 — 최종 확정 부탁드립니다`,
+                        description: [
+                          `1차 확인 이후 검증요청 사항이 모두 처리되었습니다.`,
+                          `마이페이지에서 [최종 확정] 버튼 눌러주세요.`,
+                          '',
+                          `최종 확정 후 김유림님에게 분기 보고서가 발송됩니다.`,
+                        ].join('\n'),
+                      }],
+                    }),
+                  });
+                } catch { notifyFailed.push(r.assignee); }
+              }
+              alert(`✅ ${rows.length}명에게 최종확정 요청 발송 완료${notifyFailed.length ? `\n(잔디 발송 실패 ${notifyFailed.length}명: ${notifyFailed.join(', ')})` : ''}`);
+            };
             const updateRowStatus = async (assignee, newStatus) => {
               try {
                 await database.ref(`quarterlySettlements/${monthlySettlementMonth}/perAssignee/${assignee}/status`).set(newStatus);
@@ -13913,6 +14097,12 @@ tr.suppressed td.fname{color:#64748b;}
                       <button onClick={loadData} disabled={monthlySettlementLoading} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', fontSize: '12px', fontWeight: '600', color: '#475569', cursor: 'pointer' }}>새로고침</button>
                       <button onClick={triggerGenerate} disabled={monthlySettlementLoading} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2563eb', color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>지금 생성</button>
                       <button onClick={bulkConfirm} disabled={monthlySettlementLoading || rows.length === 0} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#16a34a', color: 'white', fontSize: '12px', fontWeight: '700', cursor: rows.length === 0 ? 'not-allowed' : 'pointer', opacity: rows.length === 0 ? 0.5 : 1 }}>일괄 확정</button>
+                      <button
+                        onClick={requestFinalConfirmation}
+                        disabled={monthlySettlementLoading || !canRequestFinal}
+                        title={canRequestFinal ? '담당자 최종확정 요청 발송 (2라운드)' : '모든 담당자 자가확인 완료 + 검증요청 0건 상태여야 함'}
+                        style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: canRequestFinal ? '#7c3aed' : '#cbd5e1', color: 'white', fontSize: '12px', fontWeight: '700', cursor: canRequestFinal ? 'pointer' : 'not-allowed' }}
+                      >📝 최종확정 요청 {finalConfirmedCount > 0 ? `(${finalConfirmedCount}/${rows.length})` : ''}</button>
                     </div>
                   </div>
 
@@ -13923,6 +14113,10 @@ tr.suppressed td.fname{color:#64748b;}
                       <span><b>건수:</b> {totals.totalCount}</span>
                       <span><b>예상 합계:</b> <span style={{ color: '#2563eb', fontWeight: '700' }}>{(totals.totalEstimated || 0).toLocaleString('ko-KR')}원</span></span>
                       <span><b>검토필요:</b> <span style={{ color: '#d97706' }}>{totals.totalReview}</span></span>
+                      <span><b>자가확인 완료:</b> <span style={{ color: '#16a34a', fontWeight: '700' }}>{confirmedCount} / {rows.length}</span></span>
+                      {totalOpenReviews > 0 && (
+                        <span><b>담당자 검증요청:</b> <span style={{ color: '#dc2626', fontWeight: '700' }}>{totalOpenReviews}건</span></span>
+                      )}
                       <span style={{ color: '#94a3b8' }}>생성: {(totals.generatedAt || '').slice(0, 16).replace('T', ' ')} · {totals.generatedBy}</span>
                     </div>
                   )}
@@ -13952,29 +14146,76 @@ tr.suppressed td.fname{color:#64748b;}
                           </tr>
                         </thead>
                         <tbody>
-                          {rows.map(r => (
-                            <tr key={r.assignee} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                              <td style={{ padding: '8px', fontWeight: '700', color: '#1e293b' }}>{r.assignee}</td>
-                              <td style={{ padding: '8px', textAlign: 'right' }}>{r.totalCount}</td>
-                              <td style={{ padding: '8px', textAlign: 'center', color: '#475569' }}>{r.winCount} / {r.drawCount} / {r.supportCount}</td>
-                              <td style={{ padding: '8px', textAlign: 'right', fontWeight: '700', color: '#2563eb' }}>{(r.estimatedAmount || 0).toLocaleString('ko-KR')}원</td>
-                              <td style={{ padding: '8px', textAlign: 'center', color: r.reviewCount > 0 ? '#d97706' : '#94a3b8', fontWeight: r.reviewCount > 0 ? '700' : '400' }}>{r.reviewCount}</td>
-                              <td style={{ padding: '8px', textAlign: 'center' }}>{statusBadge(r.status)}</td>
-                              <td style={{ padding: '8px', textAlign: 'center' }}>
-                                <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                                  {r.status === 'draft' && (
-                                    <button onClick={() => updateRowStatus(r.assignee, 'confirmed')} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #93c5fd', background: '#eff6ff', color: '#1e40af', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>확정</button>
-                                  )}
-                                  {r.status === 'confirmed' && (
-                                    <button onClick={() => updateRowStatus(r.assignee, 'completed')} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #86efac', background: '#dcfce7', color: '#166534', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>완료</button>
-                                  )}
-                                  {r.status === 'completed' && (
-                                    <button onClick={() => { if (confirm('완료 상태를 다시 확정으로 되돌립니다. 진행?')) updateRowStatus(r.assignee, 'confirmed'); }} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>되돌리기</button>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
+                          {rows.map(r => {
+                            const isExpanded = currentExpanded === r.assignee;
+                            const conf = r._conf || {};
+                            const selfConfirmed = conf.confirmed === true;
+                            return (
+                              <React.Fragment key={r.assignee}>
+                                <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                  <td style={{ padding: '8px', fontWeight: '700', color: '#1e293b' }}>
+                                    {r.assignee}
+                                    {selfConfirmed && <span style={{ marginLeft: 4, fontSize: 10, color: '#16a34a' }} title={`자가확인 완료 ${(conf.confirmedAt || '').slice(0, 10)}`}>✓</span>}
+                                  </td>
+                                  <td style={{ padding: '8px', textAlign: 'right' }}>{r.totalCount}</td>
+                                  <td style={{ padding: '8px', textAlign: 'center', color: '#475569' }}>{r.winCount} / {r.drawCount} / {r.supportCount}{r.supervisionCount ? ` / 감리${r.supervisionCount}` : ''}</td>
+                                  <td style={{ padding: '8px', textAlign: 'right', fontWeight: '700', color: '#2563eb' }}>{(r.estimatedAmount || 0).toLocaleString('ko-KR')}원</td>
+                                  <td style={{ padding: '8px', textAlign: 'center', color: r.reviewCount > 0 ? '#d97706' : '#94a3b8', fontWeight: r.reviewCount > 0 ? '700' : '400' }}>{r.reviewCount}</td>
+                                  <td style={{ padding: '8px', textAlign: 'center' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center' }}>
+                                      {statusBadge(r.status)}
+                                      {r._openReviewCount > 0 && (
+                                        <button onClick={() => toggleReviewExpand(r.assignee)} style={{ padding: '2px 7px', borderRadius: 8, border: '1px solid #fecaca', background: isExpanded ? '#fee2e2' : '#fef2f2', color: '#991b1b', fontSize: 10, fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }} title="담당자 검증/수정 요청 — 클릭시 상세">
+                                          ⚠ 검증요청 {r._openReviewCount}건 {isExpanded ? '▲' : '▼'}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td style={{ padding: '8px', textAlign: 'center' }}>
+                                    <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                                      {r.status === 'draft' && (
+                                        <button onClick={() => updateRowStatus(r.assignee, 'confirmed')} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #93c5fd', background: '#eff6ff', color: '#1e40af', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>확정</button>
+                                      )}
+                                      {r.status === 'confirmed' && (
+                                        <button onClick={() => updateRowStatus(r.assignee, 'completed')} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #86efac', background: '#dcfce7', color: '#166534', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>완료</button>
+                                      )}
+                                      {r.status === 'completed' && (
+                                        <button onClick={() => { if (confirm('완료 상태를 다시 확정으로 되돌립니다. 진행?')) updateRowStatus(r.assignee, 'confirmed'); }} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>되돌리기</button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                                {isExpanded && r._reviewRequests.length > 0 && (
+                                  <tr style={{ background: '#fef9f9' }}>
+                                    <td colSpan={7} style={{ padding: '10px 14px' }}>
+                                      <div style={{ fontSize: 11, fontWeight: 700, color: '#991b1b', marginBottom: 6 }}>📋 {r.assignee} 검증/수정 요청 ({r._reviewRequests.length}건)</div>
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                        {r._reviewRequests.map(req => (
+                                          <div key={req.id} style={{ padding: '8px 10px', background: 'white', borderRadius: 6, border: `1px solid ${req.status === 'resolved' ? '#a7f3d0' : '#fecaca'}`, fontSize: 12, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                                            <div style={{ flex: 1 }}>
+                                              <div style={{ fontWeight: 700, color: req.status === 'resolved' ? '#047857' : '#991b1b', marginBottom: 2 }}>
+                                                [{req.status === 'resolved' ? '처리완료' : '확인 필요'}] {req.text}
+                                              </div>
+                                              <div style={{ fontSize: 10, color: '#94a3b8' }}>
+                                                요청: {req.requestedBy} · {(req.requestedAt || '').slice(0, 16).replace('T', ' ')}
+                                                {req.resolvedAt && ` · 처리: ${req.resolvedBy} · ${(req.resolvedAt || '').slice(0, 16).replace('T', ' ')}`}
+                                              </div>
+                                            </div>
+                                            {req.status !== 'resolved' && (
+                                              <button
+                                                onClick={() => resolveReviewRequest(r.assignee, req.id)}
+                                                style={{ padding: '4px 10px', borderRadius: 4, border: 'none', background: '#16a34a', color: 'white', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                              >처리완료</button>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
