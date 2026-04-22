@@ -481,6 +481,18 @@ app.post('/verify', requireAuth, async (req, res) => {
     // 타사 언급 + 우리 특허 전체 리스트 수집 (검증완료 여부 무관)
     const competitor = findCompetitorInText(combinedText);
     const ourPatents = findAllOurPatentsInText(combinedText);
+    // verdictEngine 판정 (3단계 신호 점수제 — 오탐 방지)
+    const verdict = verdictAnalyze(combinedText);
+    // 매칭 키워드 snapshot (Firebase 저장용)
+    const verdictSnapshot = {
+      verdict: verdict.verdict,
+      reason: verdict.reason,
+      ourScore: verdict.ourScore,
+      competitorScore: verdict.competitorScore,
+      ourKeywords: verdict.ourMatches.filter(m => m.weight > 0).map(m => `${m.label}(${m.weight})`),
+      competitorKeywords: verdict.competitorMatches.map(m => m.label),
+      ignoredCombos: verdict.ourMatches.filter(m => m.type === 'combo_alone').map(m => m.label),
+    };
 
     if (matched) {
       return res.json({
@@ -499,6 +511,7 @@ app.post('/verify', requireAuth, async (req, res) => {
         kg2bInfo,
         source: kg2bFollowed ? 'kapt_with_kg2b_follow' : 'kapt_bid_detail',
         durationMs: duration,
+        verdict: verdictSnapshot,  // 3단계 점수제 상세 (snapshot)
         message: matched.type === 'patent'
           ? `공고에서 우리 특허 [${matched.value}] 확인됨${kg2bFollowed ? ' (kg2b 공고서 경유)' : ''}`
           : `공고에서 우리 공법 [${matched.value}] 확인됨${kg2bFollowed ? ' (kg2b 공고서 경유)' : ''}`,
@@ -515,6 +528,7 @@ app.post('/verify', requireAuth, async (req, res) => {
       kg2bFollowed,
       kg2bInfo,
       durationMs: duration,
+      verdict: verdictSnapshot,  // 판정 실패 시에도 점수 정보 반환
       pageTextPreview: pageText.slice(0, 500),
     });
   } catch (e) {
@@ -2463,6 +2477,108 @@ function containsTechnology(text, tech) {
   return re.test(text);
 }
 
+// ========== verdictEngine (3단계 신호 체계 + 점수제) ==========
+// src/utils/verdictEngine.js 와 동기화된 인라인 복제본.
+// "기술사용 협약" 같은 일반 표현 단독 매칭 오탐 방지 핵심.
+const VERDICT_OUR_STRONG = [
+  { re: /POUR\s*공법/ig, label: 'POUR공법', w: 10 },
+  { re: /포어\s*공법/g, label: '포어공법', w: 10 },
+  { re: /POUR\s*솔루션/ig, label: 'POUR솔루션', w: 10 },
+  { re: /POUR\s*시스템/ig, label: 'POUR시스템', w: 10 },
+  { re: /CNC\s*공법/ig, label: 'CNC공법', w: 10 },
+  { re: /DO\s*공법/ig, label: 'DO공법', w: 10 },
+  { re: /DETEX\s*공법/ig, label: 'DETEX공법', w: 10 },
+  { re: /DETEX\s*시스템/ig, label: 'DETEX시스템', w: 10 },
+  { re: /시멘트\s*분말/g, label: '시멘트분말공법', w: 10 },
+];
+const VERDICT_OUR_COMBO = [
+  { re: /기술사용\s*협약/g, label: '기술사용 협약', w: 8 },
+  { re: /기술\s*협약\s*(서|체결)/g, label: '기술 협약서/체결', w: 8 },
+  { re: /협약서\s*발행/g, label: '협약서 발행', w: 8 },
+  { re: /기술사용\s*승인/g, label: '기술사용 승인', w: 8 },
+  { re: /기술사용\s*확인서?/g, label: '기술사용 확인서', w: 8 },
+];
+const VERDICT_OUR_WEAK = [
+  { re: /넷폼/g, label: '넷폼(브랜드)', w: 3 },
+  { re: /(주)\s*넷폼/g, label: '(주)넷폼', w: 3 },
+];
+const VERDICT_COMPETITOR_STRONG = [
+  { re: /우레탄\s*(방수|공법|복합|도막)/g, label: '우레탄 공법', w: 10 },
+  { re: /실리콘\s*(방수|공법)/g, label: '실리콘 방수', w: 10 },
+  { re: /아스팔트\s*(방수|공법|재포장)/g, label: '아스팔트 공법', w: 10 },
+  { re: /에폭시\s*(방수|공법|도막)/g, label: '에폭시 공법', w: 10 },
+  { re: /FRP\s*방수/ig, label: 'FRP 방수', w: 10 },
+  { re: /시트\s*방수/g, label: '시트 방수', w: 10 },
+  { re: /복합\s*시트\s*방수/g, label: '복합시트 방수', w: 10 },
+  { re: /노출\s*우레탄/g, label: '노출 우레탄', w: 10 },
+];
+function verdictScoreText(rawText) {
+  const text = String(rawText || '').replace(/\s+/g, ' ');
+  const our = { score: 0, matches: [] };
+  const comp = { score: 0, matches: [] };
+  if (!text) return { our, competitor: comp };
+
+  const strongPositions = [];
+  for (const p of VERDICT_OUR_STRONG) {
+    for (const m of text.matchAll(p.re)) {
+      strongPositions.push(m.index);
+      our.score += p.w;
+      our.matches.push({ type: 'strong', label: p.label, value: m[0], weight: p.w, pos: m.index });
+    }
+  }
+  for (const m of text.matchAll(/10-\d{7}/g)) {
+    if (OUR_PATENT_NUMBERS.has(m[0])) {
+      strongPositions.push(m.index);
+      our.score += 10;
+      our.matches.push({ type: 'strong', label: `특허 ${m[0]}`, value: m[0], weight: 10, pos: m.index });
+    }
+  }
+  for (const p of VERDICT_OUR_COMBO) {
+    for (const m of text.matchAll(p.re)) {
+      const near = strongPositions.some(sp => Math.abs(sp - m.index) <= 200);
+      if (near) {
+        our.score += p.w;
+        our.matches.push({ type: 'combo', label: p.label, value: m[0], weight: p.w, pos: m.index });
+      } else {
+        our.matches.push({ type: 'combo_alone', label: p.label, value: m[0], weight: 0, pos: m.index, note: 'STRONG 없음 — 무효' });
+      }
+    }
+  }
+  for (const p of VERDICT_OUR_WEAK) {
+    for (const m of text.matchAll(p.re)) {
+      our.score += p.w;
+      our.matches.push({ type: 'weak', label: p.label, value: m[0], weight: p.w, pos: m.index });
+    }
+  }
+  for (const p of VERDICT_COMPETITOR_STRONG) {
+    for (const m of text.matchAll(p.re)) {
+      comp.score += p.w;
+      comp.matches.push({ type: 'strong', label: p.label, value: m[0], weight: p.w, pos: m.index });
+    }
+  }
+  for (const m of text.matchAll(/10-\d{7}/g)) {
+    if (!OUR_PATENT_NUMBERS.has(m[0])) {
+      comp.score += 10;
+      comp.matches.push({ type: 'strong', label: `타사 특허 ${m[0]}`, value: m[0], weight: 10, pos: m.index });
+    }
+  }
+  return { our, competitor: comp };
+}
+function verdictJudge(scoreResult, opts = {}) {
+  const { our, competitor } = scoreResult;
+  const hasText = opts.hasText !== false;
+  if (!hasText) return { verdict: 'needs_review', reason: 'text_unavailable', ourScore: our.score, competitorScore: competitor.score, ourMatches: our.matches, competitorMatches: competitor.matches };
+  if (our.score >= 10 && competitor.score === 0) return { verdict: 'win', reason: 'our_strong_no_competitor', ourScore: our.score, competitorScore: competitor.score, ourMatches: our.matches, competitorMatches: competitor.matches };
+  if (our.score >= 10 && competitor.score >= 10) return { verdict: 'draw', reason: 'both_strong', ourScore: our.score, competitorScore: competitor.score, ourMatches: our.matches, competitorMatches: competitor.matches };
+  if (our.score === 0 && competitor.score >= 10) return { verdict: 'loss', reason: 'competitor_only', ourScore: our.score, competitorScore: competitor.score, ourMatches: our.matches, competitorMatches: competitor.matches };
+  return { verdict: 'needs_review', reason: our.score === 0 && competitor.score === 0 ? 'no_signal' : 'weak_or_mixed', ourScore: our.score, competitorScore: competitor.score, ourMatches: our.matches, competitorMatches: competitor.matches };
+}
+function verdictAnalyze(text) {
+  const hasText = !!(text && text.length > 100);
+  const scoreResult = verdictScoreText(text);
+  return verdictJudge(scoreResult, { hasText });
+}
+
 // === 단지명 정규화 + 유사도 계산 ===
 function normalizeAptName(s) {
   return String(s || '')
@@ -2882,6 +2998,7 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
 
         const pageText = await page.evaluate(() => document.body?.innerText || '');
         const matched = findOurInText(pageText);
+        const verdictRank = verdictAnalyze(pageText);
         attempts.push({
           rank: rank + 1,
           bidNum: bid.bidNum,
@@ -2893,9 +3010,10 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
           totalScore: Number(bid._totalScore.toFixed(3)),
           pageTextLength: pageText.length,
           matched,
+          verdictRank: { verdict: verdictRank.verdict, ourScore: verdictRank.ourScore, competitorScore: verdictRank.competitorScore },
         });
         if (matched) {
-          firstMatch = { rank: rank + 1, bid, matched };
+          firstMatch = { rank: rank + 1, bid, matched, pageText };
           await context.close();
           break;
         }
@@ -2907,6 +3025,16 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
     }
 
     if (firstMatch) {
+      const verdictFinal = verdictAnalyze(firstMatch.pageText || '');
+      const verdictSnap = {
+        verdict: verdictFinal.verdict,
+        reason: verdictFinal.reason,
+        ourScore: verdictFinal.ourScore,
+        competitorScore: verdictFinal.competitorScore,
+        ourKeywords: verdictFinal.ourMatches.filter(m => m.weight > 0).map(m => `${m.label}(${m.weight})`),
+        competitorKeywords: verdictFinal.competitorMatches.map(m => m.label),
+        ignoredCombos: verdictFinal.ourMatches.filter(m => m.type === 'combo_alone').map(m => m.label),
+      };
       return res.json({
         status: 'verified',
         isOurAnnouncement: true,
@@ -2918,6 +3046,7 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
         bidKaptname: firstMatch.bid.bidKaptname,
         source: kaptFallbackUsed ? 'kapt_direct_search' : 'siteName_ranked_search',
         rankedAttempts: attempts,
+        verdict: verdictSnap,
         durationMs: Date.now() - startedAt,
         message: firstMatch.matched.type === 'patent'
           ? `[${firstMatch.rank}순위 "${firstMatch.bid.bidKaptname}"] 공고에서 우리 특허 [${firstMatch.matched.value}] 확인됨`

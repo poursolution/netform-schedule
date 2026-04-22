@@ -179,6 +179,8 @@ async function verifyViaVps(env, args) {
       const foundBidNum = result.bidNum || result.matchedBid?.bidNum || bidNum;
       const matchedTech = result.matchedValue || null;
       const matchedBy = result.matchedBy || 'technology';
+      // verdictEngine snapshot (VPS 에서 전달됨 — 3단계 신호 점수제 결과)
+      const v = result.verdict || null;
       const update = {
         bidNo: foundBidNum,
         announcementMethods: matchedTech,
@@ -196,6 +198,14 @@ async function verifyViaVps(env, args) {
           verifiedAt: new Date().toISOString(),
           verifiedBy: 'auto-kapt-worker',
           source: result.source || 'vps',
+          // verdictEngine 증빙 snapshot (분쟁 방지 / 사후 감사용)
+          verdict: v ? v.verdict : null,
+          verdictReason: v ? v.reason : null,
+          ourScore: v ? v.ourScore : null,
+          competitorScore: v ? v.competitorScore : null,
+          ourKeywords: v ? (v.ourKeywords || []) : [],
+          competitorKeywords: v ? (v.competitorKeywords || []) : [],
+          ignoredCombos: v ? (v.ignoredCombos || []) : [],
         },
       };
       const url = `${env.FIREBASE_DB_URL}/pt/${args.scheduleId}.json?auth=${env.FIREBASE_DB_SECRET}`;
@@ -215,6 +225,7 @@ async function verifyViaVps(env, args) {
   if (result.status === 'needs_review') {
     if (args.scheduleId && env.FIREBASE_DB_URL && env.FIREBASE_DB_SECRET) {
       try {
+        const v = result.verdict || null;
         const url = `${env.FIREBASE_DB_URL}/pt/${args.scheduleId}/kaptVerified.json?auth=${env.FIREBASE_DB_SECRET}`;
         await fetch(url, {
           method: 'PUT',
@@ -224,6 +235,13 @@ async function verifyViaVps(env, args) {
             reason: result.reason || 'unknown',
             verifiedAt: new Date().toISOString(),
             verifiedBy: 'auto-kapt-worker',
+            // needs_review 여도 verdictEngine 점수/키워드는 저장 (진단용)
+            verdict: v ? v.verdict : null,
+            ourScore: v ? v.ourScore : null,
+            competitorScore: v ? v.competitorScore : null,
+            ourKeywords: v ? (v.ourKeywords || []) : [],
+            competitorKeywords: v ? (v.competitorKeywords || []) : [],
+            ignoredCombos: v ? (v.ignoredCombos || []) : [],
           }),
         });
       } catch (e) { console.warn('[verify] Firebase needs_review mark failed'); }

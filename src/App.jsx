@@ -13092,6 +13092,13 @@ tr.suppressed td.fname{color:#64748b;}
                             <div>• 매칭 기준: <b>{matchedBy === 'technology' ? `공법명 [${matchedValue}]` : matchedBy === 'patent' ? `특허번호 [${matchedValue}]` : matchedBy === 'patent_name' ? `특허명 일치` : matchedBy}</b></div>
                             {(r.ourPatents?.length || 0) > 0 && <div>• 확인된 우리 특허: {r.ourPatents.slice(0, 5).join(', ')}{r.ourPatents.length > 5 ? ` 외 ${r.ourPatents.length - 5}건` : ''}</div>}
                             {hasCompetitor && <div>• 타사 감지: {[...(r.competitorTechs || []), ...(r.competitorPatents || [])].slice(0, 5).join(', ')}</div>}
+                            {r.verdict && (
+                              <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed rgba(0,0,0,0.1)', fontSize: '11px', color: '#475569' }}>
+                                <div>🎯 점수: 우리 <b>{r.verdict.ourScore}</b> · 타사 <b>{r.verdict.competitorScore}</b> · 판정 <b>{r.verdict.verdict}</b></div>
+                                {(r.verdict.ourKeywords || []).length > 0 && <div style={{ marginTop: '2px' }}>• 우리 매칭: {r.verdict.ourKeywords.slice(0, 6).join(' / ')}</div>}
+                                {(r.verdict.ignoredCombos || []).length > 0 && <div style={{ marginTop: '2px', color: '#94a3b8' }}>• 단독이라 무시된 표현: {r.verdict.ignoredCombos.join(', ')}</div>}
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}
