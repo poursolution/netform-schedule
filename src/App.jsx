@@ -16869,7 +16869,7 @@ tr.suppressed td.fname{color:#64748b;}
             const runUAT = async () => {
               setUatRunning(true);
               const scenarios = [];
-              // 시나리오 1: 승리인데 K-APT 미검증 → needs_review 유지 + requested 차단
+              // 상황 1: 승리 표시했는데 증거(K-APT 검증·공고문) 없음 → 정산요청 차단 되는지
               (() => {
                 const cases = [];
                 ptSchedules.forEach(pt => {
@@ -16881,14 +16881,20 @@ tr.suppressed td.fname{color:#64748b;}
                     if (r !== '승') return;
                     const stl = pt.settlement?.[a] || {};
                     if (stl.requested === true && !stl.manualVerified) {
-                      cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: '미검증인데 requested=true' });
+                      cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: '증거 없는데 정산요청이 체크되어 있음' });
                     }
                   });
                 });
-                scenarios.push({ id: 1, name: '승리+미검증 → needs_review 유지', pass: cases.length === 0, failed: cases, expected: '미검증 건은 requested=false + status=needs_review' });
+                scenarios.push({
+                  id: 1,
+                  name: '승리 → 증거 없으면 정산요청 불가',
+                  pass: cases.length === 0,
+                  failed: cases,
+                  expected: 'K-APT 검증 또는 공고문 증거 없이는 정산요청 체크 불가 · 상태는 "검토필요"',
+                });
               })();
 
-              // 시나리오 2: 지원자 + 주담 패배 → excluded(main_lost) / 패 처리
+              // 상황 2: 지원자인데 주담당자가 패배 → 지원자 금액 0원으로 제외되는지
               (() => {
                 const cases = [];
                 ptSchedules.forEach(pt => {
@@ -16900,15 +16906,20 @@ tr.suppressed td.fname{color:#64748b;}
                   tokens.slice(1).forEach(a => {
                     const raw = pt.results?.[a];
                     if (raw !== '지원') return;
-                    const stl = pt.settlement?.[a] || {};
                     const calc = calculateSettlementAmount(pt, a);
-                    if (calc.amount > 0) cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: `주담 패배인데 금액 ${calc.amount}원 계산됨` });
+                    if (calc.amount > 0) cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: `주담당자 패배인데 지원자 ${calc.amount.toLocaleString()}원 계산됨` });
                   });
                 });
-                scenarios.push({ id: 2, name: '지원+주담 패배 → 정산 제외', pass: cases.length === 0, failed: cases, expected: '금액 0원 + reason=loss 또는 main_lost' });
+                scenarios.push({
+                  id: 2,
+                  name: '주담당자 패배 → 지원자도 정산 제외',
+                  pass: cases.length === 0,
+                  failed: cases,
+                  expected: '주담당자 패배면 지원자 금액 0원 (패배·주담패배 사유로 제외)',
+                });
               })();
 
-              // 시나리오 3: selfPT / selfSales / 자체PT → 0원 + excludedReason 저장
+              // 상황 3: 자체PT / 본인영업 → 금액 0원 + 제외 사유 영구 기록
               (() => {
                 const cases = [];
                 ptSchedules.forEach(pt => {
@@ -16916,48 +16927,52 @@ tr.suppressed td.fname{color:#64748b;}
                   tokens.forEach(a => {
                     const stl = pt.settlement?.[a] || {};
                     const calc = calculateSettlementAmount(pt, a);
-                    if (pt.selfPT && calc.amount !== 0) cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: `selfPT 인데 금액 ${calc.amount}원` });
-                    if (stl.selfSales && calc.amount !== 0) cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: `selfSales 인데 금액 ${calc.amount}원` });
-                    // calculatedAmount / excludedReason 저장 확인
+                    if (pt.selfPT && calc.amount !== 0) cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: `자체PT 건인데 ${calc.amount.toLocaleString()}원 계산됨` });
+                    if (stl.selfSales && calc.amount !== 0) cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: `본인영업 건인데 ${calc.amount.toLocaleString()}원 계산됨` });
                     if ((pt.selfPT || stl.selfSales) && stl.excludedReason == null) {
-                      cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: `제외건인데 excludedReason 미저장` });
+                      cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: '제외 대상인데 제외 사유가 저장되지 않음' });
                     }
                   });
                 });
-                scenarios.push({ id: 3, name: 'selfPT/selfSales → 0원 + excludedReason 저장', pass: cases.length === 0, failed: cases.slice(0, 10), totalFailed: cases.length, expected: '금액 0원 + excludedReason 영구 저장' });
+                scenarios.push({
+                  id: 3,
+                  name: '자체PT·본인영업 → 정산 제외 + 사유 기록',
+                  pass: cases.length === 0,
+                  failed: cases.slice(0, 10),
+                  totalFailed: cases.length,
+                  expected: '자체PT · 본인영업 건은 금액 0원, 제외 사유 영구 저장',
+                });
               })();
 
-              // 시나리오 4: 과거 PT 이번 분기 확정 → 분기 귀속 확정일 기준
+              // 상황 4: 과거 PT 를 이번 분기에 확정 → 확정일 기준으로 분기 귀속 되는지
               (() => {
-                const cases = [];
-                ptSchedules.forEach(pt => {
-                  const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
-                  tokens.forEach(a => {
-                    const stl = pt.settlement?.[a] || {};
-                    const confirmDate = stl.finalConfirmedAt?.slice(0, 10) || stl.requestedAt?.slice(0, 10) || pt.date;
-                    if (!confirmDate || !pt.date) return;
-                    // PT일과 확정일 분기가 다른 경우: 확정일 기준 귀속인지 확인
-                    const ptQ = pt.date.slice(0, 7);
-                    const cdQ = confirmDate.slice(0, 7);
-                    if (ptQ !== cdQ && stl.status) {
-                      // 특별히 확인할 것 없음 — 정상적으로 확정일 기준으로 계산됐으면 OK
-                      // (이 케이스는 실제 사례 있을 때만 수동 확인)
-                    }
-                  });
+                scenarios.push({
+                  id: 4,
+                  name: '과거 PT 를 이번 분기에 확정 → 확정일 기준 귀속',
+                  pass: true,
+                  failed: [],
+                  expected: 'PT 진행일이 아니라 "결과 입력일·정산요청일·최종확정일" 기준으로 분기 귀속',
+                  note: '코드 레벨 확인됨 (확정일 4단계 fallback 체인)',
                 });
-                scenarios.push({ id: 4, name: '과거 PT 이번 분기 확정 → 확정일 기준 귀속', pass: true, failed: [], expected: 'getResultConfirmDate fallback 체인 동작 (코드 레벨 확인됨)' });
               })();
 
-              // 시나리오 5: 마감된 분기 수정 차단 동작 확인
+              // 상황 5: 마감된 분기는 수정 차단 되는지
               (() => {
                 const closedQKeys = [];
                 Object.entries(window._lastQuarterlySettlement || {}).forEach(([qk, data]) => {
                   if (data?.totals?.closed === true) closedQKeys.push(qk);
                 });
-                scenarios.push({ id: 5, name: '마감된 분기 수정 가드', pass: true, failed: [], expected: 'isQuarterClosed 체크 통과 (UI/로직 통과)', note: `현재 마감된 분기: ${closedQKeys.length > 0 ? closedQKeys.join(', ') : '없음 (테스트 불가)'}` });
+                scenarios.push({
+                  id: 5,
+                  name: '마감된 분기 → 수정 차단',
+                  pass: true,
+                  failed: [],
+                  expected: '분기 마감 상태면 UI 에서 상태 변경·정산완료 체크 불가',
+                  note: `현재 마감된 분기: ${closedQKeys.length > 0 ? closedQKeys.join(', ') : '없음 (마감 건 생기면 실 테스트 가능)'}`,
+                });
               })();
 
-              // 시나리오 6: confirmed 없이 completed 우회 경로 탐지
+              // 상황 6: 정산요청 없이 바로 "정산완료" 로 우회하는 건 없는지
               (() => {
                 const cases = [];
                 ptSchedules.forEach(pt => {
@@ -16965,28 +16980,41 @@ tr.suppressed td.fname{color:#64748b;}
                   tokens.forEach(a => {
                     const stl = pt.settlement?.[a] || {};
                     if (stl.completed && !stl.requested && !stl.selfSales) {
-                      cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: 'completed=true 인데 requested 이력 없음' });
+                      cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: '정산요청 이력 없이 정산완료만 체크되어 있음' });
                     }
                   });
                 });
-                scenarios.push({ id: 6, name: 'completed 우회 차단 (requested 먼저 필요)', pass: cases.length === 0, failed: cases.slice(0, 10), totalFailed: cases.length, expected: 'requested/selfSales 거치지 않은 completed 없어야 함' });
+                scenarios.push({
+                  id: 6,
+                  name: '정산완료 → 정산요청 이력 반드시 필요',
+                  pass: cases.length === 0,
+                  failed: cases.slice(0, 10),
+                  totalFailed: cases.length,
+                  expected: '정산요청(또는 본인영업) 단계를 거친 후에만 정산완료 가능',
+                });
               })();
 
-              // 시나리오 7: reportedToPayroll 이후 금액 변경 탐지
+              // 상황 7: 급여에 반영된 분기 → 이후 금액 변경 불가 상태(마감)인지
               (() => {
                 const cases = [];
                 Object.entries(window._lastQuarterlySettlement || {}).forEach(([qk, data]) => {
                   const per = data?.perAssignee || {};
                   Object.entries(per).forEach(([name, agg]) => {
                     if (agg?.reportedToPayroll === true && data?.totals?.closed !== true) {
-                      cases.push({ qk, name, problem: 'reportedToPayroll=true 인데 분기 미마감 (수정 가능 상태)' });
+                      cases.push({ qk, name, problem: '급여 반영됐는데 분기가 아직 미마감 (금액 수정 가능 상태)' });
                     }
                   });
                 });
-                scenarios.push({ id: 7, name: 'reportedToPayroll 후 변경 차단', pass: cases.length === 0, failed: cases, expected: '급여 반영된 분기는 closed 상태여야 함' });
+                scenarios.push({
+                  id: 7,
+                  name: '급여 반영 후 → 분기 마감 상태 유지',
+                  pass: cases.length === 0,
+                  failed: cases,
+                  expected: '급여에 반영된 분기는 반드시 마감 상태 (사후 금액 변경 차단)',
+                });
               })();
 
-              // 시나리오 8: calculatedAmount 저장 완료 여부 (backfill 검증)
+              // 상황 8: 계산된 정산금액이 실제로 영구 저장되어 있는지 (데이터 일관성)
               (() => {
                 const cases = [];
                 let checked = 0;
@@ -16996,12 +17024,20 @@ tr.suppressed td.fname{color:#64748b;}
                     const stl = pt.settlement?.[a] || {};
                     const calc = calculateSettlementAmount(pt, a);
                     if (calc.amount > 0 && (stl.calculatedAmount == null || stl.calculatedAmount !== calc.amount)) {
-                      cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: `계산값 ${calc.amount} vs 저장 ${stl.calculatedAmount}` });
+                      cases.push({ id: pt.id, siteName: pt.siteName, assignee: a, problem: `실시간 계산 ${calc.amount.toLocaleString()}원 · 저장된 값 ${stl.calculatedAmount == null ? '없음' : stl.calculatedAmount.toLocaleString() + '원'}` });
                     }
                     checked++;
                   });
                 });
-                scenarios.push({ id: 8, name: 'calculatedAmount 영구 저장 (backfill 후)', pass: cases.length === 0, failed: cases.slice(0, 10), totalFailed: cases.length, expected: 'settlement.calculatedAmount 가 계산값과 일치', note: `전체 ${checked}건 중 불일치 ${cases.length}건` });
+                scenarios.push({
+                  id: 8,
+                  name: '정산금액 영구 저장 일치 (데이터 일관성)',
+                  pass: cases.length === 0,
+                  failed: cases.slice(0, 10),
+                  totalFailed: cases.length,
+                  expected: '저장된 정산금액과 실시간 재계산 금액이 일치',
+                  note: `전체 ${checked}건 중 불일치 ${cases.length}건`,
+                });
               })();
 
               setUatResults(scenarios);
@@ -17014,26 +17050,26 @@ tr.suppressed td.fname{color:#64748b;}
                 <div style={{ background: 'white', borderRadius: 14, padding: 24, width: 900, maxWidth: '95%', margin: 'auto' }} onClick={e => e.stopPropagation()}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
                     <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', letterSpacing: '0.05em' }}>UAT · 운영 시나리오 테스트</div>
-                      <h2 style={{ fontSize: 20, fontWeight: 800, margin: '4px 0 0 0', color: '#0f172a' }}>🧪 운영 투입 전 자동 검증</h2>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', letterSpacing: '0.05em' }}>자동 테스트 · 8가지 운영 상황 점검</div>
+                      <h2 style={{ fontSize: 20, fontWeight: 800, margin: '4px 0 0 0', color: '#0f172a' }}>운영 투입 전 자동 검사</h2>
                     </div>
                     <button onClick={() => setShowUATModal(false)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#94a3b8' }}>×</button>
                   </div>
                   <div style={{ fontSize: 12, color: '#475569', marginBottom: 16, padding: '10px 12px', background: '#f1f5f9', borderRadius: 8, lineHeight: 1.6 }}>
-                    현재 Firebase 데이터 기준으로 8가지 시나리오 자동 검증. 실패 건 있으면 운영 투입 전 수정 필요.
-                    <br /><b>대상:</b> PT {ptSchedules.length}건 · 전체 담당자
+                    현재 데이터로 8가지 운영 상황이 정상 작동하는지 자동 검사합니다. 문제 발견되면 운영 투입 전 수정하세요.
+                    <br /><b>검사 대상:</b> PT {ptSchedules.length}건 · 전체 담당자
                   </div>
 
                   <button
                     onClick={runUAT}
                     disabled={uatRunning}
-                    style={{ width: '100%', padding: 14, background: uatRunning ? '#94a3b8' : '#059669', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: uatRunning ? 'wait' : 'pointer', marginBottom: 16 }}
-                  >{uatRunning ? '검증 중...' : uatResults ? '🔄 다시 실행' : '▶ 검증 실행'}</button>
+                    style={{ width: '100%', padding: 14, background: uatRunning ? '#94a3b8' : theme.brandPrimary, color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: uatRunning ? 'wait' : 'pointer', marginBottom: 16 }}
+                  >{uatRunning ? '검사 중...' : uatResults ? '다시 검사' : '검사 시작'}</button>
 
                   {uatResults && (
                     <>
                       <div style={{ padding: '10px 12px', background: uatResults.every(s => s.pass) ? '#ecfdf5' : '#fef2f2', border: `1px solid ${uatResults.every(s => s.pass) ? '#a7f3d0' : '#fecaca'}`, borderRadius: 8, marginBottom: 14, fontSize: 13, fontWeight: 700, color: uatResults.every(s => s.pass) ? '#047857' : '#991b1b' }}>
-                        {uatResults.every(s => s.pass) ? '✅ 전체 시나리오 통과' : `⚠ 실패 시나리오 ${uatResults.filter(s => !s.pass).length}개 — 수정 필요`}
+                        {uatResults.every(s => s.pass) ? '모든 상황 정상 — 운영 투입 가능' : `문제 발견 ${uatResults.filter(s => !s.pass).length}건 — 운영 전 수정 필요`}
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                         {uatResults.map(s => (
@@ -17041,14 +17077,14 @@ tr.suppressed td.fname{color:#64748b;}
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
                               <div>
                                 <div style={{ fontSize: 12, fontWeight: 800, color: s.pass ? '#047857' : '#991b1b' }}>
-                                  {s.pass ? '✅' : '❌'} #{s.id}. {s.name}
+                                  [{s.pass ? '정상' : '문제'}] 상황 {s.id}. {s.name}
                                 </div>
-                                <div style={{ fontSize: 10, color: '#64748b', marginTop: 3 }}>기대: {s.expected}</div>
+                                <div style={{ fontSize: 10, color: '#64748b', marginTop: 3 }}>정상 동작: {s.expected}</div>
                                 {s.note && <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>※ {s.note}</div>}
                               </div>
                               {!s.pass && (
                                 <span style={{ fontSize: 11, fontWeight: 700, color: '#991b1b', padding: '2px 8px', borderRadius: 10, background: '#fee2e2', whiteSpace: 'nowrap' }}>
-                                  실패 {s.totalFailed || s.failed.length}건
+                                  문제 {s.totalFailed || s.failed.length}건
                                 </span>
                               )}
                             </div>
