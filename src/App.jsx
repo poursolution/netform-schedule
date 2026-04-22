@@ -205,6 +205,17 @@ const SETTLEMENT_BADGE_STYLE = {
         return () => window.removeEventListener('resize', handleResize);
       }, []);
 
+      // Bottom Nav 공간 확보 — 모바일 로그인 상태에서만 body padding 적용
+      useEffect(() => {
+        const nav = document.getElementById('mobile-bottom-nav-spacer');
+        if (isMobile) {
+          document.body.style.paddingBottom = '68px';
+        } else {
+          document.body.style.paddingBottom = '';
+        }
+        return () => { document.body.style.paddingBottom = ''; };
+      }, [isMobile]);
+
       // 브라우저 타이틀 동적 설정
       const updatePageTitle = (subPage) => {
         document.title = subPage ? `${APP_NAME} | ${subPage}` : APP_NAME;
@@ -9282,6 +9293,21 @@ const SETTLEMENT_BADGE_STYLE = {
                                     : ss.border;
                                   const cardOpacity = (isSettled || isSuperseded) ? 0.6 : 1;
 
+                                  // 지원자 대기 배지 — 주담 결과 없는데 지원자가 '지원' 선택한 상태
+                                  //   의미: 지원자 정산은 주담 결과에 종속되므로 주담 결과 입력 전까지 판정 보류
+                                  const supportWaitingInfo = (() => {
+                                    if (isSelfPT || isSuperseded) return null;
+                                    const tokens = (s?.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+                                    if (tokens.length <= 1) return null;
+                                    const mainA = tokens[0];
+                                    const mainResult = s?.results?.[mainA] || (tokens.length === 1 ? s?.result : null);
+                                    if (mainResult) return null; // 주담 결과 있음
+                                    // 지원자 중 결과='지원' 선택한 사람 있는지
+                                    const waitingSupporters = tokens.slice(1).filter(a => s?.results?.[a] === '지원');
+                                    if (waitingSupporters.length === 0) return null;
+                                    return { mainAssignee: mainA, supporters: waitingSupporters };
+                                  })();
+
                                   // C — 카드 종합 상태 배지: 전 담당자 중 가장 눈에 띄는 상태 하나로 요약
                                   //   우선순위: NEEDS_REVIEW > EXCLUDED(전원) > REQUESTED > CONFIRMED > COMPLETED(전원) > UNSETTLED
                                   //   자체PT/중복 카드는 기존 배지로 충분하므로 생략
@@ -9334,6 +9360,15 @@ const SETTLEMENT_BADGE_STYLE = {
                                                 </span>
                                               );
                                             })()}
+                                            {/* 지원자 대기 배지 — 주담 결과 없이 지원자 결과만 입력된 상태 */}
+                                            {supportWaitingInfo && (
+                                              <span
+                                                style={{ fontSize: '10px', fontWeight: '800', padding: '2px 10px', borderRadius: '10px', background: '#ede9fe', color: '#5b21b6', border: '1px solid #c4b5fd', letterSpacing: '0.02em', whiteSpace: 'nowrap' }}
+                                                title={`⏳ 지원자 정산 보류\n주담 ${supportWaitingInfo.mainAssignee} 결과 입력 전 — 지원자 ${supportWaitingInfo.supporters.join(', ')} 정산 판정 대기 중.\n주담 결과가 승이면 지원 인정, 무/패면 제외/패 처리됨.`}
+                                              >
+                                                ⏳ 지원자 대기
+                                              </span>
+                                            )}
                                             {/* 취소공고 배지 — kaptVerified.status === 'cancelled' */}
                                             {s?.kaptVerified?.status === 'cancelled' && (
                                               <span
@@ -15841,6 +15876,40 @@ tr.suppressed td.fname{color:#64748b;}
             </div>
           )}
           
+          {/* Bottom Navigation — 모바일 앱 느낌 (상단 nav 유지, 추가 접근 경로) */}
+          {isMobile && isLoggedIn && (() => {
+            const navItems = [
+              { key: 'home', label: '홈', icon: '🏠', active: showDashboard, onClick: () => { setShowDashboard(true); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); } },
+              { key: 'perf', label: '실적', icon: '📊', active: showPerformance, onClick: () => { setShowDashboard(false); setShowPerformance(true); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); } },
+              { key: 'settle', label: '정산', icon: '💰', active: showPerformance && settlementFilter === 'target', onClick: () => { setShowDashboard(false); setShowPerformance(true); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); setSettlementFilter('target'); } },
+              { key: 'meet', label: '회의', icon: '💬', active: showMeetingView, onClick: () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(true); setShowSalesView(false); setShowMyPage(false); } },
+              { key: 'my', label: '마이', icon: '👤', active: showMyPage, onClick: () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(true); setMyPageUser(currentUser?.name || null); } },
+            ];
+            return (
+              <div style={{
+                position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 9998,
+                background: 'white', borderTop: '1px solid #e2e8f0',
+                display: 'flex', justifyContent: 'space-around', alignItems: 'stretch',
+                padding: '6px 0 max(6px, env(safe-area-inset-bottom))',
+                boxShadow: '0 -2px 8px rgba(0,0,0,0.06)',
+              }}>
+                {navItems.map(it => (
+                  <button key={it.key} onClick={it.onClick}
+                    style={{
+                      flex: 1, background: 'transparent', border: 'none', padding: '6px 4px',
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'pointer',
+                      color: it.active ? '#2563eb' : '#94a3b8',
+                      fontSize: 10, fontWeight: 700,
+                    }}>
+                    <span style={{ fontSize: 18, lineHeight: 1 }}>{it.icon}</span>
+                    <span>{it.label}</span>
+                    {it.active && <span style={{ position: 'absolute', bottom: 0, width: '40%', height: 3, background: '#2563eb', borderRadius: '2px 2px 0 0' }} />}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+
           {/* PWA 설치 안내 배너 - 상단 고정 */}
           {showInstallBanner && isMobile && (
             <div style={{
