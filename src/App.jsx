@@ -16114,7 +16114,178 @@ tr.suppressed td.fname{color:#64748b;}
                   💡 Worker 배포: <code style={{ background: '#f1f5f9', padding: '1px 4px', borderRadius: 3 }}>cloudflare-worker/README.md</code> 참조
                 </div>
 
-                {/* 일괄 검증은 K-APT rate-limit 차단으로 제거됨. 실적 탭 각 PT 카드의 🔍 K-APT 검증 버튼으로 개별 실행. */}
+                {/* === 메모/공사설명 텍스트 스캔 자동검증 (외부 API 0, 즉시 실행) === */}
+                <div style={{ marginTop: 20, paddingTop: 16, borderTop: '2px dashed #e2e8f0' }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#1e293b', marginBottom: 6 }}>
+                    📝 메모/공사설명 스캔 자동검증
+                  </div>
+                  <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10, lineHeight: 1.6 }}>
+                    PT 의 <strong>공사설명·비고·크로스체크메모·내메모·결과사유</strong> 텍스트에서<br />
+                    <code style={{ background:'#f1f5f9', padding:'1px 4px', borderRadius:3 }}>POUR, CNC, DO, DETEX, 시멘트분말</code> 또는 <code style={{ background:'#f1f5f9', padding:'1px 4px', borderRadius:3 }}>10-XXXXXXX</code> 특허번호 감지 시 즉시 verified 처리.<br />
+                    • 외부 API 호출 없음 → <strong>rate limit 무관, 즉시 완료</strong><br />
+                    • 예: 구로두산위브 공사설명 "특허 제 10-2119347호" → 자동 매칭
+                  </div>
+                  {(() => {
+                    const OUR_TECHS = ['POUR', 'CNC', 'DO', 'DETEX', '시멘트분말'];
+                    // 간단 regex 기반 (85개 특허번호 배열은 서버에, 여기는 10-XXXXXXX 형태만 탐지 — 필요시 서버 호출로 정확 매칭)
+                    const candidates = [];
+                    ptSchedules.forEach(s => {
+                      if (s.selfPT) return;
+                      if (s.kaptVerified?.status === 'verified') return;
+                      const texts = [
+                        s.workType, s.note, s.description,
+                        ...(s.crossCheckMemos ? Object.values(s.crossCheckMemos).map(m => m?.text || '') : []),
+                        ...(s.memos ? Object.values(s.memos).map(m => typeof m === 'string' ? m : (m?.text || '')) : []),
+                        ...(s.resultReasons ? Object.values(s.resultReasons).filter(Boolean) : []),
+                      ].filter(Boolean).join(' ');
+                      if (!texts) return;
+                      // 공법명 매칭 (경계 regex)
+                      let matched = null;
+                      for (const tech of OUR_TECHS) {
+                        const re = new RegExp(`(^|[^A-Za-z0-9])${tech}(?=[^A-Za-z0-9]|$)`, 'i');
+                        if (re.test(texts)) { matched = { type: 'technology', value: tech }; break; }
+                      }
+                      // 특허번호 매칭 (10-XXXXXXX 형태 — 서버 측에서 후속 정확 매칭 가능)
+                      if (!matched) {
+                        const m = texts.match(/10-\d{7}/);
+                        if (m) matched = { type: 'patent', value: m[0] };
+                      }
+                      if (matched) {
+                        candidates.push({ scheduleId: s.id, schedule: s, matched, text: texts.slice(0, 200) });
+                      }
+                    });
+                    return (
+                      <>
+                        <div style={{ fontSize: 12, color: '#475569', marginBottom: 10 }}>
+                          감지된 미검증 건: <strong style={{ color: '#7c3aed' }}>{candidates.length}건</strong>
+                        </div>
+                        <button
+                          disabled={candidates.length === 0}
+                          onClick={async () => {
+                            if (!window.confirm(`${candidates.length}건을 메모 감지 결과로 verified 처리?\n\n각 PT 의 공사설명/메모에서 POUR/CNC/DO/DETEX/시멘트분말/특허번호 감지됨.\nFirebase 에 kaptVerified(source: 'memo-scan') 저장됩니다.`)) return;
+                            const nowISO = new Date().toISOString();
+                            let saved = 0;
+                            setPtSchedules(prev => prev.map(s => {
+                              const c = candidates.find(x => x.scheduleId === s.id);
+                              if (!c) return s;
+                              saved++;
+                              return {
+                                ...s,
+                                kaptVerified: {
+                                  status: 'verified',
+                                  matchedBy: c.matched.type,
+                                  matchedValue: c.matched.value,
+                                  source: 'memo-scan',
+                                  verifiedAt: nowISO,
+                                  verifiedBy: currentUser?.name || 'memo-scan',
+                                  matchedText: c.text,
+                                },
+                              };
+                            }));
+                            setDirtyScheduleIds(prev => {
+                              const next = new Set(prev);
+                              candidates.forEach(c => next.add(c.scheduleId));
+                              return next;
+                            });
+                            setHasResultChanges(true);
+                            alert(`✅ ${saved}건 메모 기반 verified 처리 완료\n\n상단의 [변경사항 저장] 눌러 Firebase 반영해주세요.`);
+                          }}
+                          style={{ width: '100%', padding: 12, background: candidates.length === 0 ? '#cbd5e1' : '#7c3aed', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: candidates.length === 0 ? 'not-allowed' : 'pointer' }}
+                        >
+                          📝 {candidates.length}건 메모 스캔 자동 verified 처리
+                        </button>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                {/* === 공고번호 있는 건만 일괄 재검증 (rate-limit 안전 경로) === */}
+                <div style={{ marginTop: 20, paddingTop: 16, borderTop: '2px dashed #e2e8f0' }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#1e293b', marginBottom: 6 }}>
+                    🎯 공고번호 있는 건만 일괄 재검증
+                  </div>
+                  <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10, lineHeight: 1.6 }}>
+                    PT 에 <strong>공고번호(bidNo)</strong>가 이미 입력된 건만 일괄 재검증합니다.<br />
+                    • K-APT 전체 리스트 검색 안 함 → <strong>차단 위험 거의 없음</strong><br />
+                    • bidNum 으로 bidDetail 직접 접근 → HWP/PDF 파싱 → POUR/특허 매칭<br />
+                    • 건당 5초 간격 (안전), 100건 기준 약 8분 소요
+                  </div>
+                  {(() => {
+                    // 중복 PT 판별
+                    const supersededIds = new Set();
+                    const groups = new Map();
+                    ptSchedules.forEach(s => {
+                      if (s.selfPT) return;
+                      const site = (s.siteName || '').trim();
+                      const work = (s.workType || '').trim();
+                      if (!site || !work) return;
+                      const key = `${site}||${work}`;
+                      if (!groups.has(key)) groups.set(key, []);
+                      groups.get(key).push(s);
+                    });
+                    for (const arr of groups.values()) {
+                      if (arr.length < 2) continue;
+                      const sorted = [...arr].sort((a, b) => {
+                        const dCmp = (b.date || '').localeCompare(a.date || '');
+                        return dCmp !== 0 ? dCmp : String(b.id || '').localeCompare(String(a.id || ''));
+                      });
+                      for (let i = 1; i < sorted.length; i++) supersededIds.add(sorted[i].id);
+                    }
+                    // bidNo 있는 건만 대상
+                    const targets = [];
+                    ptSchedules.forEach(s => {
+                      if (supersededIds.has(s.id)) return;
+                      if (!s.bidNo || !String(s.bidNo).trim()) return; // bidNo 필수
+                      if (s.selfPT) return;
+                      if (s.kaptVerified?.status === 'verified') return; // 이미 verified 제외
+                      const results = s.results || {};
+                      Object.entries(results).forEach(([assignee, result]) => {
+                        if (!result || result === '패') return; // 패 제외 (의미 적음)
+                        const set = s.settlement?.[assignee] || {};
+                        if (set.completed || set.selfSales) return;
+                        targets.push({ scheduleId: s.id, assignee, schedule: s });
+                      });
+                    });
+                    return (
+                      <>
+                        <div style={{ fontSize: 12, color: '#475569', marginBottom: 10 }}>
+                          대상(bidNo 있음 + 미검증): <strong style={{ color: '#16a34a' }}>{targets.length}건</strong>
+                        </div>
+                        <button
+                          disabled={targets.length === 0 || !kaptWorkerUrl}
+                          onClick={async () => {
+                            if (!window.confirm(`${targets.length}건 일괄 재검증?\n\n• 건당 5초 간격 (안전)\n• 예상 소요: 약 ${Math.ceil(targets.length * 5 / 60)}분\n• 진행 중 창 닫으면 중단됨`)) return;
+                            let pass = 0, review = 0, err = 0;
+                            for (let i = 0; i < targets.length; i++) {
+                              const t = targets[i];
+                              try {
+                                const r = await verifyKaptForPt({
+                                  scheduleId: t.scheduleId,
+                                  assignee: t.assignee,
+                                  siteName: t.schedule.siteName,
+                                  workType: t.schedule.workType,
+                                  bidNo: t.schedule.bidNo,
+                                  ptDate: t.schedule.date,
+                                  by: currentUser?.name || 'bidNo-batch',
+                                });
+                                if (r?.status === 'verified') pass++;
+                                else review++;
+                              } catch (e) {
+                                err++;
+                              }
+                              // 5초 간격 (K-APT rate limit 안전 거리)
+                              if (i < targets.length - 1) await new Promise(r => setTimeout(r, 5000));
+                            }
+                            alert(`✅ 완료\n\n통과: ${pass}건\n확인 필요: ${review}건\n오류: ${err}건`);
+                          }}
+                          style={{ width: '100%', padding: 12, background: (targets.length === 0 || !kaptWorkerUrl) ? '#cbd5e1' : '#16a34a', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: (targets.length === 0 || !kaptWorkerUrl) ? 'not-allowed' : 'pointer' }}
+                        >
+                          🎯 {targets.length}건 재검증 (공고번호 있는 건만)
+                        </button>
+                      </>
+                    );
+                  })()}
+                </div>
               </div>
             </div>
           )}
