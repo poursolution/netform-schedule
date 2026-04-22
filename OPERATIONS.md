@@ -12,8 +12,12 @@
 
 ### 확정일 우선순위 (fallback 체인)
 1. `settlement.{assignee}.finalConfirmedAt` — 담당자 2라운드 최종 확정 시각
-2. `settlement.{assignee}.requestedAt` — 결과 '승' 입력 시 자동 세팅되는 타임스탬프
-3. `pt.date` — PT 진행일 (최종 fallback, 레거시 데이터)
+2. `settlement.{assignee}.requestedAt` — 정산요청 체크 타임스탬프
+3. `pt.resultConfirmDate[assignee]` — **승/무/패 버튼을 클릭한 날짜** (결과 입력 시점)
+4. `pt.date` — PT 진행일 (최종 fallback, 레거시 데이터)
+
+> `resultConfirmDate[assignee]` 은 `saveResults()` 실행 시 자동 세팅.  
+> 결과값이 변경되지 않는 한 덮어쓰지 않음 — 재저장으로 분기 귀속이 이동하는 버그 방지.
 
 ### 예시
 | PT 진행일 | 실적 확정일 | 귀속 분기 | 급여 반영월 |

@@ -2851,33 +2851,49 @@ const SETTLEMENT_BADGE_STYLE = {
 
       // 승무패 저장 (개별 담당자 결과 지원)
       const saveResults = () => {
+        const todayStr = new Date().toISOString().split('T')[0];
         const updatedSchedules = ptSchedules.map(s => {
           // 개별 담당자 결과 처리
           const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
           let newResults = { ...(s.results || {}) };
           let newReasons = { ...(s.resultReasons || {}) };
+          // [핵심] 확정일(결과 입력 시점) = 승/무/패 클릭한 날짜
+          //   기존에 값 있으면 보존(덮어쓰기 금지) — 재저장으로 분기 귀속이 움직이지 않도록.
+          let newConfirmDate = { ...(s.resultConfirmDate || {}) };
           let hasChanges = false;
-          
+
           assignees.forEach(assignee => {
             const editKey = `${s.id}_${assignee}`;
             if (editingResults.hasOwnProperty(editKey)) {
               const newResult = editingResults[editKey];
+              const prevResult = s.results?.[assignee];
               newResults[assignee] = newResult;
               // 무/지원으로 변경 시 사유 삭제
               if (newResult === '무' || newResult === '지원' || newResult === null) {
                 delete newReasons[assignee];
               }
+              // 결과 새로 입력 or 변경 시 확정일 세팅
+              //   - 결과 값이 실제로 들어왔고 (null 아님)
+              //   - 기존과 다르거나 기존 확정일이 없을 때만 today 로 세팅
+              if (newResult && newResult !== null) {
+                if (!newConfirmDate[assignee] || prevResult !== newResult) {
+                  newConfirmDate[assignee] = todayStr;
+                }
+              } else if (newResult === null) {
+                // 결과 제거 시 확정일도 제거
+                delete newConfirmDate[assignee];
+              }
               hasChanges = true;
             }
           });
-          
+
           // 기존 단일 result 방식도 지원 (레거시)
           if (editingResults.hasOwnProperty(s.id)) {
-            return { ...s, result: editingResults[s.id], results: newResults, resultReasons: newReasons, inProgress: false };
+            return { ...s, result: editingResults[s.id], results: newResults, resultReasons: newReasons, resultConfirmDate: newConfirmDate, inProgress: false };
           }
-          
+
           if (hasChanges) {
-            return { ...s, results: newResults, resultReasons: newReasons, inProgress: false };
+            return { ...s, results: newResults, resultReasons: newReasons, resultConfirmDate: newConfirmDate, inProgress: false };
           }
           return s;
         });
@@ -10073,10 +10089,14 @@ tr.suppressed td.fname{color:#64748b;}
                                           const mainResult = s?.results?.[mainAssignee] || s?.result || null;
                                           const showSupportHint = isSupporter && rawPicked === '지원';
                                           // #7 UI 개선 — 확정일 · 분기 귀속 · 급여 반영월 (결과 있고 정산 제외 아닐 때만)
+                                          //   확정일 = "결과 입력 시점" (승/무/패 클릭일)
+                                          //   우선순위: finalConfirmedAt > requestedAt > resultConfirmDate[assignee] > pt.date (fallback)
                                           let confirmDateInfo = null;
                                           if (!isSelfPT && aResult && calc?.amount > 0) {
+                                            const resCd = ptRef?.resultConfirmDate?.[assigneeName];
                                             const cd = (aSettlement.finalConfirmedAt && aSettlement.finalConfirmedAt.slice(0, 10))
                                               || (aSettlement.requestedAt && aSettlement.requestedAt.slice(0, 10))
+                                              || (resCd && String(resCd).slice(0, 10))
                                               || ptRef?.date || null;
                                             if (cd) {
                                               const cdM = cd.match(/^(\d{4})-(\d{2})/);
@@ -10089,7 +10109,14 @@ tr.suppressed td.fname{color:#64748b;}
                                                 if (pM > 12) { pM = 1; pY += 1; }
                                                 const payrollMonth = `${pY}-${String(pM).padStart(2,'0')}`;
                                                 const sameAsPtDate = cd === ptRef?.date;
-                                                confirmDateInfo = { cd, qKey, payrollMonth, sameAsPtDate, source: aSettlement.finalConfirmedAt ? 'finalConfirmed' : aSettlement.requestedAt ? 'requested' : 'ptDate' };
+                                                const source = aSettlement.finalConfirmedAt
+                                                  ? 'finalConfirmed'
+                                                  : aSettlement.requestedAt
+                                                    ? 'requested'
+                                                    : resCd
+                                                      ? 'resultInput'
+                                                      : 'ptDate';
+                                                confirmDateInfo = { cd, qKey, payrollMonth, sameAsPtDate, source };
                                               }
                                             }
                                           }
@@ -10197,7 +10224,7 @@ tr.suppressed td.fname{color:#64748b;}
                                               {confirmDateInfo && (
                                                 <div
                                                   style={{ flexBasis: '100%', marginTop: '4px', fontSize: '10px', color: '#64748b', display: 'flex', flexWrap: 'wrap', gap: '10px', paddingLeft: '4px' }}
-                                                  title={`확정일: ${confirmDateInfo.cd}\n출처: ${confirmDateInfo.source === 'finalConfirmed' ? 'Phase 4 최종확정' : confirmDateInfo.source === 'requested' ? '정산요청 시점' : 'PT일 (fallback)'}\n분기 귀속: ${confirmDateInfo.qKey}\n급여 반영월: ${confirmDateInfo.payrollMonth}`}
+                                                  title={`확정일: ${confirmDateInfo.cd}\n출처: ${confirmDateInfo.source === 'finalConfirmed' ? 'Phase 4 최종확정' : confirmDateInfo.source === 'requested' ? '정산요청 시점' : confirmDateInfo.source === 'resultInput' ? '결과 입력 시점 (승/무/패 클릭일)' : 'PT일 (레거시 fallback)'}\n분기 귀속: ${confirmDateInfo.qKey}\n급여 반영월: ${confirmDateInfo.payrollMonth}`}
                                                 >
                                                   <span>📅 확정일 <b style={{ color: '#475569' }}>{confirmDateInfo.cd}</b>{confirmDateInfo.sameAsPtDate ? '' : ' (PT일 ≠)'}</span>
                                                   <span>· 귀속 <b style={{ color: '#2563eb' }}>{confirmDateInfo.qKey}</b></span>

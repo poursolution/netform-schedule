@@ -405,13 +405,15 @@ export function isQuarterlySettlementTime(now = new Date()) {
 //   예: 2025-12-20 PT 라도 2026-04-08 에 확정되면 2026-Q2 귀속.
 //
 // 실적 확정일 추출 우선순위 (가장 강한 신호 → 약한 신호):
-//   1. settlement.{assignee}.finalConfirmedAt  (Phase 4 최종확정)
-//   2. settlement.{assignee}.requestedAt       (승/정산요청 체크)
-//   3. results[assignee] 저장 시각 없음 → pt.date fallback
+//   1. settlement.{assignee}.finalConfirmedAt    (Phase 4 최종확정 — 담당자 명시적 확정)
+//   2. settlement.{assignee}.requestedAt         (정산요청 체크 시점)
+//   3. pt.resultConfirmDate[assignee]            (승/무/패 버튼 클릭 시점 — 결과 입력일)
+//   4. pt.date                                   (PT 진행일 — 레거시 fallback)
 //
-// finalConfirmedAt 이 가장 신뢰도 높음 (담당자가 명시적 "최종 확정" 클릭).
-// requestedAt 은 승 입력 시 자동 세팅되는 타임스탬프.
-// 둘 다 없으면 pt.date (PT 진행일) 로 fallback — 과도기 데이터 호환.
+// [중요] 2026-04 수정: tier 3 추가.
+//   이전에는 finalConfirmedAt/requestedAt 없으면 바로 pt.date 로 떨어져서
+//   "결과 입력은 4월에 했는데 PT 가 1월이면 Q1 귀속" 오류 발생.
+//   이제 '담당자가 승/무/패를 클릭한 날짜'(todayDate) 가 저장된 resultConfirmDate 를 우선.
 
 /**
  * PT + assignee 의 실적 확정일 추출
@@ -419,11 +421,14 @@ export function isQuarterlySettlementTime(now = new Date()) {
 export function getResultConfirmDate(pt, assignee) {
   if (!pt || !assignee) return null;
   const stl = pt.settlement?.[assignee] || {};
-  // 우선순위 1: 최종확정
+  // 우선순위 1: 최종확정 (Phase 4)
   if (stl.finalConfirmedAt) return stl.finalConfirmedAt.slice(0, 10);
-  // 우선순위 2: 정산요청 (자동 혹은 수동)
+  // 우선순위 2: 정산요청 시점
   if (stl.requestedAt) return stl.requestedAt.slice(0, 10);
-  // 우선순위 3: PT 일자 fallback
+  // 우선순위 3: 결과(승/무/패) 입력 시점 — 담당자가 결과 버튼 클릭한 날짜
+  const resCd = pt.resultConfirmDate?.[assignee];
+  if (resCd) return String(resCd).slice(0, 10);
+  // 우선순위 4: PT 일자 fallback (레거시 호환)
   return pt.date || null;
 }
 
