@@ -2864,6 +2864,59 @@ const SETTLEMENT_BADGE_STYLE = {
       // - 우리 공법 전혀 없음 → 패
       const judgeResult = (methods) => judgeResultByMethods(methods);
 
+      // Settlement derived fields 자동 저장 (#3 status · #6 excludedReason · #9 calculatedAmount)
+      //   - settlement 변경(체크박스 토글 / 결과 입력 / selfPT 변경 등) 직후 호출
+      //   - 현재 pt 상태로부터 calc 재계산 → Firebase 에 영구 기록
+      //   - pt 미변경이면 Firebase 쓰기 skip (write amplification 방지)
+      const persistSettlementDerived = async (scheduleId, assignee) => {
+        if (!scheduleId || !assignee) return;
+        const pt = ptSchedules.find(p => p.id === scheduleId);
+        if (!pt) return;
+        const calc = calculateSettlementAmount(pt, assignee);
+        const status = getSettlementStatus(pt, assignee);
+        const stl = pt.settlement?.[assignee] || {};
+        const patch = {};
+        // 변경된 필드만 patch (과도한 write 방지)
+        if (stl.status !== status) patch.status = status;
+        if (stl.calculatedAmount !== calc.amount) patch.calculatedAmount = calc.amount;
+        // excludedReason: calc.reason 있으면 저장, 없으면 null 로 clear
+        const currentReason = stl.excludedReason || null;
+        const newReason = calc.reason || null;
+        if (currentReason !== newReason) patch.excludedReason = newReason;
+        if (Object.keys(patch).length === 0) return { skipped: true };
+        try {
+          if (firebaseEnabled && database) {
+            await database.ref(`pt/${scheduleId}/settlement/${assignee}`).update(patch);
+          }
+          setPtSchedules(prev => prev.map(ps => ps.id === scheduleId ? ({
+            ...ps,
+            settlement: {
+              ...(ps.settlement || {}),
+              [assignee]: { ...(ps.settlement?.[assignee] || {}), ...patch },
+            },
+          }) : ps));
+          return { ok: true, patch };
+        } catch (e) { console.warn('[persist-derived] failed', e); return { ok: false, error: e.message }; }
+      };
+
+      // 전체 PT 대상 일회성 backfill — 관리자 수동 실행용
+      const backfillAllSettlementDerived = async () => {
+        if (!currentUser?.isAdmin) return { skipped: true, reason: 'not_admin' };
+        const all = ptSchedules;
+        let written = 0, skipped = 0;
+        for (const pt of all) {
+          const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+          for (const a of tokens) {
+            const r = await persistSettlementDerived(pt.id, a);
+            if (r?.ok) written++;
+            else skipped++;
+          }
+        }
+        return { written, skipped, totalPts: all.length };
+      };
+      // 디버그용으로 window 에 노출 (admin 콘솔에서 즉시 호출 가능)
+      if (typeof window !== 'undefined') window.__backfillSettlement = backfillAllSettlementDerived;
+
       // Q2+ 자동 정산대상 전환 헬퍼 (검증 완료 시 호출)
       //   - PT 일자 >= 2026-04-01 + 결과 있음 + 검증됨 → settlement.requested=true
       //   - 담당자 개인 잔디 webhook 으로 "정산대상 전환" 알림
@@ -9897,6 +9950,8 @@ tr.suppressed td.fname{color:#64748b;}
                                                       }));
                                                       setDirtyScheduleIds(prev => new Set([...prev, card.id]));
                                                       setHasResultChanges(true);
+                                                      // #3/#6/#9 derived 저장
+                                                      setTimeout(() => persistSettlementDerived(card.id, assigneeName), 0);
                                                     }} style={{ width: '14px', height: '14px', cursor: 'pointer' }} /> 정산요청
                                                   </label>
                                                   <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: currentUser?.isAdmin ? 'pointer' : 'not-allowed', opacity: currentUser?.isAdmin ? 1 : 0.6 }} title={currentUser?.isAdmin ? '' : '관리자만 변경 가능'}>
@@ -9908,12 +9963,13 @@ tr.suppressed td.fname{color:#64748b;}
                                                         if (ps.id !== card.id) return ps;
                                                         const cur = ps.settlement?.[assigneeName] || {};
                                                         const newEntry = { ...cur, completed: newVal };
-                                                        if (newVal) newEntry.completedAt = nowISO;
+                                                        if (newVal) { newEntry.completedAt = nowISO; newEntry.completedBy = currentUser?.name || 'admin'; }
                                                         const newSettlement = { ...ps.settlement, [assigneeName]: newEntry };
                                                         return { ...ps, settlement: newSettlement };
                                                       }));
                                                       setDirtyScheduleIds(prev => new Set([...prev, card.id]));
                                                       setHasResultChanges(true);
+                                                      setTimeout(() => persistSettlementDerived(card.id, assigneeName), 0);
                                                     }} disabled={!currentUser?.isAdmin} style={{ width: '14px', height: '14px', cursor: currentUser?.isAdmin ? 'pointer' : 'not-allowed' }} /> 정산완료
                                                   </label>
                                                   <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer' }}>
@@ -9926,6 +9982,7 @@ tr.suppressed td.fname{color:#64748b;}
                                                       }));
                                                       setDirtyScheduleIds(prev => new Set([...prev, card.id]));
                                                       setHasResultChanges(true);
+                                                      setTimeout(() => persistSettlementDerived(card.id, assigneeName), 0);
                                                     }} style={{ width: '14px', height: '14px', cursor: 'pointer' }} /> 본인영업
                                                   </label>
                                                 </div>
@@ -9966,6 +10023,11 @@ tr.suppressed td.fname{color:#64748b;}
                                             }));
                                             setDirtyScheduleIds(prev => new Set([...prev, card.id]));
                                             setHasResultChanges(true);
+                                            // selfPT 바뀌면 전체 담당자의 derived 재저장
+                                            setTimeout(() => {
+                                              const tokens = (s?.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+                                              tokens.forEach(a => persistSettlementDerived(card.id, a));
+                                            }, 0);
                                           }} style={{ width: '14px', height: '14px', cursor: 'pointer', accentColor: '#7c3aed' }} /> 협약사자체PT
                                         </label>
                                       </div>
@@ -14342,6 +14404,21 @@ tr.suppressed td.fname{color:#64748b;}
                         title={finalConfirmedCount === rows.length ? '전원 최종확정 해제 (되돌리기)' : '담당자 확인 건너뛰고 관리자가 직권으로 일괄 최종확정 (긴급용)'}
                         style={{ padding: '6px 12px', borderRadius: '6px', border: finalConfirmedCount === rows.length ? '1px solid #ef4444' : 'none', background: finalConfirmedCount === rows.length ? '#fff1f2' : '#dc2626', color: finalConfirmedCount === rows.length ? '#991b1b' : 'white', fontSize: '12px', fontWeight: '700', cursor: rows.length === 0 ? 'not-allowed' : 'pointer' }}
                       >{finalConfirmedCount === rows.length && rows.length > 0 ? '↺ 전체 해제' : '⚡ 전체 최종확정'}</button>
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm('전체 PT 의 settlement 파생 필드 (status / calculatedAmount / excludedReason) 를 재계산해 Firebase 에 영구 저장합니다.\n\n기존 값과 다르면 덮어씀. 진행?')) return;
+                          setMonthlySettlementLoading(true);
+                          try {
+                            const r = await backfillAllSettlementDerived();
+                            alert(`✅ Backfill 완료\n\nPT ${r.totalPts}건 · 저장 ${r.written}건 · 스킵 ${r.skipped}건`);
+                            await loadData();
+                          } catch (e) { alert('실패: ' + e.message); }
+                          finally { setMonthlySettlementLoading(false); }
+                        }}
+                        disabled={monthlySettlementLoading}
+                        title="모든 PT 에 status · calculatedAmount · excludedReason 일괄 backfill (일회성)"
+                        style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f8fafc', color: '#475569', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                      >🔧 Backfill</button>
                     </div>
                   </div>
 
