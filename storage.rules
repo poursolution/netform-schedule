@@ -1,0 +1,25 @@
+// Firebase Storage 보안 규칙
+//
+// 적용 방법:
+//   1. Firebase Console → Storage → Rules 탭 열기
+//   2. 아래 내용 복붙 → [게시] 클릭
+//
+// 정책:
+//   - /evidence/**: 누구나 읽기 가능 (공개) / 쓰기는 서버(admin SDK)만
+//     → 공고문 첨부파일은 사내 운영자 누구나 다운로드
+//   - 그 외 경로: 모두 차단 (필요 시 별도 규칙 추가)
+
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // 잔디 공고문 첨부 — 읽기 공개
+    match /evidence/{allPaths=**} {
+      allow read: if true;
+      allow write: if false;  // write 는 playwright-server admin SDK 만 (규칙 우회)
+    }
+    // 그 외 경로 — 차단 (기본 deny)
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

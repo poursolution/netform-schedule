@@ -64,11 +64,38 @@ function dayName(dateStr) {
   return ['일', '월', '화', '수', '목', '금', '토'][new Date(dateStr).getDay()];
 }
 
-function getPtResult(s, assignee) {
-  if (s.results && s.results[assignee]) return s.results[assignee];
+// 주담당자 추출 — ptAssignee 의 첫 번째 토큰 (split '/', ',', '+', '&')
+// 본인PT의 경우 ptAssignee 가 본인이므로 주담당자도 본인
+function getPrimaryAssignee(s) {
   const assignees = parseAssignees(s.ptAssignee);
-  if (assignees.length > 1) return null;
-  return s.result || null;
+  return assignees[0] || null;
+}
+
+function getPtResult(s, assignee) {
+  // raw 결과 추출
+  let raw = null;
+  if (s.results && s.results[assignee]) raw = s.results[assignee];
+  else {
+    const assignees = parseAssignees(s.ptAssignee);
+    if (assignees.length > 1) raw = null;
+    else raw = s.result || null;
+  }
+  if (!raw) return null;
+
+  // 지원 규칙: assignee 가 주담당자가 아닌데 '지원' 이면 주담당자 결과에 종속
+  //  - 주담 '승' → 지원 인정
+  //  - 주담 '무' → 지원 인정 (완화형)
+  //  - 주담 '패' → 지원자도 '패' 처리 (지급 0)
+  //  - 주담 결과 미정 → null (지급 미확정)
+  const primary = getPrimaryAssignee(s);
+  if (raw === '지원' && primary && assignee !== primary) {
+    const primaryResult = s.results?.[primary] || s.result;
+    if (primaryResult === '승') return '지원';
+    if (primaryResult === '무') return '지원';
+    if (primaryResult === '패') return '패';
+    return null; // 주담 결과 미입력 상태
+  }
+  return raw;
 }
 
 function isSelfSales(s, assignee) {
@@ -84,9 +111,16 @@ function isSettlementRequested(s, assignee) {
   return s.settlement?.[assignee]?.requested || false;
 }
 
+// 감리 공종 판별 — workType 에 "감리" 포함 시 true
+function isSupervision(s) {
+  return !!(s && s.workType && /감리/.test(String(s.workType)));
+}
+
 function getSettlementAmount(s, assignee, overrideResult = null) {
   if (s.selfPT) return 0;
   if (isSelfSales(s, assignee)) return 0;
+  // 감리 공종: 승패 무관 건당 80,000원 (지역/결과 무관)
+  if (isSupervision(s)) return 80000;
   const r = overrideResult || getPtResult(s, assignee);
   if (r === '승') return 500000;
   if (r === '무') return 250000;
@@ -95,8 +129,10 @@ function getSettlementAmount(s, assignee, overrideResult = null) {
 }
 
 // === PT 검증 게이트 (Phase 1.6, 단순 룰) ===
+// 감리는 공고문이 없으므로 bidNo 요구 제외
 function isPtVerified(s, assignee) {
   if (s.selfPT) return true;
+  if (isSupervision(s)) return true;
   const r = getPtResult(s, assignee);
   if (!r) return false;
   if (r === '패') return true;
@@ -106,6 +142,7 @@ function isPtVerified(s, assignee) {
 
 function getVerifyReason(s, assignee) {
   if (s.selfPT) return '';
+  if (isSupervision(s)) return '';
   const r = getPtResult(s, assignee);
   if (!r) return '결과 미입력';
   if (r === '패') return '';

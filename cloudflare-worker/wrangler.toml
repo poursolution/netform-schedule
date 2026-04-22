@@ -13,9 +13,12 @@ workers_dev = true
 [vars]
 OUR_COMPANY_NAMES = "넷폼,(주)넷폼,넷폼R&D,(주)넷폼R&D,POUR솔루션,(주)POUR솔루션,아파트스퀘어,(주)아파트스퀘어,POUR,넷폼알엔디"
 
-# Cron trigger: 매일 02:00 KST (= 17:00 UTC) K-APT 신규 공고 수집
+# Cron trigger:
+#   1) 매일 02:00 KST (= 17:00 UTC) K-APT 신규 공고 수집
+#   2) 매주 월요일 09:00 KST (= 00:00 UTC) → 분기 마지막월(3/6/9/12) 마지막주 월요일만 분기정산 실행
+#   3) 매일 09:00 KST (= 00:00 UTC) · 17:00 KST (= 08:00 UTC) — 분기 확인 리마인드 (deadline 내 미확인만)
 [triggers]
-crons = ["0 17 * * *"]
+crons = ["0 17 * * *", "0 0 * * 1", "0 0,8 * * *"]
 
 # Browser Rendering (Paid plan 필수 — K-APT PDF 다운로드용)
 [browser]
