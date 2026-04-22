@@ -37,6 +37,21 @@ import {
 import { sendJandiNotification } from './utils/jandi.js';
 import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculateSettlementAmount, EXCLUSION_REASONS, shouldAutoTransitionToTarget, buildAutoTransitionPatch, AUTO_TRANSITION_START } from './utils/settlement.js';
 
+// 패배 사유 분류기 (대표 보고용 분석 리포트)
+//   resultReasons.{assignee}.reason 자유 텍스트 → 카테고리 매핑
+const classifyLossReason = (text) => {
+  const t = String(text || '').trim();
+  if (!t) return '사유 미기재';
+  if (/특허|기술력|공법.*우위|타사.*공법/.test(t)) return '타사 공법·특허 우위';
+  if (/단가|가격|비용|금액|예산|저가/.test(t)) return '단가 경쟁력 부족';
+  if (/공법.*미|선호|요구|스펙|요청.*공법/.test(t)) return '공법 미선호';
+  if (/연락|대응.*지연|답변.*지연|지연|늦|바빠/.test(t)) return '대응 지연';
+  if (/제안|자료|설계|설명|발표|PT.*부족/.test(t)) return '제안·자료 부족';
+  if (/영업|관계|친분|기존.*업체|안면/.test(t)) return '영업 관계 열세';
+  if (/협약|본사|그룹|지사/.test(t)) return '협약/본사 결정';
+  return '기타';
+};
+
 // 제외 사유 한글 라벨
 const EXCLUSION_REASON_LABEL = {
   [EXCLUSION_REASONS.SELF_PT]: '본인PT',
@@ -626,6 +641,11 @@ const SETTLEMENT_BADGE_STYLE = {
       const [quarterReportBusy, setQuarterReportBusy] = useState(false);
       const [quarterReportOverrideGuard, setQuarterReportOverrideGuard] = useState(false);  // Phase 5 — 전원 최종확정 우회
       const [quarterReportSentHistory, setQuarterReportSentHistory] = useState({});  // { [qKey]: { sentAt, sentBy, ... } }
+
+      // 대표 보고용 분석 리포트 (이승우 대표)
+      const [showAnalysisReport, setShowAnalysisReport] = useState(false);
+      const [analysisReportYear, setAnalysisReportYear] = useState(new Date().getFullYear());
+      const [analysisReportQuarter, setAnalysisReportQuarter] = useState(Math.ceil((new Date().getMonth() + 1) / 3));
 
       // 잔디 웹훅 설정
       const [jandiUrl, setJandiUrl] = useState('');
@@ -5693,6 +5713,11 @@ const SETTLEMENT_BADGE_STYLE = {
                     style={{ background: '#7c3aed', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
                     title="김유림에게 분기 종합 보고서 발송 (PT 정산 + 주말출근)"
                   >📊 분기보고서</button>
+                  <button
+                    onClick={() => setShowAnalysisReport(true)}
+                    style={{ background: '#0f172a', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
+                    title="대표 보고용 분석 리포트 — 공종별 승률 / 공법 경쟁 / 패배 원인"
+                  >📈 분석</button>
                   {(() => {
                     const pendingCount = listPendingExceptions(ptSchedules).length;
                     return (
@@ -16129,6 +16154,246 @@ tr.suppressed td.fname{color:#64748b;}
                     {it.active && <span style={{ position: 'absolute', bottom: 0, width: '40%', height: 3, background: '#2563eb', borderRadius: '2px 2px 0 0' }} />}
                   </button>
                 ))}
+              </div>
+            );
+          })()}
+
+          {/* 대표 보고용 분석 리포트 모달 (관리자 전용) */}
+          {showAnalysisReport && currentUser?.isAdmin && (() => {
+            const yKey = analysisReportYear;
+            const qN = analysisReportQuarter;
+            const qKey = `${yKey}-Q${qN}`;
+            const startMonth = (qN - 1) * 3 + 1;
+            const endMonth = qN * 3;
+            // 분기 귀속: 확정일 기준
+            const getConfirmDate = (pt, a) => {
+              const stl = pt.settlement?.[a] || {};
+              if (stl.finalConfirmedAt) return String(stl.finalConfirmedAt).slice(0, 10);
+              if (stl.requestedAt) return String(stl.requestedAt).slice(0, 10);
+              return pt.date || null;
+            };
+            const inQ = (date) => {
+              if (!date) return false;
+              const m = String(date).match(/^(\d{4})-(\d{2})/);
+              if (!m) return false;
+              return parseInt(m[1]) === yKey && parseInt(m[2]) >= startMonth && parseInt(m[2]) <= endMonth;
+            };
+
+            // 공종 카테고리 분류 (workType 키워드 기반)
+            const categorize = (workType, siteName) => {
+              const t = (workType || '') + '|' + (siteName || '');
+              if (/감리/.test(t)) return '감리';
+              if (/방수|우레탄|복합시트|슁글|슬라브|폴리우레아|에폭시/.test(t)) return '방수';
+              if (/재도장|도장|도색|페인트|외벽.*도|내벽.*도|도색/.test(t)) return '재도장';
+              if (/균열|크랙|보수/.test(t)) return '보수';
+              if (/주차장|지하/.test(t)) return '주차장';
+              return '기타';
+            };
+
+            const VALID_TEAM = ['한준엽','조재연','정정훈','김성민','이필선','조현식','한인규','황윤선'];
+            // 집계 버킷
+            const byAssignee = {};
+            const byWorkType = {};
+            const byOurTech = {};  // POUR vs 다른 공법 결과
+            const lossReasons = {};
+            let totalWin = 0, totalDraw = 0, totalLose = 0, totalSupport = 0;
+
+            VALID_TEAM.forEach(n => {
+              byAssignee[n] = { win: 0, draw: 0, lose: 0, support: 0, amount: 0 };
+            });
+
+            ptSchedules.forEach(pt => {
+              if (pt.selfPT) return;
+              const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+              for (const a of tokens) {
+                if (!VALID_TEAM.includes(a)) continue;
+                const cd = getConfirmDate(pt, a);
+                if (!inQ(cd)) continue;
+                const r = pt.results?.[a] || (tokens.length === 1 ? pt.result : null);
+                if (!r) continue;
+                const cat = categorize(pt.workType, pt.siteName);
+                if (!byWorkType[cat]) byWorkType[cat] = { win: 0, lose: 0, draw: 0, support: 0 };
+
+                if (r === '승') { byAssignee[a].win++; byWorkType[cat].win++; totalWin++; }
+                else if (r === '무') { byAssignee[a].draw++; byWorkType[cat].draw++; totalDraw++; }
+                else if (r === '패') {
+                  byAssignee[a].lose++; byWorkType[cat].lose++; totalLose++;
+                  // 패배 사유 분류
+                  const reason = pt.resultReasons?.[a]?.reason || '';
+                  const rKey = classifyLossReason(reason);
+                  lossReasons[rKey] = (lossReasons[rKey] || 0) + 1;
+                }
+                else if (r === '지원') { byAssignee[a].support++; byWorkType[cat].support++; totalSupport++; }
+
+                // 공법 사용 추적 (승리 건만)
+                if (r === '승') {
+                  const methods = (pt.announcementMethods || '') + '|' + (pt.workType || '');
+                  const usedPour = /POUR/i.test(methods);
+                  const usedCnc = /CNC/i.test(methods);
+                  const tag = usedPour ? 'POUR' : usedCnc ? 'CNC' : '기타';
+                  if (!byOurTech[tag]) byOurTech[tag] = { win: 0, lose: 0 };
+                  byOurTech[tag].win++;
+                }
+                if (r === '패') {
+                  const reason = (pt.resultReasons?.[a]?.reason || '') + '|' + (pt.workType || '');
+                  // 간단 추정: POUR/CNC 제안했으나 졌으면 경쟁 공법 승리
+                  // (더 정교한 분석은 announcementMethods + competitorMethods 필드 필요)
+                  const usedPour = /POUR/i.test(reason);
+                  const usedCnc = /CNC/i.test(reason);
+                  const tag = usedPour ? 'POUR' : usedCnc ? 'CNC' : '기타';
+                  if (!byOurTech[tag]) byOurTech[tag] = { win: 0, lose: 0 };
+                  byOurTech[tag].lose++;
+                }
+              }
+            });
+
+            // 공종별 승률 계산 + 정렬
+            const workTypeRanked = Object.entries(byWorkType).map(([cat, v]) => {
+              const done = v.win + v.lose + v.draw;
+              return { cat, ...v, winRate: done > 0 ? Math.round(v.win / done * 100) : 0, total: done };
+            }).filter(x => x.total > 0).sort((a, b) => b.total - a.total);
+
+            // 담당자별 승률 계산 + 정렬
+            const assigneeRanked = Object.entries(byAssignee).map(([name, v]) => {
+              const done = v.win + v.lose + v.draw;
+              return { name, ...v, winRate: done > 0 ? Math.round(v.win / done * 100) : 0, total: done };
+            }).filter(x => (x.win + x.draw + x.lose + x.support) > 0).sort((a, b) => b.win - a.win);
+
+            // 패배 사유 TOP
+            const lossReasonRanked = Object.entries(lossReasons).map(([k, v]) => {
+              const pct = totalLose > 0 ? Math.round(v / totalLose * 100) : 0;
+              return { reason: k, count: v, pct };
+            }).sort((a, b) => b.count - a.count);
+
+            return (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 10300, padding: '20px 0', overflowY: 'auto' }}
+                onClick={(e) => { if (e.target === e.currentTarget) setShowAnalysisReport(false); }}>
+                <div style={{ background: 'white', borderRadius: '14px', padding: '24px', width: '1000px', maxWidth: '95%', margin: 'auto' }} onClick={e => e.stopPropagation()}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', letterSpacing: '0.05em' }}>대표 보고용 분석 리포트</div>
+                      <h2 style={{ fontSize: 20, fontWeight: 800, margin: '4px 0 0 0', color: '#0f172a' }}>📈 {qKey} 영업 분석</h2>
+                    </div>
+                    <button onClick={() => setShowAnalysisReport(false)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#94a3b8' }}>×</button>
+                  </div>
+
+                  {/* 기간 선택 */}
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>연도:</label>
+                    <select value={yKey} onChange={e => setAnalysisReportYear(parseInt(e.target.value))} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 12 }}>
+                      {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>분기:</label>
+                    <select value={qN} onChange={e => setAnalysisReportQuarter(parseInt(e.target.value))} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 12 }}>
+                      {[1,2,3,4].map(q => <option key={q} value={q}>Q{q}</option>)}
+                    </select>
+                    <span style={{ marginLeft: 'auto', fontSize: 11, color: '#64748b' }}>집계 기준: 실적확정일 · 활동자 {assigneeRanked.length}명 · 총 {totalWin + totalDraw + totalLose + totalSupport}건</span>
+                  </div>
+
+                  {/* 1. 전체 실적 요약 */}
+                  <div style={{ padding: '12px 14px', background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: 'white', borderRadius: 10, marginBottom: 14, display: 'flex', justifyContent: 'space-around', gap: 10 }}>
+                    <div style={{ textAlign: 'center' }}><div style={{ fontSize: 10, opacity: 0.7 }}>승</div><div style={{ fontSize: 22, fontWeight: 800, color: '#60a5fa' }}>{totalWin}</div></div>
+                    <div style={{ textAlign: 'center' }}><div style={{ fontSize: 10, opacity: 0.7 }}>무</div><div style={{ fontSize: 22, fontWeight: 800, color: '#fbbf24' }}>{totalDraw}</div></div>
+                    <div style={{ textAlign: 'center' }}><div style={{ fontSize: 10, opacity: 0.7 }}>패</div><div style={{ fontSize: 22, fontWeight: 800, color: '#f87171' }}>{totalLose}</div></div>
+                    <div style={{ textAlign: 'center' }}><div style={{ fontSize: 10, opacity: 0.7 }}>지원</div><div style={{ fontSize: 22, fontWeight: 800, color: '#c084fc' }}>{totalSupport}</div></div>
+                    <div style={{ textAlign: 'center', borderLeft: '1px solid rgba(255,255,255,0.2)', paddingLeft: 20 }}>
+                      <div style={{ fontSize: 10, opacity: 0.7 }}>승률</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#34d399' }}>{totalWin + totalLose > 0 ? Math.round(totalWin / (totalWin + totalLose + totalDraw) * 100) : 0}%</div>
+                    </div>
+                  </div>
+
+                  {/* 2. 담당자별 성과 */}
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>📊 담당자별 성과</div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                        <thead>
+                          <tr style={{ background: '#f1f5f9' }}>
+                            <th style={{ padding: 8, textAlign: 'left', color: '#475569' }}>담당자</th>
+                            <th style={{ padding: 8, textAlign: 'right', color: '#475569' }}>승</th>
+                            <th style={{ padding: 8, textAlign: 'right', color: '#475569' }}>무</th>
+                            <th style={{ padding: 8, textAlign: 'right', color: '#475569' }}>패</th>
+                            <th style={{ padding: 8, textAlign: 'right', color: '#475569' }}>지원</th>
+                            <th style={{ padding: 8, textAlign: 'right', color: '#475569' }}>승률</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {assigneeRanked.map(r => (
+                            <tr key={r.name} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                              <td style={{ padding: 8, fontWeight: 700 }}>{r.name}</td>
+                              <td style={{ padding: 8, textAlign: 'right', color: '#2563eb', fontWeight: 700 }}>{r.win}</td>
+                              <td style={{ padding: 8, textAlign: 'right', color: '#d97706' }}>{r.draw}</td>
+                              <td style={{ padding: 8, textAlign: 'right', color: '#dc2626' }}>{r.lose}</td>
+                              <td style={{ padding: 8, textAlign: 'right', color: '#7c3aed' }}>{r.support}</td>
+                              <td style={{ padding: 8, textAlign: 'right', fontWeight: 700, color: r.winRate >= 60 ? '#16a34a' : r.winRate >= 40 ? '#d97706' : '#dc2626' }}>{r.winRate}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* 3. 공종별 승률 */}
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>🏗 공종별 승률 (강·약 영역)</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {workTypeRanked.map(w => (
+                        <div key={w.cat} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: '#1e293b', minWidth: 70 }}>{w.cat}</div>
+                          <div style={{ flex: 1, height: 8, background: '#e2e8f0', borderRadius: 4, overflow: 'hidden', display: 'flex' }}>
+                            <div style={{ height: '100%', width: `${w.total > 0 ? w.win / w.total * 100 : 0}%`, background: '#2563eb' }} />
+                            <div style={{ height: '100%', width: `${w.total > 0 ? w.draw / w.total * 100 : 0}%`, background: '#f59e0b' }} />
+                            <div style={{ height: '100%', width: `${w.total > 0 ? w.lose / w.total * 100 : 0}%`, background: '#dc2626' }} />
+                          </div>
+                          <div style={{ fontSize: 11, color: '#475569', minWidth: 150, textAlign: 'right' }}>승 {w.win} · 무 {w.draw} · 패 {w.lose} · <b style={{ color: w.winRate >= 60 ? '#16a34a' : w.winRate >= 40 ? '#d97706' : '#dc2626' }}>{w.winRate}%</b></div>
+                        </div>
+                      ))}
+                      {workTypeRanked.length === 0 && <div style={{ color: '#94a3b8', fontSize: 12, padding: 12 }}>데이터 없음</div>}
+                    </div>
+                  </div>
+
+                  {/* 4. 공법 경쟁 분석 */}
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>⚔ 공법 경쟁 분석 (우리 공법별 승패)</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+                      {Object.entries(byOurTech).map(([tag, v]) => {
+                        const done = v.win + v.lose;
+                        const rate = done > 0 ? Math.round(v.win / done * 100) : 0;
+                        return (
+                          <div key={tag} style={{ padding: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                            <div style={{ fontSize: 14, fontWeight: 800, color: '#0f172a', marginBottom: 4 }}>{tag}</div>
+                            <div style={{ fontSize: 11, color: '#475569' }}>승 <b style={{ color: '#2563eb' }}>{v.win}</b> / 패 <b style={{ color: '#dc2626' }}>{v.lose}</b></div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: rate >= 60 ? '#16a34a' : rate >= 40 ? '#d97706' : '#dc2626', marginTop: 4 }}>{rate}%</div>
+                          </div>
+                        );
+                      })}
+                      {Object.keys(byOurTech).length === 0 && <div style={{ color: '#94a3b8', fontSize: 12 }}>데이터 없음</div>}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 6 }}>※ announcementMethods/workType 에서 POUR·CNC 언급 기준 추정</div>
+                  </div>
+
+                  {/* 5. 패배 원인 TOP */}
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>💔 패배 원인 분석 (resultReasons 텍스트 분류)</div>
+                    {lossReasonRanked.length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {lossReasonRanked.map((l, i) => (
+                          <div key={l.reason} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: i === 0 ? '#fef2f2' : '#f8fafc', borderRadius: 8, border: `1px solid ${i === 0 ? '#fecaca' : '#e2e8f0'}` }}>
+                            <span style={{ fontSize: 16, fontWeight: 800, color: i === 0 ? '#991b1b' : '#64748b', minWidth: 24 }}>{i + 1}</span>
+                            <span style={{ flex: 1, fontSize: 12, color: '#1e293b', fontWeight: 600 }}>{l.reason}</span>
+                            <span style={{ fontSize: 12, fontWeight: 800, color: '#dc2626' }}>{l.count}건 ({l.pct}%)</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ color: '#94a3b8', fontSize: 12, padding: 12 }}>패배 사유 텍스트 없음</div>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
+                    <button onClick={() => setShowAnalysisReport(false)} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>닫기</button>
+                  </div>
+                </div>
               </div>
             );
           })()}
