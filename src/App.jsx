@@ -5893,36 +5893,64 @@ const SETTLEMENT_BADGE_STYLE = {
                 const jandiState = jandiUrl ? (jandiEnabled ? 'ON' : 'OFF') : '미설정';
                 const kaptOk = kaptWorkerUrl && kaptEnabled;
                 const kaptState = kaptWorkerUrl ? (kaptEnabled ? 'ON' : 'OFF') : '미설정';
+                // 버튼 + 캡션 래퍼 — 데스크탑에서만 "왜 필요한지" 항상 표시
+                //   모바일은 공간 부족으로 tooltip 만 유지 (기존 title 속성)
+                const AdminBtnWrap = ({ caption, children }) => (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '2px' }}>
+                    {children}
+                    {!isMobile && caption && (
+                      <div style={{ fontSize: '10px', color: theme.textMuted, textAlign: 'center', letterSpacing: '-0.01em', lineHeight: '1.3' }}>
+                        {caption}
+                      </div>
+                    )}
+                  </div>
+                );
                 return (
                   <>
-                    <button onClick={() => setShowFeedbackList(true)}
-                      style={feedbackPending > 0 ? { ...baseBtn, position: 'relative' } : { ...baseBtn, position: 'relative' }}
-                      title="파일럿 피드백 목록 (관리자)"
-                    >피드백 목록{feedbackPending > 0 && <span style={badgeStyle}>{feedbackPending}</span>}</button>
-                    <button onClick={() => setShowQuarterReportModal(true)} style={baseBtn}
-                      title="김유림에게 분기 종합 보고서 발송 (PT 정산 + 주말출근)"
-                    >분기보고서</button>
-                    <button onClick={() => setShowAnalysisReport(true)} style={baseBtn}
-                      title="대표 보고용 분석 리포트 — 공종별 승률 / 공법 경쟁 / 패배 원인"
-                    >분석</button>
-                    <button onClick={() => setShowUATModal(true)} style={baseBtn}
-                      title="UAT — 8가지 운영 시나리오 자동 검증 (운영 투입 전)"
-                    >UAT</button>
-                    <button onClick={() => setShowActivityLog(true)} style={baseBtn}
-                      title="Activity Log — 중요 이벤트 감사 추적 (최근 100건)"
-                    >로그</button>
-                    <button onClick={() => setShowExceptionQueueModal(true)}
-                      style={pendingExceptions > 0 ? warnBtn : baseBtn}
-                      title="PT 결과 예외 승인 (영업적 승리 / 공고문 없는 현장)"
-                    >예외{pendingExceptions > 0 && <span style={badgeStyle}>{pendingExceptions}</span>}</button>
-                    <button onClick={() => setShowJandiModal(true)}
-                      style={jandiUrl ? baseBtn : dangerBtn}
-                      title="잔디 웹훅 설정 (정산요청·크로스체크·보고서 발송 알림)"
-                    >잔디 {jandiState}</button>
-                    <button onClick={() => setShowKaptModal(true)}
-                      style={kaptWorkerUrl ? baseBtn : dangerBtn}
-                      title="K-APT 자동 검증 Worker URL 설정"
-                    >K-APT {kaptState}</button>
+                    <AdminBtnWrap caption="버그·개선 의견 추적">
+                      <button onClick={() => setShowFeedbackList(true)}
+                        style={feedbackPending > 0 ? { ...baseBtn, position: 'relative' } : { ...baseBtn, position: 'relative' }}
+                        title="파일럿 피드백 목록 (관리자)"
+                      >피드백 목록{feedbackPending > 0 && <span style={badgeStyle}>{feedbackPending}</span>}</button>
+                    </AdminBtnWrap>
+                    <AdminBtnWrap caption="김유림 급여 반영용 집계">
+                      <button onClick={() => setShowQuarterReportModal(true)} style={baseBtn}
+                        title="김유림에게 분기 종합 보고서 발송 (PT 정산 + 주말출근)"
+                      >분기보고서</button>
+                    </AdminBtnWrap>
+                    <AdminBtnWrap caption="대표 보고용 승률·패인">
+                      <button onClick={() => setShowAnalysisReport(true)} style={baseBtn}
+                        title="대표 보고용 분석 리포트 — 공종별 승률 / 공법 경쟁 / 패배 원인"
+                      >분석</button>
+                    </AdminBtnWrap>
+                    <AdminBtnWrap caption="운영 투입 전 자동 검증">
+                      <button onClick={() => setShowUATModal(true)} style={baseBtn}
+                        title="UAT — 8가지 운영 시나리오 자동 검증 (운영 투입 전)"
+                      >UAT</button>
+                    </AdminBtnWrap>
+                    <AdminBtnWrap caption="중요 이벤트 감사 추적">
+                      <button onClick={() => setShowActivityLog(true)} style={baseBtn}
+                        title="Activity Log — 중요 이벤트 감사 추적 (최근 100건)"
+                      >로그</button>
+                    </AdminBtnWrap>
+                    <AdminBtnWrap caption="영업적 승리·공고 없음 승인">
+                      <button onClick={() => setShowExceptionQueueModal(true)}
+                        style={pendingExceptions > 0 ? warnBtn : baseBtn}
+                        title="PT 결과 예외 승인 (영업적 승리 / 공고문 없는 현장)"
+                      >예외{pendingExceptions > 0 && <span style={badgeStyle}>{pendingExceptions}</span>}</button>
+                    </AdminBtnWrap>
+                    <AdminBtnWrap caption="정산·크로스체크 알림 채널">
+                      <button onClick={() => setShowJandiModal(true)}
+                        style={jandiUrl ? baseBtn : dangerBtn}
+                        title="잔디 웹훅 설정 (정산요청·크로스체크·보고서 발송 알림)"
+                      >잔디 {jandiState}</button>
+                    </AdminBtnWrap>
+                    <AdminBtnWrap caption="자동 입찰결과 검증 Worker">
+                      <button onClick={() => setShowKaptModal(true)}
+                        style={kaptWorkerUrl ? baseBtn : dangerBtn}
+                        title="K-APT 자동 검증 Worker URL 설정"
+                      >K-APT {kaptState}</button>
+                    </AdminBtnWrap>
                   </>
                 );
               })()}
