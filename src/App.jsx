@@ -2641,33 +2641,59 @@ const SETTLEMENT_BADGE_STYLE = {
         setShowResultReasonModal(false);
         setResultReasonData({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false, requestException: false, exceptionType: null, bidNo: '', announcementMethods: '' });
 
-        // === 결과 = 승 → 정산 프로세스 ===
-        //   Q1 (pt.date < 2026-04-01): 기존 동작 — 즉시 자동 정산요청 + K-APT 검증
-        //   Q2+ (>= 2026-04-01): 즉시 정산요청 skip → K-APT 검증 후 verified 일 때만 자동 정산대상 전환
+        // === 결과 = 승 → 정산 프로세스 (스펙 #9, #10) ===
+        //   #9 calculatedAmount 자동 저장 — 금액 · 제외사유 영구 기록
+        //   #10 미검증 차단 — 검증 안 됐으면 requested 자동 세팅 skip, needs_review 유지
+        //   감리/잔디증빙/K-APT verified 면 자동 requested 허용 (Q1·Q2 공통)
+        //   K-APT 검증은 비동기 — 성공 시 콜백에서 자동 정산대상 전환
         if (result === '승' && targetAssignee) {
-          const isQ2OrLater = (updatedSchedule.date || '') >= AUTO_TRANSITION_START;
           const combined = (updatedSchedule.workType || '') + '|' + (updatedSchedule.siteName || '');
           const isSupervisionPt = /감리/.test(combined);
           const hasJandiEvidence = updatedSchedule.evidenceFiles && Object.keys(updatedSchedule.evidenceFiles).length > 0;
+          const isKaptVerified = updatedSchedule.kaptVerified?.status === 'verified';
+          const isVerified = isSupervisionPt || hasJandiEvidence || isKaptVerified;
 
-          if (!isQ2OrLater) {
-            // Q1 기존 동작 — 즉시 정산요청
-            const settlementUpdate = { [`settlement/${targetAssignee}/requested`]: true };
-            if (firebaseEnabled && database) {
-              database.ref(`pt/${scheduleId}`).update(settlementUpdate);
-            }
-            setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), requested: true } } } : s));
+          // #9 calculatedAmount 저장 — 감리 80K, 그 외 500K (승 기준)
+          const calculatedAmount = isSupervisionPt ? 80000 : 500000;
+          const nowISO = new Date().toISOString();
+          const settlementPatch = {
+            [`settlement/${targetAssignee}/calculatedAmount`]: calculatedAmount,
+          };
+
+          if (isVerified) {
+            // 검증 통과 → 자동 requested 세팅
+            settlementPatch[`settlement/${targetAssignee}/requested`] = true;
+            settlementPatch[`settlement/${targetAssignee}/requestedAt`] = nowISO;
+            settlementPatch[`settlement/${targetAssignee}/requestedBy`] = isSupervisionPt ? 'auto-supervision' : hasJandiEvidence ? 'auto-jandi-evidence' : 'auto-kapt-verified';
+            settlementPatch[`settlement/${targetAssignee}/status`] = 'requested';
+            // 혹시 이전에 unverified 로 걸려있었다면 clear
+            settlementPatch[`settlement/${targetAssignee}/excludedReason`] = null;
           } else {
-            // Q2+ — 감리 또는 잔디 증빙 있으면 즉시 자동 전환 (검증 불필요)
-            if (isSupervisionPt) {
-              autoTransitionIfEligible(scheduleId, targetAssignee, 'auto-supervision');
-            } else if (hasJandiEvidence) {
-              autoTransitionIfEligible(scheduleId, targetAssignee, 'auto-jandi-evidence');
-            }
+            // #10 미검증 → needs_review 유지 + requested 차단
+            settlementPatch[`settlement/${targetAssignee}/status`] = 'needs_review';
+            settlementPatch[`settlement/${targetAssignee}/excludedReason`] = 'unverified';
           }
 
-          // K-APT 검증 자동 호출 (Q1·Q2 공통, 감리·잔디증빙 있으면 skip)
-          if (!isSupervisionPt && !hasJandiEvidence) {
+          if (firebaseEnabled && database) {
+            database.ref(`pt/${scheduleId}`).update(settlementPatch).catch(() => {});
+          }
+          // 로컬 state 동기화
+          setPtSchedules(prev => prev.map(s => s.id === scheduleId ? ({
+            ...s,
+            settlement: {
+              ...(s.settlement || {}),
+              [targetAssignee]: {
+                ...(s.settlement?.[targetAssignee] || {}),
+                calculatedAmount,
+                ...(isVerified
+                  ? { requested: true, requestedAt: nowISO, status: 'requested', excludedReason: null }
+                  : { status: 'needs_review', excludedReason: 'unverified' }),
+              },
+            },
+          }) : s));
+
+          // K-APT 검증 자동 호출 (감리·잔디증빙·이미 verified 면 skip)
+          if (!isSupervisionPt && !hasJandiEvidence && !isKaptVerified) {
             verifyKaptForPt({
               scheduleId,
               assignee: targetAssignee,
@@ -2677,23 +2703,33 @@ const SETTLEMENT_BADGE_STYLE = {
               ptDate: updatedSchedule.date,
               by: currentUser?.name,
             }).then((r) => {
-              // Q2+ 에서 검증 성공 시 자동 정산대상 전환 + 담당자 잔디 알림
-              if (isQ2OrLater && r && r.status === 'verified') {
+              // 검증 성공 시 자동 정산대상 전환 (Q1·Q2 공통 — 비동기 콜백이라 이 시점엔 unverified 해제)
+              if (r && r.status === 'verified') {
                 autoTransitionIfEligible(scheduleId, targetAssignee, 'auto-kapt-verified');
               }
             }).catch(() => {});
           }
         }
 
-        // === 무 결과 → 정산요청 confirm (기존 흐름 유지) ===
+        // === 무 결과 → 정산요청 confirm (스펙 #9 calculatedAmount 저장 추가) ===
         if (result === '무' && targetAssignee) {
+          // #9 calculatedAmount 저장은 confirm 무관하게 항상
+          if (firebaseEnabled && database) {
+            database.ref(`pt/${scheduleId}/settlement/${targetAssignee}/calculatedAmount`).set(250000).catch(() => {});
+          }
+          setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), calculatedAmount: 250000 } } } : s));
           setTimeout(() => {
             if (window.confirm(`"${targetAssignee}" 정산요청하시겠습니까?`)) {
-              const settlementUpdate = { [`settlement/${targetAssignee}/requested`]: true };
+              const nowISO = new Date().toISOString();
+              const settlementUpdate = {
+                [`settlement/${targetAssignee}/requested`]: true,
+                [`settlement/${targetAssignee}/requestedAt`]: nowISO,
+                [`settlement/${targetAssignee}/status`]: 'requested',
+              };
               if (firebaseEnabled && database) {
                 database.ref(`pt/${scheduleId}`).update(settlementUpdate);
               }
-              setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), requested: true } } } : s));
+              setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), requested: true, requestedAt: nowISO, status: 'requested' } } } : s));
               notifySettlementRequest({
                 assignee: targetAssignee,
                 siteName: updatedSchedule.siteName,
@@ -2848,6 +2884,12 @@ const SETTLEMENT_BADGE_STYLE = {
 
         const patch = buildAutoTransitionPatch(pt, assignee, triggeredBy);
         if (!patch) return { skipped: true, reason: 'not_eligible' };
+
+        // #9 calculatedAmount 도 함께 저장
+        const calc = calculateSettlementAmount(pt, assignee);
+        if (calc.amount > 0) patch.calculatedAmount = calc.amount;
+        // 검증 통과했으므로 unverified 해제
+        patch.excludedReason = null;
 
         // Firebase 업데이트 (부분)
         const updates = {};
