@@ -651,6 +651,15 @@ const SETTLEMENT_BADGE_STYLE = {
       const [showActivityLog, setShowActivityLog] = useState(false);
       const [activityLog, setActivityLog] = useState([]);
 
+      // 파일럿 피드백 수집
+      const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+      const [showFeedbackList, setShowFeedbackList] = useState(false);
+      const [feedbackList, setFeedbackList] = useState([]);
+      const [feedbackDraft, setFeedbackDraft] = useState({
+        kind: 'UX', severity: 'P2', reproducibility: '간헐',
+        module: '', impact: '', text: '',
+      });
+
       // 대표 보고용 분석 리포트 (이승우 대표)
       const [showAnalysisReport, setShowAnalysisReport] = useState(false);
       const [analysisReportYear, setAnalysisReportYear] = useState(new Date().getFullYear());
@@ -1520,6 +1529,14 @@ const SETTLEMENT_BADGE_STYLE = {
           const data = snap.val() || {};
           const arr = Object.entries(data).map(([k, v]) => ({ id: k, ...v })).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
           setActivityLog(arr);
+        });
+
+        // 파일럿 피드백 구독 (최근 200개)
+        const fbRef = database.ref('feedback').orderByKey().limitToLast(200);
+        fbRef.on('value', (snap) => {
+          const data = snap.val() || {};
+          const arr = Object.entries(data).map(([k, v]) => ({ id: k, ...v })).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+          setFeedbackList(arr);
         });
 
         // CRM 영업 데이터 로드
@@ -5744,8 +5761,20 @@ const SETTLEMENT_BADGE_STYLE = {
                 style={{ background: '#4b5563', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
               >+일정추가</button>
               <button onClick={() => setShowMeetingModal(true)} style={{ background: '#4b5563', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}>+ 회의</button>
+              {isLoggedIn && (
+                <button
+                  onClick={() => setShowFeedbackModal(true)}
+                  style={{ background: '#fbbf24', color: '#78350f', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '700', cursor: 'pointer' }}
+                  title="🐞 파일럿 피드백 제출 — 버그/개선/정책/예외 (5줄 + 3클릭)"
+                >🐞 피드백</button>
+              )}
               {currentUser?.isAdmin && (
                 <>
+                  <button
+                    onClick={() => setShowFeedbackList(true)}
+                    style={{ background: '#f59e0b', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer', position: 'relative' }}
+                    title="파일럿 피드백 목록 (관리자)"
+                  >📥 피드백 목록 {feedbackList.filter(f => f.status !== 'resolved').length > 0 && <span style={{ background: '#dc2626', color: 'white', fontSize: 10, padding: '1px 6px', borderRadius: 10, marginLeft: 4 }}>{feedbackList.filter(f => f.status !== 'resolved').length}</span>}</button>
                   <button
                     onClick={() => setShowQuarterReportModal(true)}
                     style={{ background: '#7c3aed', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
@@ -16578,6 +16607,227 @@ tr.suppressed td.fname{color:#64748b;}
 
                   <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
                     <button onClick={() => setShowUATModal(false)} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>닫기</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 🐞 피드백 제출 모달 (전체 사용자) */}
+          {showFeedbackModal && isLoggedIn && (() => {
+            const captureContext = () => {
+              const ctx = {
+                url: window.location.href,
+                activeView: showDashboard ? 'dashboard' : showPerformance ? 'performance' : showMyPage ? 'mypage' : showMeetingView ? 'meeting' : 'other',
+                activeModal: kaptVerifyModal ? 'kapt-verify' : showMonthlySettlement ? 'quarterly-settlement' : showQuarterReportModal ? 'quarter-report' : showAnalysisReport ? 'analysis' : showActivityLog ? 'activity-log' : showUATModal ? 'uat' : null,
+                siteListTab: siteListTab || null,
+                settlementFilter: settlementFilter || null,
+                statsMonth: statsMonth || null,
+                statsAssignee: statsAssignee || null,
+              };
+              return ctx;
+            };
+            const submit = async () => {
+              const text = (feedbackDraft.text || '').trim();
+              if (!text) { alert('내용을 입력해주세요.'); return; }
+              const ctx = captureContext();
+              const payload = {
+                ...feedbackDraft,
+                text,
+                submittedBy: currentUser?.name || 'anonymous',
+                at: new Date().toISOString(),
+                context: ctx,
+                status: 'open',
+                userAgent: navigator.userAgent.slice(0, 200),
+              };
+              try {
+                await database.ref('feedback').push(payload);
+                // 관리자 잔디 알림
+                if (jandiUrl) {
+                  try {
+                    const severityColor = { P0: '#dc2626', P1: '#f59e0b', P2: '#2563eb', P3: '#94a3b8' }[feedbackDraft.severity] || '#64748b';
+                    await fetch(jandiUrl, {
+                      method: 'POST', mode: 'no-cors',
+                      headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        body: `🐞 [${feedbackDraft.severity} ${feedbackDraft.kind}] 파일럿 피드백`,
+                        connectColor: severityColor,
+                        connectInfo: [{
+                          title: `${currentUser?.name || '-'} 제출 · ${feedbackDraft.reproducibility}`,
+                          description: [
+                            text,
+                            '',
+                            `화면: ${ctx.activeView}${ctx.activeModal ? ` / ${ctx.activeModal}` : ''}`,
+                            feedbackDraft.module && `모듈: ${feedbackDraft.module}`,
+                            feedbackDraft.impact && `영향: ${feedbackDraft.impact}`,
+                          ].filter(Boolean).join('\n'),
+                        }],
+                      }),
+                    });
+                  } catch {}
+                }
+                // activity log
+                try { await database.ref('activityLog').push({ event: 'feedback_submitted', at: new Date().toISOString(), by: currentUser?.name || 'anonymous', kind: feedbackDraft.kind, severity: feedbackDraft.severity }); } catch {}
+                alert('✅ 피드백 접수 완료\n\n담당자 확인 후 처리됩니다.\n(심각도 P0: 2시간 · P1: 당일 · P2: 주간)');
+                setFeedbackDraft({ kind: 'UX', severity: 'P2', reproducibility: '간헐', module: '', impact: '', text: '' });
+                setShowFeedbackModal(false);
+              } catch (e) { alert('제출 실패: ' + e.message); }
+            };
+            const Radio = ({ label, value, current, onChange, color }) => (
+              <button
+                onClick={() => onChange(value)}
+                style={{ padding: '5px 10px', borderRadius: 6, border: `1px solid ${current === value ? color : '#e2e8f0'}`, background: current === value ? color : 'white', color: current === value ? 'white' : '#64748b', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+              >{label}</button>
+            );
+            return (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 10500, padding: '20px 0', overflowY: 'auto' }}
+                onClick={(e) => { if (e.target === e.currentTarget) setShowFeedbackModal(false); }}>
+                <div style={{ background: 'white', borderRadius: 14, padding: 22, width: 560, maxWidth: '95%', margin: 'auto' }} onClick={e => e.stopPropagation()}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', letterSpacing: '0.05em' }}>파일럿 피드백</div>
+                      <h2 style={{ fontSize: 18, fontWeight: 800, margin: '4px 0 0 0', color: '#78350f' }}>🐞 문제 또는 개선 요청 제출</h2>
+                    </div>
+                    <button onClick={() => setShowFeedbackModal(false)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#94a3b8' }}>×</button>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#92400e', background: '#fef3c7', padding: '8px 10px', borderRadius: 6, marginBottom: 14, lineHeight: 1.6 }}>
+                    현재 화면·모달·필터 정보가 자동 포함됩니다 (재현성 확보). 5줄 이내로 간단히!
+                  </div>
+
+                  {/* 유형 */}
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', marginBottom: 4 }}>유형</div>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {['데이터', 'UX', '정책', '예외'].map(k => <Radio key={k} label={k} value={k} current={feedbackDraft.kind} onChange={v => setFeedbackDraft(d => ({ ...d, kind: v }))} color="#7c3aed" />)}
+                    </div>
+                  </div>
+
+                  {/* 심각도 */}
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', marginBottom: 4 }}>심각도</div>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      <Radio label="P0 정산오류" value="P0" current={feedbackDraft.severity} onChange={v => setFeedbackDraft(d => ({ ...d, severity: v }))} color="#dc2626" />
+                      <Radio label="P1 차단" value="P1" current={feedbackDraft.severity} onChange={v => setFeedbackDraft(d => ({ ...d, severity: v }))} color="#f59e0b" />
+                      <Radio label="P2 불편" value="P2" current={feedbackDraft.severity} onChange={v => setFeedbackDraft(d => ({ ...d, severity: v }))} color="#2563eb" />
+                      <Radio label="P3 개선" value="P3" current={feedbackDraft.severity} onChange={v => setFeedbackDraft(d => ({ ...d, severity: v }))} color="#94a3b8" />
+                    </div>
+                  </div>
+
+                  {/* 재현성 */}
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', marginBottom: 4 }}>재현성</div>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {['항상', '간헐', '1회'].map(k => <Radio key={k} label={k} value={k} current={feedbackDraft.reproducibility} onChange={v => setFeedbackDraft(d => ({ ...d, reproducibility: v }))} color="#475569" />)}
+                    </div>
+                  </div>
+
+                  {/* 태그 (선택) */}
+                  <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', marginBottom: 4 }}>모듈 (선택)</div>
+                      <select value={feedbackDraft.module} onChange={e => setFeedbackDraft(d => ({ ...d, module: e.target.value }))} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 11 }}>
+                        <option value="">-</option>
+                        <option value="마이페이지">마이페이지</option>
+                        <option value="실적">실적</option>
+                        <option value="검증">검증(K-APT·잔디)</option>
+                        <option value="정산">정산</option>
+                        <option value="리포트">리포트</option>
+                        <option value="기타">기타</option>
+                      </select>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', marginBottom: 4 }}>영향 (선택)</div>
+                      <select value={feedbackDraft.impact} onChange={e => setFeedbackDraft(d => ({ ...d, impact: e.target.value }))} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 11 }}>
+                        <option value="">-</option>
+                        <option value="금액">금액</option>
+                        <option value="상태">상태</option>
+                        <option value="보고">보고</option>
+                        <option value="UX">UX</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* 내용 */}
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', marginBottom: 4 }}>내용 (필수, 5줄 이내)</div>
+                    <textarea
+                      value={feedbackDraft.text}
+                      onChange={e => setFeedbackDraft(d => ({ ...d, text: e.target.value }))}
+                      placeholder="예: 마이페이지 [이상없음] 누른 뒤 새로고침해야 상태 반영됨. 기대: 즉시 반영."
+                      rows={4}
+                      style={{ width: '100%', padding: 10, borderRadius: 8, border: '1.5px solid #cbd5e1', fontSize: 13, resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => setShowFeedbackModal(false)} style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>취소</button>
+                    <button onClick={submit} disabled={!feedbackDraft.text.trim()} style={{ flex: 2, padding: '10px 14px', borderRadius: 8, border: 'none', background: feedbackDraft.text.trim() ? '#d97706' : '#cbd5e1', color: 'white', fontSize: 13, fontWeight: 700, cursor: feedbackDraft.text.trim() ? 'pointer' : 'not-allowed' }}>🐞 제출</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 📥 피드백 목록 모달 (관리자) */}
+          {showFeedbackList && currentUser?.isAdmin && (() => {
+            const open = feedbackList.filter(f => f.status !== 'resolved');
+            const resolved = feedbackList.filter(f => f.status === 'resolved');
+            const severityStyle = {
+              P0: { bg: '#fef2f2', color: '#991b1b', border: '#fecaca', label: 'P0 정산오류' },
+              P1: { bg: '#fffbeb', color: '#92400e', border: '#fde68a', label: 'P1 차단' },
+              P2: { bg: '#eff6ff', color: '#1e40af', border: '#bfdbfe', label: 'P2 불편' },
+              P3: { bg: '#f1f5f9', color: '#64748b', border: '#cbd5e1', label: 'P3 개선' },
+            };
+            const resolve = async (id) => {
+              if (!window.confirm('이 피드백을 처리완료로 표시합니다. 진행?')) return;
+              try {
+                await database.ref(`feedback/${id}`).update({ status: 'resolved', resolvedAt: new Date().toISOString(), resolvedBy: currentUser?.name || 'admin' });
+              } catch (e) { alert('실패: ' + e.message); }
+            };
+            return (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 10500, padding: '20px 0', overflowY: 'auto' }}
+                onClick={(e) => { if (e.target === e.currentTarget) setShowFeedbackList(false); }}>
+                <div style={{ background: 'white', borderRadius: 14, padding: 22, width: 900, maxWidth: '95%', margin: 'auto' }} onClick={e => e.stopPropagation()}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+                    <h2 style={{ fontSize: 18, fontWeight: 800, margin: 0, color: '#78350f' }}>📥 파일럿 피드백 — 처리 {open.length}건 · 완료 {resolved.length}건</h2>
+                    <button onClick={() => setShowFeedbackList(false)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#94a3b8' }}>×</button>
+                  </div>
+                  {feedbackList.length === 0 ? (
+                    <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>피드백 없음</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {[...open, ...resolved].map(f => {
+                        const s = severityStyle[f.severity] || severityStyle.P3;
+                        const isRes = f.status === 'resolved';
+                        return (
+                          <div key={f.id} style={{ padding: '10px 12px', borderRadius: 8, border: `1px solid ${isRes ? '#e2e8f0' : s.border}`, background: isRes ? '#f8fafc' : s.bg, opacity: isRes ? 0.7 : 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 10, background: s.color, color: 'white' }}>{s.label}</span>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>[{f.kind}]</span>
+                              <span style={{ fontSize: 10, color: '#94a3b8' }}>재현성: {f.reproducibility}</span>
+                              {f.module && <span style={{ fontSize: 10, color: '#7c3aed' }}>모듈: {f.module}</span>}
+                              {f.impact && <span style={{ fontSize: 10, color: '#dc2626' }}>영향: {f.impact}</span>}
+                              <span style={{ marginLeft: 'auto', fontSize: 10, color: '#64748b' }}>{f.submittedBy} · {(f.at || '').slice(5, 16).replace('T', ' ')}</span>
+                            </div>
+                            <div style={{ fontSize: 12, color: '#1e293b', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{f.text}</div>
+                            {f.context && (
+                              <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                                <span>화면: {f.context.activeView}{f.context.activeModal ? `/${f.context.activeModal}` : ''}</span>
+                                {f.context.siteListTab && <span>탭: {f.context.siteListTab}</span>}
+                                {f.context.settlementFilter && <span>필터: {f.context.settlementFilter}</span>}
+                              </div>
+                            )}
+                            {!isRes && (
+                              <button onClick={() => resolve(f.id)} style={{ marginTop: 8, padding: '4px 10px', borderRadius: 4, border: 'none', background: '#16a34a', color: 'white', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>✓ 처리완료</button>
+                            )}
+                            {isRes && <div style={{ fontSize: 10, color: '#16a34a', marginTop: 4 }}>✓ 처리: {f.resolvedBy} · {(f.resolvedAt || '').slice(5, 16).replace('T', ' ')}</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
+                    <button onClick={() => setShowFeedbackList(false)} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>닫기</button>
                   </div>
                 </div>
               </div>
