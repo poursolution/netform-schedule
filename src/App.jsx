@@ -648,6 +648,10 @@ const SETTLEMENT_BADGE_STYLE = {
       const [uatResults, setUatResults] = useState(null);
       const [uatRunning, setUatRunning] = useState(false);
 
+      // 상단 관리자 버튼 드롭다운 (성격별 묶음)
+      //   null | 'audit' (감사·이슈) | 'system' (시스템 설정)
+      const [adminMenu, setAdminMenu] = useState(null);
+
       // Activity log — 운영 감사용
       const [showActivityLog, setShowActivityLog] = useState(false);
       const [activityLog, setActivityLog] = useState([]);
@@ -750,6 +754,16 @@ const SETTLEMENT_BADGE_STYLE = {
         document.addEventListener('click', handleClickOutside);
         return () => document.removeEventListener('click', handleClickOutside);
       }, [showRequestedDropdown]);
+
+      // 상단 관리자 드롭다운 외부 클릭 닫기
+      useEffect(() => {
+        if (!adminMenu) return;
+        const onClick = (e) => {
+          if (!e.target.closest('[data-admin-menu]')) setAdminMenu(null);
+        };
+        document.addEventListener('click', onClick);
+        return () => document.removeEventListener('click', onClick);
+      }, [adminMenu]);
       
       // 실적 내보내기 필터
       const [exportYear, setExportYear] = useState('all');
@@ -5849,7 +5863,7 @@ const SETTLEMENT_BADGE_STYLE = {
                 onClick={() => { setAddTypeModalDate(null); setShowAddTypeModal(true); }} 
                 style={{ background: '#4b5563', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
               >+일정추가</button>
-              <button onClick={() => setShowMeetingModal(true)} style={{ background: '#4b5563', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}>+ 영업회의</button>
+              {/* + 영업회의 버튼 제거됨 — 영업회의 페이지 내부에서 추가 가능 (중복 제거) */}
               {/* 영업회의 목록/관리 진입 — 메인 탭에서 분리됨 */}
               {isLoggedIn && (
                 <button
@@ -5909,14 +5923,38 @@ const SETTLEMENT_BADGE_STYLE = {
                     )}
                   </div>
                 );
+                // 드롭다운 메뉴 아이템 공용 스타일
+                const menuItem = {
+                  display: 'block',
+                  width: '100%',
+                  padding: '10px 14px',
+                  background: 'white',
+                  border: 'none',
+                  borderBottom: `1px solid ${theme.borderDefault}`,
+                  color: theme.textPrimary,
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  whiteSpace: 'nowrap',
+                };
+                const menuCaption = { fontSize: '10px', color: theme.textMuted, fontWeight: '500', marginTop: '2px' };
+                const menuPanel = {
+                  position: 'absolute',
+                  top: 'calc(100% + 6px)',
+                  right: 0,
+                  minWidth: '200px',
+                  background: 'white',
+                  border: `1px solid ${theme.borderStrong}`,
+                  borderRadius: '8px',
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                  overflow: 'hidden',
+                  zIndex: 1000,
+                };
+                const auditBadgeTotal = feedbackPending + pendingExceptions;
                 return (
                   <>
-                    <AdminBtnWrap caption="버그·개선 의견 추적">
-                      <button onClick={() => setShowFeedbackList(true)}
-                        style={feedbackPending > 0 ? { ...baseBtn, position: 'relative' } : { ...baseBtn, position: 'relative' }}
-                        title="파일럿 피드백 목록 (관리자)"
-                      >피드백 목록{feedbackPending > 0 && <span style={badgeStyle}>{feedbackPending}</span>}</button>
-                    </AdminBtnWrap>
+                    {/* === 상단 필수 (관리자 핵심 액션) === */}
                     <AdminBtnWrap caption="김유림 급여 반영용 집계">
                       <button onClick={() => setShowQuarterReportModal(true)} style={baseBtn}
                         title="김유림에게 분기 종합 보고서 발송 (PT 정산 + 주말출근)"
@@ -5927,33 +5965,72 @@ const SETTLEMENT_BADGE_STYLE = {
                         title="대표 보고용 분석 리포트 — 공종별 승률 / 공법 경쟁 / 패배 원인"
                       >분석</button>
                     </AdminBtnWrap>
-                    <AdminBtnWrap caption="운영 투입 전 자동 검증">
+                    <AdminBtnWrap caption="운영 투입 전 자동 검사">
                       <button onClick={() => setShowUATModal(true)} style={baseBtn}
                         title="UAT — 8가지 운영 시나리오 자동 검증 (운영 투입 전)"
                       >UAT</button>
                     </AdminBtnWrap>
-                    <AdminBtnWrap caption="중요 이벤트 감사 추적">
-                      <button onClick={() => setShowActivityLog(true)} style={baseBtn}
-                        title="Activity Log — 중요 이벤트 감사 추적 (최근 100건)"
-                      >로그</button>
+
+                    {/* === 드롭다운 A: 감사·이슈 (피드백 목록 / 예외 / 로그) === */}
+                    <AdminBtnWrap caption="피드백 · 예외 · 로그">
+                      <div data-admin-menu style={{ position: 'relative' }}>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setAdminMenu(adminMenu === 'audit' ? null : 'audit'); }}
+                          style={auditBadgeTotal > 0 ? { ...warnBtn, position: 'relative' } : { ...baseBtn, position: 'relative' }}
+                          title="감사·이슈 관리 (피드백·예외·로그)"
+                        >감사·이슈 {adminMenu === 'audit' ? '▴' : '▾'}{auditBadgeTotal > 0 && <span style={badgeStyle}>{auditBadgeTotal}</span>}</button>
+                        {adminMenu === 'audit' && (
+                          <div style={menuPanel}>
+                            <button onClick={() => { setAdminMenu(null); setShowFeedbackList(true); }} style={menuItem}
+                              onMouseEnter={(e) => e.currentTarget.style.background = theme.surfaceMuted}
+                              onMouseLeave={(e) => e.currentTarget.style.background = 'white'}>
+                              피드백 목록 {feedbackPending > 0 && <span style={badgeStyle}>{feedbackPending}</span>}
+                              <div style={menuCaption}>버그·개선 의견 추적</div>
+                            </button>
+                            <button onClick={() => { setAdminMenu(null); setShowExceptionQueueModal(true); }} style={menuItem}
+                              onMouseEnter={(e) => e.currentTarget.style.background = theme.surfaceMuted}
+                              onMouseLeave={(e) => e.currentTarget.style.background = 'white'}>
+                              예외 {pendingExceptions > 0 && <span style={badgeStyle}>{pendingExceptions}</span>}
+                              <div style={menuCaption}>영업적 승리·공고 없음 승인</div>
+                            </button>
+                            <button onClick={() => { setAdminMenu(null); setShowActivityLog(true); }} style={{ ...menuItem, borderBottom: 'none' }}
+                              onMouseEnter={(e) => e.currentTarget.style.background = theme.surfaceMuted}
+                              onMouseLeave={(e) => e.currentTarget.style.background = 'white'}>
+                              로그
+                              <div style={menuCaption}>중요 이벤트 감사 추적</div>
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </AdminBtnWrap>
-                    <AdminBtnWrap caption="영업적 승리·공고 없음 승인">
-                      <button onClick={() => setShowExceptionQueueModal(true)}
-                        style={pendingExceptions > 0 ? warnBtn : baseBtn}
-                        title="PT 결과 예외 승인 (영업적 승리 / 공고문 없는 현장)"
-                      >예외{pendingExceptions > 0 && <span style={badgeStyle}>{pendingExceptions}</span>}</button>
-                    </AdminBtnWrap>
-                    <AdminBtnWrap caption="정산·크로스체크 알림 채널">
-                      <button onClick={() => setShowJandiModal(true)}
-                        style={jandiUrl ? baseBtn : dangerBtn}
-                        title="잔디 웹훅 설정 (정산요청·크로스체크·보고서 발송 알림)"
-                      >잔디 {jandiState}</button>
-                    </AdminBtnWrap>
-                    <AdminBtnWrap caption="자동 입찰결과 검증 Worker">
-                      <button onClick={() => setShowKaptModal(true)}
-                        style={kaptWorkerUrl ? baseBtn : dangerBtn}
-                        title="K-APT 자동 검증 Worker URL 설정"
-                      >K-APT {kaptState}</button>
+
+                    {/* === 드롭다운 B: 시스템 (잔디 / K-APT) === */}
+                    <AdminBtnWrap caption="외부 연동 · 검증 Worker">
+                      <div data-admin-menu style={{ position: 'relative' }}>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setAdminMenu(adminMenu === 'system' ? null : 'system'); }}
+                          style={(jandiUrl && kaptWorkerUrl) ? baseBtn : dangerBtn}
+                          title="시스템 연동 (잔디·K-APT)"
+                        >시스템 {adminMenu === 'system' ? '▴' : '▾'}</button>
+                        {adminMenu === 'system' && (
+                          <div style={menuPanel}>
+                            <button onClick={() => { setAdminMenu(null); setShowJandiModal(true); }}
+                              style={{ ...menuItem, color: jandiUrl ? theme.textPrimary : theme.semantic?.danger || '#b91c1c' }}
+                              onMouseEnter={(e) => e.currentTarget.style.background = theme.surfaceMuted}
+                              onMouseLeave={(e) => e.currentTarget.style.background = 'white'}>
+                              잔디 · {jandiState}
+                              <div style={menuCaption}>정산·크로스체크 알림 채널</div>
+                            </button>
+                            <button onClick={() => { setAdminMenu(null); setShowKaptModal(true); }}
+                              style={{ ...menuItem, borderBottom: 'none', color: kaptWorkerUrl ? theme.textPrimary : theme.semantic?.danger || '#b91c1c' }}
+                              onMouseEnter={(e) => e.currentTarget.style.background = theme.surfaceMuted}
+                              onMouseLeave={(e) => e.currentTarget.style.background = 'white'}>
+                              K-APT · {kaptState}
+                              <div style={menuCaption}>자동 입찰결과 검증 Worker</div>
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </AdminBtnWrap>
                   </>
                 );
