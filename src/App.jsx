@@ -63,6 +63,7 @@ const EXCLUSION_REASON_LABEL = {
   [EXCLUSION_REASONS.CANCELLED_NOTICE]: '취소공고',
 };
 import { normalizeApartmentName, addApartmentAlias } from './utils/apartmentMatch.js';
+import * as theme from './utils/theme.js';
 
 // 정산 상태 6단계 배지 스타일 (#4 — 실적 카드용)
 const SETTLEMENT_BADGE_STYLE = {
@@ -5857,9 +5858,9 @@ const SETTLEMENT_BADGE_STYLE = {
                     updatePageTitle('영업회의');
                   }}
                   style={{
-                    background: showMeetingView ? '#0F4C75' : '#ffffff',
-                    color: showMeetingView ? '#ffffff' : '#0F4C75',
-                    border: '1px solid #0F4C75',
+                    background: showMeetingView ? theme.brandPrimary : theme.surfaceBase,
+                    color: showMeetingView ? theme.textOnBrand : theme.brandPrimary,
+                    border: `1px solid ${theme.brandPrimary}`,
                     padding: isMobile ? '6px 10px' : '8px 12px',
                     borderRadius: '6px',
                     fontSize: isMobile ? '11px' : '12px',
@@ -5877,19 +5878,15 @@ const SETTLEMENT_BADGE_STYLE = {
                 //   surfaceAccent: Soft Cloud  #BBE1FA  (강조 배경)
                 //   danger:        #b91c1c / bg #fee2e2 (미설정)
                 //   warn:          #b45309 / bg #fef3c7 (주의: 예외 pending)
+                // theme.js 의 역할 기반 토큰 사용 (brandPrimary = Royal Blue 등)
                 const baseBtn = {
-                  background: '#ffffff',
-                  color: '#0F4C75',
-                  border: '1px solid #0F4C75',
+                  ...theme.adminOutlineButton,
                   padding: isMobile ? '8px 12px' : '10px 16px',
-                  borderRadius: '8px',
                   fontSize: isMobile ? '12px' : '13px',
-                  fontWeight: '600',
-                  cursor: 'pointer',
                 };
-                const warnBtn = { ...baseBtn, background: '#fef3c7', color: '#b45309', border: '1px solid #f59e0b' };
-                const dangerBtn = { ...baseBtn, background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5' };
-                const badgeStyle = { background: '#0F4C75', color: 'white', fontSize: 10, padding: '1px 6px', borderRadius: 10, marginLeft: 4, fontWeight: 700 };
+                const warnBtn = { ...baseBtn, ...theme.adminWarnButton };
+                const dangerBtn = { ...baseBtn, ...theme.adminDangerButton };
+                const badgeStyle = theme.countBadge;
                 const feedbackPending = feedbackList.filter(f => f.status !== 'resolved').length;
                 const pendingExceptions = listPendingExceptions(ptSchedules).length;
                 const jandiOk = jandiUrl && jandiEnabled;
@@ -16787,8 +16784,8 @@ tr.suppressed td.fname{color:#64748b;}
                 width: isMobile ? '52px' : '56px',
                 height: isMobile ? '52px' : '56px',
                 borderRadius: '50%',
-                background: '#0F4C75',
-                color: 'white',
+                background: theme.brandPrimary,
+                color: theme.textOnBrand,
                 border: 'none',
                 fontSize: isMobile ? '22px' : '24px',
                 fontWeight: '700',
