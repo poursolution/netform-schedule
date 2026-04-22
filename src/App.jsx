@@ -613,6 +613,7 @@ const SETTLEMENT_BADGE_STYLE = {
       const [quarterReportYear, setQuarterReportYear] = useState(new Date().getFullYear());
       const [quarterReportQuarter, setQuarterReportQuarter] = useState(1);
       const [quarterReportBusy, setQuarterReportBusy] = useState(false);
+      const [quarterReportOverrideGuard, setQuarterReportOverrideGuard] = useState(false);  // Phase 5 — 전원 최종확정 우회
 
       // 잔디 웹훅 설정
       const [jandiUrl, setJandiUrl] = useState('');
@@ -16118,6 +16119,31 @@ tr.suppressed td.fname{color:#64748b;}
             const isOverdue = deadline && today > deadline;
             const baseFilename = `POUR_분기보고서_${quarterReportYear}_${report.range.label}`;
 
+            // Phase 5 — 김유림 발송 가드: 모든 담당자 finalConfirmed 필수
+            //   대상: 해당 분기 settlement 데이터에 totalCount > 0 인 담당자만 (활동자 기준)
+            //   관리자는 '가드 우회' 체크박스로 긴급 발송 가능 (권장 X)
+            const reportQKey = `${quarterReportYear}-Q${quarterReportQuarter}`;
+            const qSettlement = (window._lastQuarterlySettlement?.[reportQKey]) || null;
+            // Firebase 에서 미리 로드하지 않았다면 렌더 중 한 번만 요청
+            if (!qSettlement && database && !window._loadingQuarterlySettlement?.[reportQKey]) {
+              window._loadingQuarterlySettlement = window._loadingQuarterlySettlement || {};
+              window._loadingQuarterlySettlement[reportQKey] = true;
+              database.ref(`quarterlySettlements/${reportQKey}`).once('value').then(snap => {
+                window._lastQuarterlySettlement = window._lastQuarterlySettlement || {};
+                window._lastQuarterlySettlement[reportQKey] = snap.val() || { loaded: true };
+                // 강제 리렌더
+                setQuarterReportBusy(b => b);
+                setTimeout(() => setQuarterReportBusy(b => !b ? false : b), 0);
+              }).catch(() => { window._loadingQuarterlySettlement[reportQKey] = false; });
+            }
+            const qPerAssignee = qSettlement?.perAssignee || {};
+            const activeAssignees = Object.values(qPerAssignee).filter(a => (a?.totalCount || 0) > 0).map(a => a.assignee);
+            const confMap = quarterConfirmations[reportQKey] || {};
+            const finalConfirmedNames = activeAssignees.filter(n => confMap[n]?.finalConfirmed === true);
+            const missingFinalConfirm = activeAssignees.filter(n => !confMap[n]?.finalConfirmed);
+            const allFinalConfirmed = activeAssignees.length > 0 && missingFinalConfirm.length === 0;
+            const hasSettlementData = activeAssignees.length > 0;
+
             const handleDownloadExcel = () => {
               try {
                 const blob = generateExcelBlob(report);
@@ -16150,12 +16176,33 @@ tr.suppressed td.fname{color:#64748b;}
               w.document.close();
             };
             const handleApproveAndSend = async () => {
-              if (!window.confirm(`"${quarterReportYear}년 ${report.range.label} 종합 보고서"를\n김유림(yurim@netformrnd.com)에게 발송하시겠습니까?\n\n승인 시:\n1) Excel + PDF 자동 다운로드\n2) 메일 작성 창 열림\n3) 다운로드된 파일 2개를 첨부하여 발송`)) return;
+              // Phase 5 가드 — 전원 최종확정 안 됐으면 차단 (override 시 경고 추가)
+              if (hasSettlementData && !allFinalConfirmed && !quarterReportOverrideGuard) {
+                alert(`⚠ 발송 차단\n\n미확정 담당자 ${missingFinalConfirm.length}명:\n  ${missingFinalConfirm.join(', ')}\n\n전원 최종 확정 후 발송 가능합니다.\n(긴급 시 "가드 우회" 체크박스 사용)`);
+                return;
+              }
+              const confirmMsg = hasSettlementData && !allFinalConfirmed
+                ? `⚠ 가드 우회 발송\n\n미확정 ${missingFinalConfirm.length}명 (${missingFinalConfirm.join(', ')}) 임에도 발송합니다.\n\n이후 재발송이 어려우므로 신중히 진행해주세요. 진행?`
+                : `"${quarterReportYear}년 ${report.range.label} 종합 보고서"를\n김유림(yurim@netformrnd.com)에게 발송하시겠습니까?\n\n승인 시:\n1) Excel + PDF 자동 다운로드\n2) 메일 작성 창 열림\n3) 다운로드된 파일 2개를 첨부하여 발송`;
+              if (!window.confirm(confirmMsg)) return;
               setQuarterReportBusy(true);
               try {
                 const blob = generateExcelBlob(report);
                 downloadBlob(blob, `${baseFilename}.xlsx`);
                 await generateAndDownloadPDF(report, `${baseFilename}.pdf`);
+                // 발송 이력 기록
+                if (database) {
+                  try {
+                    await database.ref(`quarterReportSent/${reportQKey}`).set({
+                      sentAt: new Date().toISOString(),
+                      sentBy: currentUser?.name || 'admin',
+                      totalAssignees: activeAssignees.length,
+                      finalConfirmedCount: finalConfirmedNames.length,
+                      missingFinalConfirm: missingFinalConfirm,
+                      overrideGuard: !!(hasSettlementData && !allFinalConfirmed),
+                    });
+                  } catch {}
+                }
                 setTimeout(() => {
                   window.location.href = buildMailtoLink(report, 'yurim@netformrnd.com');
                 }, 500);
@@ -16213,6 +16260,47 @@ tr.suppressed td.fname{color:#64748b;}
                         color: isOverdue ? '#dc2626' : '#92400e',
                       }}>
                         {isOverdue ? '⚠️ 발송 마감일 초과' : '📅 발송 마감일'}: <strong>{deadline}</strong>
+                      </div>
+                    )}
+
+                    {/* Phase 5 — 담당자 최종확정 가드 배너 */}
+                    {hasSettlementData ? (
+                      <div style={{
+                        background: allFinalConfirmed ? '#ecfdf5' : '#fef2f2',
+                        border: `2px solid ${allFinalConfirmed ? '#a7f3d0' : '#fecaca'}`,
+                        borderRadius: 8, padding: 14, marginBottom: 16, fontSize: 13,
+                        color: allFinalConfirmed ? '#047857' : '#991b1b',
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <strong>
+                            {allFinalConfirmed ? '✅ 전원 최종 확정 완료 — 발송 가능' : '⚠ 담당자 최종 확정 미완'}
+                          </strong>
+                          <span style={{ fontSize: 12, fontWeight: 700 }}>{finalConfirmedNames.length} / {activeAssignees.length}</span>
+                        </div>
+                        {!allFinalConfirmed && (
+                          <>
+                            <div style={{ fontSize: 12, marginTop: 4, lineHeight: 1.6 }}>
+                              미확정 담당자: <strong>{missingFinalConfirm.join(', ')}</strong>
+                            </div>
+                            <div style={{ fontSize: 11, marginTop: 6, color: '#b91c1c', lineHeight: 1.5 }}>
+                              → 관리자 분기정산 모달에서 [📝 최종확정 요청] 발송 필요.<br />
+                              → 담당자들이 마이페이지에서 [최종 확정] 버튼 누르면 해결됨.
+                            </div>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, padding: 8, background: 'white', borderRadius: 6, border: '1px dashed #fca5a5', cursor: 'pointer', fontSize: 11 }}>
+                              <input
+                                type="checkbox"
+                                checked={quarterReportOverrideGuard}
+                                onChange={e => setQuarterReportOverrideGuard(e.target.checked)}
+                                style={{ width: 14, height: 14 }}
+                              />
+                              <span><strong>긴급 우회</strong> — 가드 무시하고 발송 (미확정 담당자는 보고서에 포함되지만 재발송 어려움)</span>
+                            </label>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 12, color: '#64748b' }}>
+                        ℹ {reportQKey} 분기정산 데이터 없음 — 관리자 💰 분기정산 모달에서 먼저 생성 후 담당자 확인 절차 진행해주세요.
                       </div>
                     )}
 
@@ -16311,10 +16399,23 @@ tr.suppressed td.fname{color:#64748b;}
                       <div style={{ fontSize: 12, color: '#047857', marginBottom: 10, lineHeight: 1.5 }}>
                         사전 확인 완료 후, 아래 버튼 클릭 시 Excel + PDF 자동 다운로드 → 김유림 메일 작성 창 열림 (확인 다이얼로그 표시)
                       </div>
-                      <button onClick={handleApproveAndSend} disabled={quarterReportBusy}
-                        style={{ width: '100%', padding: 14, background: quarterReportBusy ? '#94a3b8' : '#059669', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: quarterReportBusy ? 'wait' : 'pointer' }}>
-                        {quarterReportBusy ? '처리 중...' : '🚀 승인 후 발송 (Excel + PDF + 메일)'}
-                      </button>
+                      {(() => {
+                        const blocked = hasSettlementData && !allFinalConfirmed && !quarterReportOverrideGuard;
+                        const bg = quarterReportBusy ? '#94a3b8' : blocked ? '#cbd5e1' : (hasSettlementData && !allFinalConfirmed && quarterReportOverrideGuard) ? '#dc2626' : '#059669';
+                        return (
+                          <button onClick={handleApproveAndSend} disabled={quarterReportBusy || blocked}
+                            style={{ width: '100%', padding: 14, background: bg, color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: quarterReportBusy ? 'wait' : blocked ? 'not-allowed' : 'pointer' }}
+                            title={blocked ? '전원 최종 확정 후 발송 가능' : ''}>
+                            {quarterReportBusy
+                              ? '처리 중...'
+                              : blocked
+                                ? `🔒 발송 잠김 — 담당자 ${missingFinalConfirm.length}명 최종확정 대기`
+                                : (hasSettlementData && !allFinalConfirmed && quarterReportOverrideGuard)
+                                  ? '⚠ 긴급 우회 발송 (Excel + PDF + 메일)'
+                                  : '🚀 승인 후 발송 (Excel + PDF + 메일)'}
+                          </button>
+                        );
+                      })()}
                     </div>
 
                     <div style={{ marginTop: 16, padding: 12, background: '#f8fafc', borderRadius: 8, fontSize: 11, color: '#64748b', lineHeight: 1.7 }}>
