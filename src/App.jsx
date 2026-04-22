@@ -14476,43 +14476,95 @@ tr.suppressed td.fname{color:#64748b;}
                           </div>
                         </div>
                       )}
-                      {isNeedsReview && (
-                        <div style={{ padding: '14px 16px', background: '#fef3c7', border: '1.5px solid #fcd34d', borderRadius: '10px', marginBottom: '14px' }}>
-                          <div style={{ fontSize: '13px', fontWeight: '800', color: '#92400e', marginBottom: '6px' }}>⚠ 자동 판정 불가 — 수동 확인 필요</div>
-                          <div style={{ fontSize: '12px', color: '#92400e' }}>사유: {r.reason || '알 수 없음'}</div>
-                          {r.message && <div style={{ fontSize: '12px', color: '#92400e', marginTop: '4px' }}>{r.message}</div>}
-                          {/* 취소공고 수동 처리 버튼 */}
-                          <button
-                            onClick={async () => {
-                              const reason = window.prompt('K-APT 에서 공고가 "취소" 상태로 확인되었나요?\n\n취소 사유를 입력해주세요 (예: 재공고 예정 / 원자재 상승 / 기타):');
-                              if (reason === null) return;
-                              const trimmed = (reason || '').trim() || '사유 미입력';
-                              try {
-                                await database.ref(`pt/${kaptVerifyModal.scheduleId}/kaptVerified`).update({
-                                  status: 'cancelled',
-                                  cancelReason: trimmed,
-                                  cancelledAt: new Date().toISOString(),
-                                  cancelledBy: currentUser?.name || 'manual',
-                                  bidNum: kaptVerifyModal.bidNum || null,
-                                });
-                                setPtSchedules(prev => prev.map(ps => ps.id === kaptVerifyModal.scheduleId ? ({
-                                  ...ps,
-                                  kaptVerified: {
-                                    ...(ps.kaptVerified || {}),
-                                    status: 'cancelled',
-                                    cancelReason: trimmed,
-                                    cancelledAt: new Date().toISOString(),
-                                    cancelledBy: currentUser?.name || 'manual',
-                                  },
-                                }) : ps));
-                                setKaptVerifyModal(null); setKaptVerifyBidInput('');
-                                alert(`🚫 취소공고로 표시됨\n\n${kaptVerifyModal.siteName}\n사유: ${trimmed}\n\n이 PT 는 정산 대상에서 제외됩니다. 재공고 나오면 신규 PT 로 추가 입력해주세요.`);
-                              } catch (e) { alert('저장 실패: ' + e.message); }
-                            }}
-                            style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '6px', border: '1.5px solid #dc2626', background: 'white', color: '#dc2626', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
-                          >🚫 취소공고로 표시</button>
-                        </div>
-                      )}
+                      {isNeedsReview && (() => {
+                        // 사용자 친화 사유 텍스트 매핑
+                        const REASON_TEXT = {
+                          bid_not_found: '입찰번호로 K-APT 공고를 찾지 못했습니다',
+                          name_mismatch: '단지명이 K-APT 공고와 일치하지 않습니다',
+                          no_candidates: '매칭 가능한 K-APT 후보 공고가 없습니다',
+                          parse_failed: 'K-APT 공고 내용을 분석하지 못했습니다',
+                          low_score: '자동 매칭 점수가 임계값보다 낮습니다',
+                          date_mismatch: '공고 등록일과 PT일 차이가 큽니다',
+                        };
+                        const friendlyReason = REASON_TEXT[r.reason] || r.reason || '알 수 없음';
+                        return (
+                          <div style={{ padding: '14px 16px', background: '#fef3c7', border: '1.5px solid #fcd34d', borderRadius: '10px', marginBottom: '14px' }}>
+                            <div style={{ fontSize: '13px', fontWeight: '800', color: '#92400e', marginBottom: '6px' }}>자동 판정 불가 — 수동 확인 필요</div>
+                            <div style={{ fontSize: '12px', color: '#92400e', lineHeight: '1.6' }}>{friendlyReason}</div>
+                            {r.message && <div style={{ fontSize: '11px', color: '#a16207', marginTop: '4px' }}>{r.message}</div>}
+
+                            {/* 대안 1: 후보 다시 찾기 — Firebase 후보 재검색 → candidates stage */}
+                            <div style={{ marginTop: '12px', padding: '10px 12px', background: 'white', borderRadius: '8px', border: '1px solid #fde68a' }}>
+                              <div style={{ fontSize: '11px', fontWeight: '700', color: '#475569', marginBottom: '8px' }}>아래 중 하나를 선택하세요</div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <button
+                                  onClick={() => {
+                                    // candidates-loading 으로 전환 후 재검색
+                                    setKaptVerifyModal(m => ({ ...m, stage: 'candidates-loading', candidates: [] }));
+                                    searchKaptCandidates({
+                                      siteName: kaptVerifyModal.siteName,
+                                      ptDate: kaptVerifyModal.date,
+                                      aliasMap: apartmentAliasMap,
+                                    })
+                                      .then(({ candidates }) => {
+                                        setKaptVerifyModal(m => m ? ({
+                                          ...m,
+                                          stage: (candidates && candidates.length > 0) ? 'candidates' : 'input',
+                                          candidates: candidates || [],
+                                        }) : m);
+                                      })
+                                      .catch(() => {
+                                        setKaptVerifyModal(m => m ? ({ ...m, stage: 'input', candidates: [] }) : m);
+                                      });
+                                  }}
+                                  style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid #0F4C75', background: '#BBE1FA', color: '#0F4C75', fontSize: '12px', fontWeight: '700', cursor: 'pointer', textAlign: 'left' }}
+                                >K-APT 후보 다시 검색 — 유사 단지명 3개 추천</button>
+
+                                {/* 대안 2: 공고번호 직접 입력 */}
+                                <button
+                                  onClick={() => {
+                                    setKaptVerifyBidInput('');
+                                    setKaptVerifyModal(m => ({ ...m, stage: 'input', result: null }));
+                                    window.open(`https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(kaptVerifyModal.siteName || '')}`, '_blank');
+                                  }}
+                                  style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid #3282B8', background: 'white', color: '#0F4C75', fontSize: '12px', fontWeight: '700', cursor: 'pointer', textAlign: 'left' }}
+                                >K-APT 공고번호 직접 입력 — 복사/붙여넣기</button>
+
+                                {/* 대안 3: 취소공고 처리 */}
+                                <button
+                                  onClick={async () => {
+                                    const reason = window.prompt('K-APT 에서 공고가 "취소" 상태로 확인되었나요?\n\n취소 사유를 입력해주세요 (예: 재공고 예정 / 원자재 상승 / 기타):');
+                                    if (reason === null) return;
+                                    const trimmed = (reason || '').trim() || '사유 미입력';
+                                    try {
+                                      await database.ref(`pt/${kaptVerifyModal.scheduleId}/kaptVerified`).update({
+                                        status: 'cancelled',
+                                        cancelReason: trimmed,
+                                        cancelledAt: new Date().toISOString(),
+                                        cancelledBy: currentUser?.name || 'manual',
+                                        bidNum: kaptVerifyModal.bidNum || null,
+                                      });
+                                      setPtSchedules(prev => prev.map(ps => ps.id === kaptVerifyModal.scheduleId ? ({
+                                        ...ps,
+                                        kaptVerified: {
+                                          ...(ps.kaptVerified || {}),
+                                          status: 'cancelled',
+                                          cancelReason: trimmed,
+                                          cancelledAt: new Date().toISOString(),
+                                          cancelledBy: currentUser?.name || 'manual',
+                                        },
+                                      }) : ps));
+                                      setKaptVerifyModal(null); setKaptVerifyBidInput('');
+                                      alert(`취소공고로 표시됨\n\n${kaptVerifyModal.siteName}\n사유: ${trimmed}\n\n이 PT 는 정산 대상에서 제외됩니다. 재공고 나오면 신규 PT 로 추가 입력해주세요.`);
+                                    } catch (e) { alert('저장 실패: ' + e.message); }
+                                  }}
+                                  style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fef2f2', color: '#b91c1c', fontSize: '12px', fontWeight: '700', cursor: 'pointer', textAlign: 'left' }}
+                                >취소공고로 표시 — K-APT에서 취소 확인됨</button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
                       {isError && (
                         <div style={{ padding: '14px 16px', background: '#fee2e2', border: '1.5px solid #fecaca', borderRadius: '10px', marginBottom: '14px' }}>
                           <div style={{ fontSize: '13px', fontWeight: '800', color: '#991b1b', marginBottom: '6px' }}>❌ 오류</div>
