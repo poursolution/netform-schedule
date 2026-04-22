@@ -11508,6 +11508,84 @@ tr.suppressed td.fname{color:#64748b;}
                   return !stl.completed && !stl.selfSales;
                 }).length;
 
+                // 💰 컨트롤타워 — 분기 예상 정산 상태별 금액 분리
+                const qMoney = thisQuarterPts.reduce((acc, s) => {
+                  if (s.selfPT) return acc;
+                  const r = getMyResult(s);
+                  if (!r || r === '패') return acc;
+                  const stl = s.settlement?.[viewingUser] || {};
+                  if (stl.selfSales) return acc;
+                  const isSup = /감리/.test((s.workType || '') + '|' + (s.siteName || ''));
+                  let amount = isSup ? 80000 : (r === '승' ? 500000 : 250000);
+                  if (s.kaptVerified?.status === 'cancelled') return acc;
+                  acc.total += amount;
+                  if (stl.completed) acc.completed += amount;
+                  else if (stl.confirmed || stl.finalConfirmed) acc.confirmed += amount;
+                  else if (stl.requested) acc.requested += amount;
+                  else acc.review += amount;
+                  return acc;
+                }, { total: 0, completed: 0, confirmed: 0, requested: 0, review: 0 });
+
+                // 전분기 비교
+                const prevQNum = nowQ === 1 ? 4 : nowQ - 1;
+                const prevQY = nowQ === 1 ? nowY - 1 : nowY;
+                const prevQStart = `${prevQY}-${String((prevQNum - 1) * 3 + 1).padStart(2, '0')}-01`;
+                const prevQEnd = `${prevQY}-${String(prevQNum * 3).padStart(2, '0')}-31`;
+                const prevQMoney = myPtSchedules.filter(s => s.date >= prevQStart && s.date <= prevQEnd).reduce((sum, s) => {
+                  if (s.selfPT) return sum;
+                  const r = getMyResult(s);
+                  if (!r || r === '패') return sum;
+                  const stl = s.settlement?.[viewingUser] || {};
+                  if (stl.selfSales) return sum;
+                  const isSup = /감리/.test((s.workType || '') + '|' + (s.siteName || ''));
+                  const amt = isSup ? 80000 : (r === '승' ? 500000 : 250000);
+                  return sum + amt;
+                }, 0);
+                const qDelta = prevQMoney > 0 ? Math.round((qMoney.total - prevQMoney) / prevQMoney * 100) : 0;
+
+                // ⚠ 리스크 계산 — 3종
+                const riskItems = [];
+                // 1. 지원자 대기 (주담 결과 없음)
+                const waitingSupport = myPtSchedules.filter(s => {
+                  if (s.selfPT) return false;
+                  const tokens = (s.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+                  if (tokens.length <= 1) return false;
+                  if (tokens[0] === viewingUser) return false;
+                  if (s.results?.[viewingUser] !== '지원') return false;
+                  const mainR = s.results?.[tokens[0]] || s.result;
+                  return !mainR;
+                });
+                if (waitingSupport.length > 0) riskItems.push({ type: 'support_waiting', label: '지원자 판정 대기 (주담 결과 없음)', count: waitingSupport.length, items: waitingSupport.slice(0, 3), color: '#7c3aed' });
+
+                // 2. 미검증 정산대상
+                const unverifiedRisk = myPtSchedules.filter(s => {
+                  if (s.selfPT) return false;
+                  if (/감리/.test((s.workType || '') + '|' + (s.siteName || ''))) return false;
+                  const r = getMyResult(s);
+                  if (!r || r === '패') return false;
+                  const stl = s.settlement?.[viewingUser] || {};
+                  if (stl.completed || stl.selfSales) return false;
+                  const hasEvidence = s.evidenceFiles && Object.keys(s.evidenceFiles).length > 0;
+                  const verified = s.kaptVerified?.status === 'verified';
+                  const manual = stl.manualVerified;
+                  return !(verified || hasEvidence || manual);
+                });
+                if (unverifiedRisk.length > 0) riskItems.push({ type: 'unverified', label: '미검증 (정산 불가)', count: unverifiedRisk.length, items: unverifiedRisk.slice(0, 3), color: '#dc2626' });
+
+                // 3. 마감 임박 (이번 분기 마감일 3일 이내 + 미확정)
+                const closingM = nowQ * 3 + 1 > 12 ? 1 : nowQ * 3 + 1;
+                const closingY = nowQ * 3 + 1 > 12 ? nowY + 1 : nowY;
+                const closingDt = new Date(Date.UTC(closingY, closingM, 0));
+                while (closingDt.getUTCDay() !== 1) closingDt.setUTCDate(closingDt.getUTCDate() - 1);
+                const daysTilClosing = Math.ceil((closingDt - new Date()) / (86400 * 1000));
+                if (daysTilClosing >= 0 && daysTilClosing <= 7) {
+                  const qKey = `${nowY}-Q${nowQ}`;
+                  const myConf = quarterConfirmations[qKey]?.[viewingUser] || {};
+                  if (!myConf.finalConfirmed) {
+                    riskItems.push({ type: 'deadline', label: `분기 마감 임박 (D-${daysTilClosing}, ${myConf.confirmed ? '최종확정 대기' : '1차 확인 필요'})`, count: 1, items: [], color: '#f59e0b' });
+                  }
+                }
+
                 // 총 조치 필요 건수 — 신규 항목 포함
                 const totalActionItems = pipelineWarnings.length + unenteredPts.length + kaptReviewNeededPts.length + settlementRequestNeededPts.length;
 
@@ -11601,6 +11679,79 @@ tr.suppressed td.fname{color:#64748b;}
                         );
                       })()}
                     </div>
+
+                    {/* 💰 컨트롤타워 — 이번 분기 예상 정산 (최상단, 가장 크게) */}
+                    <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #065f46 100%)', borderRadius: 16, padding: '20px 22px', color: 'white', position: 'relative', overflow: 'hidden' }}>
+                      <div style={{ fontSize: 11, opacity: 0.7, fontWeight: 600, letterSpacing: '0.1em' }}>💰 이번 분기 예상 정산 · {nowY}-Q{nowQ}</div>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 6 }}>
+                        <div style={{ fontSize: 32, fontWeight: 800, color: '#34d399', letterSpacing: -1 }}>{qMoney.total.toLocaleString('ko-KR')}</div>
+                        <div style={{ fontSize: 14, opacity: 0.7 }}>원</div>
+                        {prevQMoney > 0 && (
+                          <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: qDelta >= 0 ? '#6ee7b7' : '#fca5a5' }}>
+                            {qDelta >= 0 ? '▲' : '▼'} 전분기 대비 {qDelta >= 0 ? '+' : ''}{qDelta}%
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                        <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 10px' }}>
+                          <div style={{ fontSize: 9, opacity: 0.7, fontWeight: 600 }}>완료</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#86efac', marginTop: 2 }}>{qMoney.completed.toLocaleString('ko-KR')}</div>
+                        </div>
+                        <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 10px' }}>
+                          <div style={{ fontSize: 9, opacity: 0.7, fontWeight: 600 }}>확정</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#c4b5fd', marginTop: 2 }}>{qMoney.confirmed.toLocaleString('ko-KR')}</div>
+                        </div>
+                        <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 10px' }}>
+                          <div style={{ fontSize: 9, opacity: 0.7, fontWeight: 600 }}>요청</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#93c5fd', marginTop: 2 }}>{qMoney.requested.toLocaleString('ko-KR')}</div>
+                        </div>
+                        <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 10px' }}>
+                          <div style={{ fontSize: 9, opacity: 0.7, fontWeight: 600 }}>검토</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#fcd34d', marginTop: 2 }}>{qMoney.review.toLocaleString('ko-KR')}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ⚠ 리스크 / 검토 필요 (Action 앞에 배치 — 문제 먼저 보여주기) */}
+                    {riskItems.length > 0 && (
+                      <div style={cardStyle}>
+                        <div style={{ padding: '14px 20px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: 15, fontWeight: 700, color: '#991b1b' }}>⚠ 리스크 · 검토 필요</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: 'white', background: '#dc2626', borderRadius: 10, padding: '2px 8px' }}>{riskItems.reduce((sum, r) => sum + r.count, 0)}건</span>
+                        </div>
+                        <div style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {riskItems.map(ri => (
+                            <div
+                              key={ri.type}
+                              onClick={() => {
+                                setShowMyPage(false);
+                                setShowPerformance(true);
+                                setShowDashboard(false);
+                                setShowMeetingView(false);
+                                setShowSalesView(false);
+                                setPreviewAssignee(viewingUser);
+                                if (ri.type === 'unverified') setSiteListTab('unverified');
+                              }}
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, cursor: 'pointer', background: '#fef2f2', border: `1px solid #fecaca`, transition: 'background 0.15s' }}
+                              onMouseOver={e => e.currentTarget.style.background = '#fee2e2'}
+                              onMouseOut={e => e.currentTarget.style.background = '#fef2f2'}
+                            >
+                              <div style={{ width: 4, height: 28, borderRadius: 2, background: ri.color, flexShrink: 0 }} />
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: ri.color }}>{ri.label}</div>
+                                {ri.items.length > 0 && (
+                                  <div style={{ fontSize: 10, color: '#991b1b', opacity: 0.7, marginTop: 2 }}>
+                                    예: {ri.items.map(it => it.siteName).filter(Boolean).slice(0, 3).join(' · ')}
+                                    {ri.count > 3 && ` 외 ${ri.count - 3}건`}
+                                  </div>
+                                )}
+                              </div>
+                              <span style={{ fontSize: 18, fontWeight: 800, color: ri.color }}>{ri.count}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* 오늘 처리할 업무 - unified section */}
                     <div style={cardStyle}>
