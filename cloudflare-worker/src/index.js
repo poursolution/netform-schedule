@@ -910,12 +910,18 @@ async function countFirebaseBids(env) {
 // 4xx 는 재시도해도 무의미하므로 즉시 실패 기록.
 async function notifyJandi(env, message) {
   if (!env.JANDI_WEBHOOK_URL) return { ok: false, reason: 'no_webhook' };
+  return notifyJandiToUrl(env.JANDI_WEBHOOK_URL, message);
+}
+
+// 지정한 URL 로 발송 (담당자별 개인 webhook 용). 재시도 정책 동일.
+async function notifyJandiToUrl(webhookUrl, message) {
+  if (!webhookUrl) return { ok: false, reason: 'no_webhook' };
   const bodyBytes = new TextEncoder().encode(JSON.stringify(message));
   const maxAttempts = 3;
   const backoffs = [1000, 3000, 9000];
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const resp = await fetch(env.JANDI_WEBHOOK_URL, {
+      const resp = await fetch(webhookUrl, {
         method: 'POST',
         headers: {
           'Accept': 'application/vnd.tosslab.jandi-v2+json',
@@ -927,13 +933,11 @@ async function notifyJandi(env, message) {
         if (attempt > 1) console.log(`[Jandi] sent on attempt ${attempt}`);
         return { ok: true, attempts: attempt };
       }
-      // 4xx: 재시도 무의미 (URL 잘못 / payload 거부)
       if (resp.status >= 400 && resp.status < 500) {
         const text = await resp.text().catch(() => '');
         console.warn(`[Jandi] 4xx ${resp.status} — abort retry`, text.slice(0, 200));
         return { ok: false, reason: `http_${resp.status}`, attempts: attempt };
       }
-      // 5xx: 재시도
       console.warn(`[Jandi] 5xx ${resp.status} attempt ${attempt}/${maxAttempts}`);
     } catch (e) {
       console.warn(`[Jandi] network error attempt ${attempt}/${maxAttempts}`, e.message);
@@ -944,6 +948,20 @@ async function notifyJandi(env, message) {
   }
   console.error('[Jandi] failed after all retries');
   return { ok: false, reason: 'retries_exhausted', attempts: maxAttempts };
+}
+
+// Firebase 에서 담당자별 jandi webhook 조회: config/jandi/users/{name}
+async function fetchUserJandiWebhook(env, assignee) {
+  if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) return null;
+  try {
+    const safe = encodeURIComponent(assignee);
+    const url = `${env.FIREBASE_DB_URL}/config/jandi/users/${safe}.json?auth=${env.FIREBASE_DB_SECRET}`;
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (!data || !data.url || data.enabled === false) return null;
+    return data.url;
+  } catch { return null; }
 }
 
 function buildNeedReviewMsg({ siteName, assignee, ptDate, by, reason }) {
@@ -1238,5 +1256,31 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
     }],
   });
 
-  return { status: 'ok', quarterKey, totals, assigneesWritten: Object.keys(perAssignee).length };
+  // 7) 담당자별 개인 잔디 알림 (config/jandi/users/{name} 등록된 담당자만)
+  const userNotifyResults = { sent: 0, skipped: 0, failed: 0 };
+  for (const agg of Object.values(perAssignee)) {
+    if (agg.totalCount === 0) continue;
+    const personalUrl = await fetchUserJandiWebhook(env, agg.assignee);
+    if (!personalUrl) { userNotifyResults.skipped++; continue; }
+    const amountStr = (agg.estimatedAmount || 0).toLocaleString('ko-KR') + '원';
+    const r = await notifyJandiToUrl(personalUrl, {
+      body: `[${quarterKey} 정산 안내]`,
+      connectColor: '#2563eb',
+      connectInfo: [{
+        title: `담당자: ${agg.assignee}`,
+        description: [
+          `정산대상: ${agg.totalCount}건`,
+          `승 ${agg.winCount} / 무 ${agg.drawCount} / 지원 ${agg.supportCount}`,
+          `예상 정산금액: ${amountStr}`,
+          agg.reviewCount > 0 ? `⚠ 검토필요: ${agg.reviewCount}건` : '',
+          '',
+          '👉 시스템에서 정산요청 상태를 확인해주세요.',
+        ].filter(Boolean).join('\n'),
+      }],
+    });
+    if (r.ok) userNotifyResults.sent++;
+    else userNotifyResults.failed++;
+  }
+
+  return { status: 'ok', quarterKey, totals, assigneesWritten: Object.keys(perAssignee).length, userNotify: userNotifyResults };
 }

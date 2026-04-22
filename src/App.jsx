@@ -615,6 +615,8 @@ const SETTLEMENT_BADGE_STYLE = {
 
       // 잔디 웹훅 설정
       const [jandiUrl, setJandiUrl] = useState('');
+      // #3 — 담당자별 개인 잔디 webhook: { [name]: { url, enabled } }
+      const [jandiUserWebhooks, setJandiUserWebhooks] = useState({});
       const [jandiEnabled, setJandiEnabled] = useState(true);
       const [showJandiModal, setShowJandiModal] = useState(false);
 
@@ -1436,13 +1438,15 @@ const SETTLEMENT_BADGE_STYLE = {
           setQuarterConfirmations(data || {});
         });
 
-        // 잔디 웹훅 설정 로드
+        // 잔디 웹훅 설정 로드 (admin 공통 채널 + 담당자별 개인 webhook)
         const jandiRef = database.ref('config/jandi');
         jandiRef.on('value', (snapshot) => {
           const data = snapshot.val() || {};
           setJandiUrl(data.url || '');
           setJandiEnabled(data.enabled !== false);
           setJandiConfig({ url: data.url || '', enabled: data.enabled !== false });
+          // 담당자별 개인 webhook (users/{name} = { url, enabled })
+          setJandiUserWebhooks(data.users || {});
         });
 
         // K-APT Worker 설정 로드
@@ -13623,7 +13627,11 @@ tr.suppressed td.fname{color:#64748b;}
                   ({ status, data } = await callWorker(true));
                 }
                 if (data.status === 'ok') {
-                  alert(`✅ 생성 완료\n\n담당자 ${data.totals?.totalAssignees}명 · ${data.totals?.totalCount}건\n예상 ${(data.totals?.totalEstimated || 0).toLocaleString('ko-KR')}원`);
+                  const un = data.userNotify || {};
+                  const userLine = (un.sent || un.skipped || un.failed)
+                    ? `\n\n담당자 잔디 알림: 발송 ${un.sent || 0} / 미등록 ${un.skipped || 0}${un.failed ? ` / 실패 ${un.failed}` : ''}`
+                    : '';
+                  alert(`✅ 생성 완료\n\n담당자 ${data.totals?.totalAssignees}명 · ${data.totals?.totalCount}건\n예상 ${(data.totals?.totalEstimated || 0).toLocaleString('ko-KR')}원${userLine}`);
                   await loadData();
                 } else {
                   alert(`실패: ${data.reason || data.error || 'unknown'}`);
@@ -15551,11 +15559,22 @@ tr.suppressed td.fname{color:#64748b;}
                   <button
                     onClick={() => {
                       const trimmed = jandiUrl.trim();
+                      // 담당자별 webhook 정제 (빈 URL 제거, trim)
+                      const cleanedUsers = {};
+                      Object.entries(jandiUserWebhooks || {}).forEach(([name, cfg]) => {
+                        const u = (cfg?.url || '').trim();
+                        if (u) cleanedUsers[name] = { url: u, enabled: cfg?.enabled !== false };
+                      });
                       if (firebaseEnabled && database) {
-                        database.ref('config/jandi').set({ url: trimmed, enabled: jandiEnabled });
+                        database.ref('config/jandi').set({
+                          url: trimmed,
+                          enabled: jandiEnabled,
+                          users: cleanedUsers,
+                        });
                       }
                       setJandiConfig({ url: trimmed, enabled: jandiEnabled });
-                      alert('잔디 웹훅 설정이 저장되었습니다.');
+                      const userCount = Object.keys(cleanedUsers).length;
+                      alert(`잔디 웹훅 설정이 저장되었습니다.\n관리자 채널: ${trimmed ? '등록' : '미등록'}\n담당자별: ${userCount}명 등록`);
                       setShowJandiModal(false);
                     }}
                     style={{ flex: 1, padding: 12, background: '#16a34a', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}
@@ -15578,6 +15597,51 @@ tr.suppressed td.fname{color:#64748b;}
                 </div>
                 <div style={{ marginTop: 12, padding: 10, background: '#f8fafc', borderRadius: 6, fontSize: 11, color: '#64748b', lineHeight: 1.6 }}>
                   💡 잔디 채널 → 우측 상단 톱니바퀴 → 잔디 커넥트 → Incoming Webhook → 추가
+                </div>
+
+                {/* #3 — 담당자별 개인 webhook 섹션 */}
+                <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>👥 담당자별 개인 Webhook</div>
+                  <div style={{ fontSize: 11, color: '#64748b', marginBottom: 12, lineHeight: 1.6 }}>
+                    분기정산 생성 시 담당자 각자 개인 잔디 채널로 정산 안내 발송.<br />
+                    등록 안 된 담당자는 관리자 공통 채널에만 집계됨.
+                  </div>
+                  {(() => {
+                    const team1 = ['한준엽', '조재연', '정정훈', '김성민'];
+                    const team2 = ['이필선'];
+                    const team3 = ['조현식', '한인규'];
+                    const adminOnly = ['황윤선'];
+                    const allMembers = [...team1, ...team2, ...team3, ...adminOnly];
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 280, overflowY: 'auto', padding: '4px 2px' }}>
+                        {allMembers.map(name => {
+                          const cur = jandiUserWebhooks[name] || {};
+                          const url = cur.url || '';
+                          const enabled = cur.enabled !== false;
+                          return (
+                            <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', background: url ? '#f8fafc' : '#ffffff', borderRadius: 6, border: '1px solid #e2e8f0' }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: '#1e293b', minWidth: 58 }}>{name}</span>
+                              <input
+                                type="text"
+                                value={url}
+                                onChange={(e) => setJandiUserWebhooks(prev => ({ ...prev, [name]: { ...(prev[name] || {}), url: e.target.value } }))}
+                                placeholder="https://wh.jandi.com/..."
+                                style={{ flex: 1, padding: '5px 8px', border: '1px solid #cbd5e1', borderRadius: 4, fontSize: 11, fontFamily: 'monospace', minWidth: 0 }}
+                              />
+                              <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: '#64748b', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={enabled}
+                                  onChange={(e) => setJandiUserWebhooks(prev => ({ ...prev, [name]: { ...(prev[name] || {}), enabled: e.target.checked } }))}
+                                  style={{ width: 14, height: 14 }}
+                                /> ON
+                              </label>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
