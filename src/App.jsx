@@ -11543,6 +11543,65 @@ tr.suppressed td.fname{color:#64748b;}
                 }, 0);
                 const qDelta = prevQMoney > 0 ? Math.round((qMoney.total - prevQMoney) / prevQMoney * 100) : 0;
 
+                // 변화 이유 자동 생성 (전분기 대비 승/무/지원 건수 차이)
+                const prevQuarterPts = myPtSchedules.filter(s => s.date >= prevQStart && s.date <= prevQEnd);
+                const prevQWins = prevQuarterPts.filter(s => getMyResult(s) === '승').length;
+                const prevQDraws = prevQuarterPts.filter(s => getMyResult(s) === '무').length;
+                const prevQSupports = prevQuarterPts.filter(s => getMyResult(s) === '지원').length;
+                const prevQLosses = prevQuarterPts.filter(s => getMyResult(s) === '패').length;
+                const changeReasons = [];
+                if (qWins - prevQWins !== 0) changeReasons.push(`승 ${qWins - prevQWins >= 0 ? '+' : ''}${qWins - prevQWins}`);
+                if (qSupports - prevQSupports !== 0) changeReasons.push(`지원 ${qSupports - prevQSupports >= 0 ? '+' : ''}${qSupports - prevQSupports}`);
+                if (qDraws - prevQDraws !== 0) changeReasons.push(`무 ${qDraws - prevQDraws >= 0 ? '+' : ''}${qDraws - prevQDraws}`);
+                if (qLosses - prevQLosses !== 0) changeReasons.push(`패 ${qLosses - prevQLosses >= 0 ? '+' : ''}${qLosses - prevQLosses}`);
+
+                // 팀 평균 대비 (전 담당자 기준)
+                const VALID_TEAM_M = ['한준엽','조재연','정정훈','김성민','이필선','조현식','한인규','황윤선'];
+                const teamQuarterMoney = VALID_TEAM_M.map(name => {
+                  return ptSchedules.filter(s => s.date >= qStart && s.date <= qEnd).reduce((sum, s) => {
+                    if (s.selfPT) return sum;
+                    if (s.kaptVerified?.status === 'cancelled') return sum;
+                    const tokens = (s.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+                    if (!tokens.includes(name)) return sum;
+                    const r = s.results?.[name] || (tokens.length === 1 ? s.result : null);
+                    if (!r || r === '패') return sum;
+                    const stl = s.settlement?.[name] || {};
+                    if (stl.selfSales) return sum;
+                    const isSup = /감리/.test((s.workType || '') + '|' + (s.siteName || ''));
+                    return sum + (isSup ? 80000 : (r === '승' ? 500000 : 250000));
+                  }, 0);
+                }).filter(v => v > 0);
+                const teamAvg = teamQuarterMoney.length > 0 ? Math.round(teamQuarterMoney.reduce((a, b) => a + b, 0) / teamQuarterMoney.length) : 0;
+                const avgDelta = teamAvg > 0 ? Math.round((qMoney.total - teamAvg) / teamAvg * 100) : 0;
+
+                // 정산 진행률 (completed+confirmed / total)
+                const qProgress = qMoney.total > 0 ? Math.round((qMoney.completed + qMoney.confirmed) / qMoney.total * 100) : 0;
+
+                // 개인 인사이트 — 강점/약점 공종 자동 감지
+                const categorizeWT = (wt, sn) => {
+                  const t = (wt || '') + '|' + (sn || '');
+                  if (/감리/.test(t)) return '감리';
+                  if (/방수|우레탄|복합시트|슁글|슬라브|폴리우레아|에폭시/.test(t)) return '방수';
+                  if (/재도장|도장|도색|페인트/.test(t)) return '재도장';
+                  if (/균열|크랙|보수/.test(t)) return '보수';
+                  return '기타';
+                };
+                const myWTStats = {};
+                myPtSchedules.forEach(s => {
+                  if (s.selfPT) return;
+                  const r = getMyResult(s);
+                  if (!['승', '무', '패'].includes(r)) return;
+                  const cat = categorizeWT(s.workType, s.siteName);
+                  if (!myWTStats[cat]) myWTStats[cat] = { win: 0, lose: 0, draw: 0, total: 0 };
+                  myWTStats[cat].total++;
+                  if (r === '승') myWTStats[cat].win++;
+                  else if (r === '무') myWTStats[cat].draw++;
+                  else myWTStats[cat].lose++;
+                });
+                const wtRanked = Object.entries(myWTStats).map(([cat, v]) => ({ cat, ...v, rate: v.total > 0 ? Math.round(v.win / v.total * 100) : 0 })).filter(x => x.total >= 3);
+                const strongWT = wtRanked.filter(x => x.rate >= 60).sort((a, b) => b.rate - a.rate)[0];
+                const weakWT = wtRanked.filter(x => x.rate <= 40).sort((a, b) => a.rate - b.rate)[0];
+
                 // ⚠ 리스크 계산 — 3종
                 const riskItems = [];
                 // 1. 지원자 대기 (주담 결과 없음)
@@ -11682,7 +11741,7 @@ tr.suppressed td.fname{color:#64748b;}
 
                     {/* 💰 컨트롤타워 — 이번 분기 예상 정산 (최상단, 가장 크게) */}
                     <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #065f46 100%)', borderRadius: 16, padding: '20px 22px', color: 'white', position: 'relative', overflow: 'hidden' }}>
-                      <div style={{ fontSize: 11, opacity: 0.7, fontWeight: 600, letterSpacing: '0.1em' }}>💰 이번 분기 예상 정산 · {nowY}-Q{nowQ}</div>
+                      <div style={{ fontSize: 11, opacity: 0.7, fontWeight: 600, letterSpacing: '0.1em' }}>💰 {viewingUser}님 · 이번 분기 예상 정산 · {nowY}-Q{nowQ}</div>
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 6 }}>
                         <div style={{ fontSize: 32, fontWeight: 800, color: '#34d399', letterSpacing: -1 }}>{qMoney.total.toLocaleString('ko-KR')}</div>
                         <div style={{ fontSize: 14, opacity: 0.7 }}>원</div>
@@ -11692,6 +11751,17 @@ tr.suppressed td.fname{color:#64748b;}
                           </span>
                         )}
                       </div>
+                      {/* 변화 이유 + 팀 평균 대비 */}
+                      {(changeReasons.length > 0 || teamAvg > 0) && (
+                        <div style={{ fontSize: 10, opacity: 0.75, marginTop: 4, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                          {changeReasons.length > 0 && <span>사유: {changeReasons.join(' · ')}</span>}
+                          {teamAvg > 0 && (
+                            <span style={{ marginLeft: 'auto', color: avgDelta >= 0 ? '#6ee7b7' : '#fca5a5', fontWeight: 700 }}>
+                              팀 평균({teamAvg.toLocaleString('ko-KR')}원) 대비 {avgDelta >= 0 ? '+' : ''}{avgDelta}%
+                            </span>
+                          )}
+                        </div>
+                      )}
                       <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
                         <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 10px' }}>
                           <div style={{ fontSize: 9, opacity: 0.7, fontWeight: 600 }}>완료</div>
@@ -11710,6 +11780,25 @@ tr.suppressed td.fname{color:#64748b;}
                           <div style={{ fontSize: 13, fontWeight: 700, color: '#fcd34d', marginTop: 2 }}>{qMoney.review.toLocaleString('ko-KR')}</div>
                         </div>
                       </div>
+                      {/* 정산 진행률 바 */}
+                      {qMoney.total > 0 && (
+                        <div style={{ marginTop: 12 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, opacity: 0.75, marginBottom: 4 }}>
+                            <span>정산 진행률 (완료+확정)</span>
+                            <span style={{ fontWeight: 700, color: qProgress >= 80 ? '#34d399' : qProgress >= 50 ? '#fbbf24' : '#fca5a5' }}>{qProgress}%</span>
+                          </div>
+                          <div style={{ width: '100%', height: 6, background: 'rgba(255,255,255,0.15)', borderRadius: 3, overflow: 'hidden' }}>
+                            <div style={{ width: `${qProgress}%`, height: '100%', background: 'linear-gradient(90deg, #34d399 0%, #6ee7b7 100%)', transition: 'width 0.3s' }} />
+                          </div>
+                        </div>
+                      )}
+                      {/* 개인 인사이트 (강점/약점 공종) */}
+                      {(strongWT || weakWT) && (
+                        <div style={{ marginTop: 12, padding: '8px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: 8, fontSize: 11, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                          {strongWT && <span>🟢 강점 공종: <b style={{ color: '#6ee7b7' }}>{strongWT.cat}</b> 승률 {strongWT.rate}% ({strongWT.win}/{strongWT.total})</span>}
+                          {weakWT && <span>🔴 약점 공종: <b style={{ color: '#fca5a5' }}>{weakWT.cat}</b> 승률 {weakWT.rate}% ({weakWT.win}/{weakWT.total})</span>}
+                        </div>
+                      )}
                     </div>
 
                     {/* ⚠ 리스크 / 검토 필요 (Action 앞에 배치 — 문제 먼저 보여주기) */}
@@ -11954,6 +12043,14 @@ tr.suppressed td.fname{color:#64748b;}
                       const deadlineStr = `${nowY}-${String(nowQ * 3 + 1).padStart(2, '0')}-24`; // 분기 종료 익월 24일
 
                       const handleFinalConfirm = async () => {
+                        // 행동 강제력 — 리스크 미해결 상태에서 최종 확정 차단
+                        const blockingRisks = [];
+                        if (unverifiedRisk.length > 0) blockingRisks.push(`미검증 ${unverifiedRisk.length}건`);
+                        if (waitingSupport.length > 0) blockingRisks.push(`지원자 판정 대기 ${waitingSupport.length}건`);
+                        if (blockingRisks.length > 0) {
+                          alert(`⚠ 최종 확정 차단\n\n먼저 해결해야 할 리스크:\n  - ${blockingRisks.join('\n  - ')}\n\n리스크 카드 클릭해서 처리 후 다시 시도해주세요.`);
+                          return;
+                        }
                         if (!window.confirm(`${qKey} 실적을 "최종 확정" 처리합니다.\n\n이후 김유림님에게 분기 보고서가 발송됩니다. 진행?`)) return;
                         try {
                           await database.ref(`quarterConfirmations/${qKey}/${viewingUser}`).update({
