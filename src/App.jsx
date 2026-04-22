@@ -9784,6 +9784,27 @@ tr.suppressed td.fname{color:#64748b;}
                                           const rawPicked = editingResults.hasOwnProperty(aEditKey) ? editingResults[aEditKey] : (s?.results?.[assigneeName] || null);
                                           const mainResult = s?.results?.[mainAssignee] || s?.result || null;
                                           const showSupportHint = isSupporter && rawPicked === '지원';
+                                          // #7 UI 개선 — 확정일 · 분기 귀속 · 급여 반영월 (결과 있고 정산 제외 아닐 때만)
+                                          let confirmDateInfo = null;
+                                          if (!isSelfPT && aResult && calc?.amount > 0) {
+                                            const cd = (aSettlement.finalConfirmedAt && aSettlement.finalConfirmedAt.slice(0, 10))
+                                              || (aSettlement.requestedAt && aSettlement.requestedAt.slice(0, 10))
+                                              || ptRef?.date || null;
+                                            if (cd) {
+                                              const cdM = cd.match(/^(\d{4})-(\d{2})/);
+                                              if (cdM) {
+                                                const y = parseInt(cdM[1]); const mo = parseInt(cdM[2]);
+                                                const qNum = Math.ceil(mo / 3);
+                                                const qKey = `${y}-Q${qNum}`;
+                                                // 급여반영월: 분기 종료 다음달
+                                                let pY = y, pM = qNum * 3 + 1;
+                                                if (pM > 12) { pM = 1; pY += 1; }
+                                                const payrollMonth = `${pY}-${String(pM).padStart(2,'0')}`;
+                                                const sameAsPtDate = cd === ptRef?.date;
+                                                confirmDateInfo = { cd, qKey, payrollMonth, sameAsPtDate, source: aSettlement.finalConfirmedAt ? 'finalConfirmed' : aSettlement.requestedAt ? 'requested' : 'ptDate' };
+                                              }
+                                            }
+                                          }
                                           return (
                                             <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: ai === 0 ? '10px' : '6px', paddingTop: ai === 0 ? '10px' : '6px', borderTop: ai === 0 ? '1px solid #f1f5f9' : '1px dashed #f1f5f9', flexWrap: 'wrap' }}>
                                               <span style={{ fontSize: '13px', fontWeight: '700', color: isSelfPT ? '#7c3aed' : '#2563eb', minWidth: '50px' }}>{assigneeName}</span>
@@ -9865,6 +9886,17 @@ tr.suppressed td.fname{color:#64748b;}
                                                       setHasResultChanges(true);
                                                     }} style={{ width: '14px', height: '14px', cursor: 'pointer' }} /> 본인영업
                                                   </label>
+                                                </div>
+                                              )}
+                                              {/* #7 — 확정일·분기귀속·급여반영월 미니 라벨 (정산 대상일 때만) */}
+                                              {confirmDateInfo && (
+                                                <div
+                                                  style={{ flexBasis: '100%', marginTop: '4px', fontSize: '10px', color: '#64748b', display: 'flex', flexWrap: 'wrap', gap: '10px', paddingLeft: '4px' }}
+                                                  title={`확정일: ${confirmDateInfo.cd}\n출처: ${confirmDateInfo.source === 'finalConfirmed' ? 'Phase 4 최종확정' : confirmDateInfo.source === 'requested' ? '정산요청 시점' : 'PT일 (fallback)'}\n분기 귀속: ${confirmDateInfo.qKey}\n급여 반영월: ${confirmDateInfo.payrollMonth}`}
+                                                >
+                                                  <span>📅 확정일 <b style={{ color: '#475569' }}>{confirmDateInfo.cd}</b>{confirmDateInfo.sameAsPtDate ? '' : ' (PT일 ≠)'}</span>
+                                                  <span>· 귀속 <b style={{ color: '#2563eb' }}>{confirmDateInfo.qKey}</b></span>
+                                                  <span>· 급여 <b style={{ color: '#16a34a' }}>{confirmDateInfo.payrollMonth}</b></span>
                                                 </div>
                                               )}
                                               {/* B — 지원자 규칙 안내: 주담 결과에 종속됨을 명시 */}

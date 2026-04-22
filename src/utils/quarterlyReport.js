@@ -207,8 +207,16 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
       const exceptionReq = exceptionApproved ? s.exceptionRequests[a] : null;
       const effectiveResult = exceptionApproved ? '승' : rawResult;
       if (!SETTLEMENT_RESULTS.has(effectiveResult)) return; // 패·미입력 제외
-      // 정산 기준일: resultConfirmDate (없으면 s.date fallback)
-      const confirmDate = (s.resultConfirmDate && s.resultConfirmDate[a]) || s.date;
+      // 정산 기준일: 확정일 fallback 체인
+      //   1) settlement.{a}.finalConfirmedAt (Phase 4 최종확정) — 가장 강한 신호
+      //   2) settlement.{a}.requestedAt (승 입력 시 자동 세팅)
+      //   3) 레거시: s.resultConfirmDate[a] (명시적 저장)
+      //   4) 최종 fallback: s.date (PT 진행일)
+      const stl = s.settlement?.[a] || {};
+      const confirmDate = (stl.finalConfirmedAt && stl.finalConfirmedAt.slice(0, 10))
+        || (stl.requestedAt && stl.requestedAt.slice(0, 10))
+        || (s.resultConfirmDate && s.resultConfirmDate[a])
+        || s.date;
       if (!inRange(confirmDate, range)) return;
       const verified = isPtVerified(s, a);
       const ourTechs = extractOurTechnologies(s.announcementMethods);
