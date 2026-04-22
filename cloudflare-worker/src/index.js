@@ -164,6 +164,18 @@ export default {
       }
     }
 
+    // 분기 확인 리마인드 수동 실행: POST /run-quarterly-reminder { quarterKey?, force? }
+    //   미확인 담당자에게 개인 잔디 재발송
+    if (url.pathname === '/run-quarterly-reminder' && request.method === 'POST') {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const result = await sendQuarterlyConfirmationReminders(env, { quarterKey: body.quarterKey, force: !!body.force });
+        return jsonResponse(result, env);
+      } catch (e) {
+        return jsonResponse({ status: 'error', error: e.message }, env, 500);
+      }
+    }
+
     // 관리자 수동 트리거: POST /run-quarterly-settlement { quarterKey?, force? }
     //   quarterKey: "YYYY-QN" (생략 시 현재 분기 KST)
     //   force: true 면 분기 마지막월 마지막주 월요일 아니어도 실행
@@ -207,14 +219,15 @@ export default {
 
     return jsonResponse({
       error: 'Not found',
-      endpoints: ['POST /verify', 'POST /search-candidates', 'POST /run-quarterly-settlement', 'POST /sync?days=N', 'GET /bid/:bidNum', 'GET /health'],
+      endpoints: ['POST /verify', 'POST /search-candidates', 'POST /run-quarterly-settlement', 'POST /run-quarterly-reminder', 'POST /sync?days=N', 'GET /bid/:bidNum', 'GET /health'],
     }, env, 404);
   },
 
   async scheduled(event, env, ctx) {
     // cron 표현식으로 분기:
     //   "0 17 * * *" → 매일 02:00 KST 공고 동기화
-    //   "0 0 * * 1"  → 매주 월요일 09:00 KST — 분기 마지막월(3/6/9/12) 마지막주 월요일일 때만 분기정산 실행
+    //   "0 0 * * 1"  → 매주 월요일 09:00 KST — 분기 마지막월 마지막주 월요일만 분기정산 실행
+    //   "0 0,8 * * *" → 매일 09/17 KST — 분기 확인 리마인드 (deadline 내 미확인자만)
     console.log('[cron] triggered', event.cron, new Date().toISOString());
     if (event.cron === '0 17 * * *') {
       try {
@@ -228,6 +241,18 @@ export default {
         const result = await runQuarterlySettlementIfLastMonday(env);
         console.log('[cron] quarterly settlement result', result);
       } catch (e) { console.error('[cron] quarterly settlement failed', e); }
+      // 월요일 09시는 리마인드도 같이 발송
+      try {
+        const rr = await sendQuarterlyConfirmationReminders(env);
+        console.log('[cron] reminder result', rr);
+      } catch (e) { console.error('[cron] reminder failed', e); }
+      return;
+    }
+    if (event.cron === '0 0,8 * * *') {
+      try {
+        const result = await sendQuarterlyConfirmationReminders(env);
+        console.log('[cron] reminder result', result);
+      } catch (e) { console.error('[cron] reminder failed', e); }
       return;
     }
   },
@@ -1109,12 +1134,13 @@ function calcAmountWorker(pt, assignee) {
   if (pt.selfPT) return { amount: 0, result: '제외', reason: 'vendor_self_pt' };
   const stl = pt.settlement?.[assignee] || {};
   if (stl.selfSales) return { amount: 0, result: '제외', reason: 'self_sales' };
+  // 감리는 결과·증빙 무관 건당 80K (selfPT/selfSales 만 제외 — 위에서 이미 처리)
   const isSupervision = /감리/.test((pt.workType || '') + '|' + (pt.siteName || ''));
+  if (isSupervision) return { amount: SETTLEMENT_AMOUNTS.SUPERVISION, result: '감리', reason: null };
   const result = deriveResultWorker(pt, assignee);
   if (!result) return { amount: 0, result: null, reason: null };
   if (result === '제외') return { amount: 0, result: '제외', reason: 'draw_support_excluded' };
   if (result === '패') return { amount: 0, result: '패', reason: 'loss' };
-  if (isSupervision) return { amount: SETTLEMENT_AMOUNTS.SUPERVISION, result, reason: null };
   if (result === '승') return { amount: SETTLEMENT_AMOUNTS.WIN, result, reason: null };
   if (result === '무') return { amount: SETTLEMENT_AMOUNTS.DRAW, result, reason: null };
   if (result === '지원') return { amount: SETTLEMENT_AMOUNTS.SUPPORT, result, reason: null };
@@ -1283,4 +1309,89 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
   }
 
   return { status: 'ok', quarterKey, totals, assigneesWritten: Object.keys(perAssignee).length, userNotify: userNotifyResults };
+}
+
+// =================================================================
+// 분기 확인 리마인드 (매일 09/17 KST)
+// =================================================================
+// quarterConfirmations/{qKey}/{name}/confirmed !== true 인 담당자에게
+// 개인 잔디 webhook (config/jandi/users/{name}) 으로 재발송.
+// deadline 지나면 자동 종료.
+
+function getQuarterDeadlineDate(quarterKey) {
+  const p = parseQuarterKey(quarterKey);
+  if (!p) return null;
+  // 분기 종료 익월 24일 — 예: Q1 → 4/24, Q2 → 7/24
+  const nextMonth = p.endMonth + 1 > 12 ? 1 : p.endMonth + 1;
+  const y = p.endMonth + 1 > 12 ? p.year + 1 : p.year;
+  return new Date(Date.UTC(y, nextMonth - 1, 24));
+}
+
+async function sendQuarterlyConfirmationReminders(env, opts = {}) {
+  if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) {
+    return { status: 'error', reason: 'firebase_not_configured' };
+  }
+  const now = new Date();
+  const quarterKey = opts.quarterKey || getCurrentQuarterKeyKST(now);
+  const deadline = getQuarterDeadlineDate(quarterKey);
+  if (!opts.force && deadline && now > deadline) {
+    return { status: 'skipped', reason: 'past_deadline', quarterKey, deadline: deadline.toISOString() };
+  }
+
+  // 분기정산 집계 + 확인 상태 + webhook 조회
+  const [perResp, confResp, hookResp] = await Promise.all([
+    fetch(`${env.FIREBASE_DB_URL}/quarterlySettlements/${quarterKey}/perAssignee.json?auth=${env.FIREBASE_DB_SECRET}`),
+    fetch(`${env.FIREBASE_DB_URL}/quarterConfirmations/${quarterKey}.json?auth=${env.FIREBASE_DB_SECRET}`),
+    fetch(`${env.FIREBASE_DB_URL}/config/jandi/users.json?auth=${env.FIREBASE_DB_SECRET}`),
+  ]);
+  const perAssignee = (await perResp.json()) || {};
+  const confirmations = (await confResp.json()) || {};
+  const hooks = (await hookResp.json()) || {};
+
+  const deadlineLabel = deadline ? `${deadline.getUTCFullYear()}-${String(deadline.getUTCMonth() + 1).padStart(2, '0')}-${String(deadline.getUTCDate()).padStart(2, '0')}` : '-';
+  const results = { sent: 0, skippedConfirmed: 0, skippedNoHook: 0, failed: 0, quarterKey, deadline: deadlineLabel, attempts: [] };
+
+  for (const [name, agg] of Object.entries(perAssignee)) {
+    if (!agg || (agg.totalCount || 0) === 0) continue;
+    const conf = confirmations[name] || {};
+    if (conf.confirmed === true) { results.skippedConfirmed++; results.attempts.push(`${name}: 확인완료 (스킵)`); continue; }
+    const hook = hooks[name];
+    if (!hook?.url || hook.enabled === false) { results.skippedNoHook++; results.attempts.push(`${name}: webhook 미등록`); continue; }
+
+    const amountStr = (agg.estimatedAmount || 0).toLocaleString('ko-KR') + '원';
+    const firstDate = conf.firstNotifiedAt ? conf.firstNotifiedAt.slice(0, 10) : '-';
+    const r = await notifyJandiToUrl(hook.url, {
+      body: `🔔 [${quarterKey} 실적 확인 리마인드]`,
+      connectColor: '#f59e0b',
+      connectInfo: [{
+        title: `${name}님 — 아직 확인 전입니다 (마감 ${deadlineLabel})`,
+        description: [
+          `본인 ${quarterKey} 실적:`,
+          `  ${agg.totalCount}건 · 예상 ${amountStr}`,
+          `  승 ${agg.winCount || 0} / 무 ${agg.drawCount || 0} / 지원 ${agg.supportCount || 0}${agg.supervisionCount ? ` / 감리 ${agg.supervisionCount}` : ''}`,
+          agg.reviewCount > 0 ? `  ⚠ 검토필요: ${agg.reviewCount}건` : '',
+          '',
+          '👉 마이페이지에서 "이상없음·확인완료" 또는 "검증/수정 요청" 처리 부탁드립니다.',
+          firstDate !== '-' ? `처음 알림: ${firstDate}` : '',
+        ].filter(Boolean).join('\n'),
+      }],
+    });
+    if (r.ok) {
+      results.sent++;
+      results.attempts.push(`${name}: ✅ 발송`);
+      // 발송 이력 업데이트
+      try {
+        await fetch(`${env.FIREBASE_DB_URL}/quarterConfirmations/${quarterKey}/${encodeURIComponent(name)}.json?auth=${env.FIREBASE_DB_SECRET}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lastNotifiedAt: now.toISOString(), notificationCount: (conf.notificationCount || 0) + 1 }),
+        });
+      } catch {}
+    } else {
+      results.failed++;
+      results.attempts.push(`${name}: ❌ ${r.reason}`);
+    }
+  }
+
+  return { status: 'ok', ...results };
 }

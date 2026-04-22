@@ -104,10 +104,15 @@ export function calculateSettlementAmount(pt, assignee, opts = {}) {
     return { amount: 0, reason: EXCLUSION_REASONS.SELF_SALES, result: '제외' };
   }
 
-  // 3) 감리 건 — 결과 무관 건당 80k (지원자도 종속 규칙 따름)
+  // 3) 감리 건 — 결과 무관 건당 80k
+  //    ※ selfPT/selfSales 는 위에서 이미 제외됨. 이 시점에 감리면 결과 입력 여부와 무관하게 80K 지급.
+  //    스펙: "감리 공종 - 건당 80,000원 (지역/결과 무관)"
   const isSupervision = /감리/.test((pt.workType || '') + '|' + (pt.siteName || ''));
+  if (isSupervision) {
+    return { amount: SETTLEMENT_AMOUNTS.SUPERVISION, reason: null, result: '감리' };
+  }
 
-  // 4) 파생 결과
+  // 4) 파생 결과 (감리 아닐 때만)
   const result = deriveAssigneeResult(pt, assignee, opts);
   if (!result) return { amount: 0, reason: null, result: null };
 
@@ -119,11 +124,6 @@ export function calculateSettlementAmount(pt, assignee, opts = {}) {
   if (result === '패') {
     // 주담 또는 지원자 모두 '패' 면 정산 제외
     return { amount: 0, reason: EXCLUSION_REASONS.LOSS, result: '패' };
-  }
-
-  // 감리는 승·무·지원 구분 없이 80k
-  if (isSupervision) {
-    return { amount: SETTLEMENT_AMOUNTS.SUPERVISION, reason: null, result };
   }
 
   if (result === '승') return { amount: SETTLEMENT_AMOUNTS.WIN, reason: null, result };
@@ -285,6 +285,58 @@ export function isMonthlySettlementTime(now = new Date()) {
     now.getDate() === targetDate.getDate() &&
     now.getHours() >= 9
   );
+}
+
+// ===== 자동 정산대상 전환 (Q2 2026부터 적용) =====
+
+/**
+ * Q2 2026 이후 PT 중 검증 완료 + 결과 있음 → 자동 정산대상 (settlement.requested = true)
+ *
+ * 기준일: 2026-04-01
+ * 조건:
+ *   - pt.date >= AUTO_TRANSITION_START
+ *   - selfPT/selfSales 아님
+ *   - 아직 requested/completed 아님
+ *   - 결과가 승/무/지원 (감리는 검증 불필요이므로 결과 무관)
+ *   - K-APT verified OR evidenceFiles 존재 (잔디 공고문)
+ */
+export const AUTO_TRANSITION_START = '2026-04-01';  // Q2 2026 시작
+
+export function shouldAutoTransitionToTarget(pt, assignee) {
+  if (!pt || !assignee || !pt.date) return false;
+  if (pt.date < AUTO_TRANSITION_START) return false;  // Q1 이전은 제외
+  if (pt.selfPT) return false;
+  const stl = pt.settlement?.[assignee] || {};
+  if (stl.selfSales) return false;
+  if (stl.requested || stl.completed) return false;  // 이미 전환됨
+
+  // 감리는 검증·결과 무관 — ptAssignee 에 포함된 담당자면 자동 대상
+  const isSupervision = /감리/.test((pt.workType || '') + '|' + (pt.siteName || ''));
+  const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+  if (isSupervision && tokens.includes(assignee)) return true;
+
+  // 일반 PT: 결과 있고 검증 완료
+  const result = deriveAssigneeResult(pt, assignee);
+  if (!['승', '무', '지원'].includes(result)) return false;
+
+  const verified = pt.kaptVerified?.status === 'verified';
+  const hasEvidence = pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0;
+  return verified || hasEvidence;
+}
+
+/**
+ * 자동 전환 시 Firebase 에 저장할 settlement 엔트리 patch 생성
+ */
+export function buildAutoTransitionPatch(pt, assignee, triggeredBy = 'auto-verified') {
+  if (!shouldAutoTransitionToTarget(pt, assignee)) return null;
+  const now = new Date().toISOString();
+  return {
+    requested: true,
+    requestedAt: now,
+    requestedBy: triggeredBy,
+    status: SETTLEMENT_STATUS.REQUESTED,
+    autoTransition: true,
+  };
 }
 
 // ===== 분기정산 util (월정산 → 분기정산 전환) =====

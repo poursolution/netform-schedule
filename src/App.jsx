@@ -35,7 +35,7 @@ import {
   buildExceptionResultMessage,
 } from './utils/exceptions.js';
 import { sendJandiNotification } from './utils/jandi.js';
-import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculateSettlementAmount, EXCLUSION_REASONS } from './utils/settlement.js';
+import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculateSettlementAmount, EXCLUSION_REASONS, shouldAutoTransitionToTarget, buildAutoTransitionPatch, AUTO_TRANSITION_START } from './utils/settlement.js';
 
 // 제외 사유 한글 라벨
 const EXCLUSION_REASON_LABEL = {
@@ -2621,21 +2621,32 @@ const SETTLEMENT_BADGE_STYLE = {
         setShowResultReasonModal(false);
         setResultReasonData({ scheduleId: null, assignee: null, result: null, reason: '', selectedCompetitors: [], availableCompetitors: [], originalCompetitorStr: '', hasNCompanyPattern: false, customCompetitor: '', showCustomCompetitor: false, requestException: false, exceptionType: null, bidNo: '', announcementMethods: '' });
 
-        // === 결과 = 승 → 자동 정산요청 + K-APT 검증 ===
+        // === 결과 = 승 → 정산 프로세스 ===
+        //   Q1 (pt.date < 2026-04-01): 기존 동작 — 즉시 자동 정산요청 + K-APT 검증
+        //   Q2+ (>= 2026-04-01): 즉시 정산요청 skip → K-APT 검증 후 verified 일 때만 자동 정산대상 전환
         if (result === '승' && targetAssignee) {
-          // 1) 자동 정산요청 (confirm 없음)
-          const settlementUpdate = { [`settlement/${targetAssignee}/requested`]: true };
-          if (firebaseEnabled && database) {
-            database.ref(`pt/${scheduleId}`).update(settlementUpdate);
-          }
-          setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), requested: true } } } : s));
-
-          // 2) K-APT 검증 자동 호출 — 다음 경우 skip (이중검증 방지)
-          //    a) 감리 PT (workType/siteName 에 '감리') — 공고문 자체 없음
-          //    b) 잔디 evidenceFiles 가 이미 연결됨 — 잔디 프로세스로 공고문 확인 완료
+          const isQ2OrLater = (updatedSchedule.date || '') >= AUTO_TRANSITION_START;
           const combined = (updatedSchedule.workType || '') + '|' + (updatedSchedule.siteName || '');
           const isSupervisionPt = /감리/.test(combined);
           const hasJandiEvidence = updatedSchedule.evidenceFiles && Object.keys(updatedSchedule.evidenceFiles).length > 0;
+
+          if (!isQ2OrLater) {
+            // Q1 기존 동작 — 즉시 정산요청
+            const settlementUpdate = { [`settlement/${targetAssignee}/requested`]: true };
+            if (firebaseEnabled && database) {
+              database.ref(`pt/${scheduleId}`).update(settlementUpdate);
+            }
+            setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), requested: true } } } : s));
+          } else {
+            // Q2+ — 감리 또는 잔디 증빙 있으면 즉시 자동 전환 (검증 불필요)
+            if (isSupervisionPt) {
+              autoTransitionIfEligible(scheduleId, targetAssignee, 'auto-supervision');
+            } else if (hasJandiEvidence) {
+              autoTransitionIfEligible(scheduleId, targetAssignee, 'auto-jandi-evidence');
+            }
+          }
+
+          // K-APT 검증 자동 호출 (Q1·Q2 공통, 감리·잔디증빙 있으면 skip)
           if (!isSupervisionPt && !hasJandiEvidence) {
             verifyKaptForPt({
               scheduleId,
@@ -2645,7 +2656,12 @@ const SETTLEMENT_BADGE_STYLE = {
               bidNo: updatedSchedule.bidNo,
               ptDate: updatedSchedule.date,
               by: currentUser?.name,
-            });
+            }).then((r) => {
+              // Q2+ 에서 검증 성공 시 자동 정산대상 전환 + 담당자 잔디 알림
+              if (isQ2OrLater && r && r.status === 'verified') {
+                autoTransitionIfEligible(scheduleId, targetAssignee, 'auto-kapt-verified');
+              }
+            }).catch(() => {});
           }
         }
 
@@ -2791,6 +2807,76 @@ const SETTLEMENT_BADGE_STYLE = {
       // - 우리 공법 + 타공법 동시 입찰 → 무
       // - 우리 공법 전혀 없음 → 패
       const judgeResult = (methods) => judgeResultByMethods(methods);
+
+      // Q2+ 자동 정산대상 전환 헬퍼 (검증 완료 시 호출)
+      //   - PT 일자 >= 2026-04-01 + 결과 있음 + 검증됨 → settlement.requested=true
+      //   - 담당자 개인 잔디 webhook 으로 "정산대상 전환" 알림
+      //   - Q1 PT 는 무시 (기존 수동 흐름 유지)
+      const autoTransitionIfEligible = async (scheduleId, assignee, triggeredBy = 'auto-verified') => {
+        if (!scheduleId || !assignee) return { skipped: true, reason: 'args' };
+        // 최신 PT 데이터 (Firebase 우선 — state 가 최신이 아닐 수 있음)
+        let pt = null;
+        try {
+          if (database) {
+            const snap = await database.ref(`pt/${scheduleId}`).once('value');
+            pt = snap.val();
+            if (pt) pt.id = scheduleId;
+          }
+        } catch {}
+        if (!pt) pt = ptSchedules.find(s => s.id === scheduleId);
+        if (!pt) return { skipped: true, reason: 'pt_not_found' };
+
+        const patch = buildAutoTransitionPatch(pt, assignee, triggeredBy);
+        if (!patch) return { skipped: true, reason: 'not_eligible' };
+
+        // Firebase 업데이트 (부분)
+        const updates = {};
+        Object.entries(patch).forEach(([k, v]) => {
+          updates[`pt/${scheduleId}/settlement/${assignee}/${k}`] = v;
+        });
+        try {
+          if (database) await database.ref().update(updates);
+        } catch (e) {
+          console.warn('[auto-transition] firebase update failed', e);
+          return { skipped: false, ok: false, error: e.message };
+        }
+
+        // 로컬 state 업데이트
+        setPtSchedules(prev => prev.map(s => s.id === scheduleId ? ({
+          ...s,
+          settlement: { ...(s.settlement || {}), [assignee]: { ...(s.settlement?.[assignee] || {}), ...patch } },
+        }) : s));
+
+        // 담당자 개인 잔디 알림
+        const userHook = jandiUserWebhooks?.[assignee];
+        if (userHook?.url && userHook.enabled !== false) {
+          const calc = calculateSettlementAmount(pt, assignee);
+          const amountStr = (calc.amount || 0).toLocaleString('ko-KR') + '원';
+          try {
+            await fetch(userHook.url, {
+              method: 'POST',
+              mode: 'no-cors',
+              headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                body: '✅ 정산대상 자동 전환',
+                connectColor: '#16a34a',
+                connectInfo: [{
+                  title: `${pt.siteName || '단지명 미입력'} — ${assignee}`,
+                  description: [
+                    `결과: ${calc.result || '-'} · 예상금액: ${amountStr}`,
+                    `PT일자: ${pt.date || '-'}`,
+                    `사유: ${triggeredBy === 'auto-supervision' ? '감리 (검증 불필요)' : triggeredBy === 'auto-jandi-evidence' ? '잔디 공고문 매칭' : triggeredBy === 'auto-kapt-verified' ? 'K-APT 검증 완료' : '자동 검증'}`,
+                    '',
+                    '→ 관리자 확정 대기 중입니다.',
+                  ].join('\n'),
+                }],
+              }),
+            });
+          } catch (e) { console.warn('[auto-transition] jandi notify failed', e); }
+        }
+
+        return { skipped: false, ok: true, triggeredBy };
+      };
 
       // 결과 버튼 클릭 핸들러 (승/패/무는 사유 모달, 지원은 바로 저장)
       const handleResultClick = (schedule, result, assignee = null) => {
@@ -11352,6 +11438,126 @@ tr.suppressed td.fname{color:#64748b;}
                       </div>
                     </div>
 
+                    {/* ③ 신규 — 1분기 실적 확인 패널 (확인완료 / 검증요청) */}
+                    {(() => {
+                      const qKey = `${nowY}-Q${nowQ}`;
+                      const myConfirmation = quarterConfirmations[qKey]?.[viewingUser] || {};
+                      const isConfirmed = myConfirmation.confirmed === true;
+                      const reviewRequests = myConfirmation.reviewRequests || {};
+                      const reviewRequestArr = Object.entries(reviewRequests).map(([k, v]) => ({ id: k, ...v }));
+                      const deadlineStr = `${nowY}-${String(nowQ * 3 + 1).padStart(2, '0')}-24`; // 분기 종료 익월 24일
+                      const handleConfirm = async () => {
+                        if (!window.confirm(`${qKey} 실적을 "확인완료" 처리합니다.\n\n이후 수정이 필요하면 관리자에게 요청해야 합니다. 진행?`)) return;
+                        try {
+                          await database.ref(`quarterConfirmations/${qKey}/${viewingUser}`).update({
+                            confirmed: true,
+                            confirmedAt: new Date().toISOString(),
+                            confirmedBy: currentUser?.name || viewingUser,
+                          });
+                          // admin 채널로 알림
+                          if (jandiUrl) {
+                            try {
+                              await fetch(jandiUrl, {
+                                method: 'POST', mode: 'no-cors',
+                                headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  body: `✅ ${qKey} 실적 확인 완료 — ${viewingUser}`,
+                                  connectColor: '#16a34a',
+                                  connectInfo: [{ title: '담당자 자가 확인 완료', description: `${viewingUser}님이 ${qKey} 실적을 확인 완료 처리했습니다.` }],
+                                }),
+                              });
+                            } catch {}
+                          }
+                          alert('확인 완료되었습니다.');
+                        } catch (e) { alert('저장 실패: ' + e.message); }
+                      };
+                      const handleReviewRequest = async () => {
+                        const txt = window.prompt(`${qKey} 실적 중 수정/검증이 필요한 내용을 관리자에게 요청합니다.\n\n예시:\n- ○○단지 결과가 누락됨\n- △△단지 감리 건인데 일반으로 집계됨\n\n요청 내용:`);
+                        if (!txt || !txt.trim()) return;
+                        const trimmed = txt.trim();
+                        try {
+                          const ref = database.ref(`quarterConfirmations/${qKey}/${viewingUser}/reviewRequests`).push();
+                          await ref.set({
+                            text: trimmed,
+                            requestedAt: new Date().toISOString(),
+                            requestedBy: currentUser?.name || viewingUser,
+                            status: 'open',
+                          });
+                          // admin 채널 + 해당 담당자 개인 채널로도 알림
+                          if (jandiUrl) {
+                            try {
+                              await fetch(jandiUrl, {
+                                method: 'POST', mode: 'no-cors',
+                                headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  body: `⚠ ${qKey} 검증/수정 요청 — ${viewingUser}`,
+                                  connectColor: '#d97706',
+                                  connectInfo: [{ title: `${viewingUser}님의 요청`, description: trimmed }],
+                                }),
+                              });
+                            } catch {}
+                          }
+                          alert('검증 요청이 관리자에게 전달되었습니다.');
+                        } catch (e) { alert('저장 실패: ' + e.message); }
+                      };
+                      return (
+                        <div style={cardStyle}>
+                          <div style={{ padding: '16px 20px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>📋 {qKey} 실적 확인</span>
+                            <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 10, background: isConfirmed ? '#dcfce7' : '#fef3c7', color: isConfirmed ? '#166534' : '#92400e' }}>
+                              {isConfirmed ? '✅ 확인완료' : '⏳ 확인 대기'}
+                            </span>
+                          </div>
+                          <div style={{ padding: '0 16px 14px' }}>
+                            {!isConfirmed && (
+                              <div style={{ padding: '10px 12px', background: '#fef3c7', borderRadius: 8, border: '1px solid #fde68a', fontSize: 11, color: '#92400e', lineHeight: 1.6, marginBottom: 10 }}>
+                                본인 {qKey} 실적을 [실적] 탭에서 확인 후 아래 버튼을 눌러주세요.<br />
+                                마감일: <b>{deadlineStr}</b> · 미확인 시 매일 2회 (09시·17시) 리마인드 발송
+                              </div>
+                            )}
+                            {isConfirmed && myConfirmation.confirmedAt && (
+                              <div style={{ padding: '10px 12px', background: '#ecfdf5', borderRadius: 8, border: '1px solid #a7f3d0', fontSize: 11, color: '#065f46', marginBottom: 10 }}>
+                                확인 완료: {(myConfirmation.confirmedAt || '').slice(0, 16).replace('T', ' ')}
+                                {myConfirmation.confirmedBy && myConfirmation.confirmedBy !== viewingUser ? ` (${myConfirmation.confirmedBy} 처리)` : ''}
+                              </div>
+                            )}
+                            {/* 이미 제출된 검증 요청 */}
+                            {reviewRequestArr.length > 0 && (
+                              <div style={{ padding: '8px 10px', background: '#fff7ed', borderRadius: 8, border: '1px solid #fed7aa', marginBottom: 10 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: '#9a3412', marginBottom: 4 }}>📌 제출된 검증/수정 요청 ({reviewRequestArr.length})</div>
+                                {reviewRequestArr.map(r => (
+                                  <div key={r.id} style={{ fontSize: 11, color: '#7c2d12', padding: '4px 0', borderTop: '1px dashed #fed7aa' }}>
+                                    <span style={{ fontWeight: 700, color: r.status === 'resolved' ? '#047857' : '#9a3412' }}>[{r.status === 'resolved' ? '처리완료' : '확인중'}]</span>{' '}
+                                    {r.text}
+                                    <span style={{ color: '#94a3b8', marginLeft: 4, fontSize: 10 }}>· {(r.requestedAt || '').slice(5, 16).replace('T', ' ')}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              {!isConfirmed ? (
+                                <>
+                                  <button
+                                    onClick={handleConfirm}
+                                    style={{ flex: 1, padding: '10px', borderRadius: 8, border: 'none', background: '#16a34a', color: 'white', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                                  >✅ 이상없음 · 확인완료</button>
+                                  <button
+                                    onClick={handleReviewRequest}
+                                    style={{ flex: 1, padding: '10px', borderRadius: 8, border: '1px solid #d97706', background: '#fff7ed', color: '#9a3412', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                                  >⚠ 검증/수정 요청</button>
+                                </>
+                              ) : (
+                                <button
+                                  onClick={handleReviewRequest}
+                                  style={{ flex: 1, padding: '10px', borderRadius: 8, border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                                >추가 검증/수정 요청</button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {/* 분기 미확정 PT */}
                     {isAdmin && adminTotalUnconfirmed > 0 && (
                       <div style={cardStyle}>
@@ -13349,6 +13555,10 @@ tr.suppressed td.fname{color:#64748b;}
                                   setHasResultChanges(true);
                                 }
                                 setKaptVerifyModal(m => ({ ...m, stage: 'result', result: r }));
+                                // Q2+ 자동 정산대상 전환 (검증 성공 시)
+                                if (r && r.status === 'verified') {
+                                  autoTransitionIfEligible(kaptVerifyModal.scheduleId, kaptVerifyModal.manager, 'auto-kapt-verified');
+                                }
                               } catch (err) {
                                 setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'exception', message: err.message } }));
                               }
@@ -13451,6 +13661,10 @@ tr.suppressed td.fname{color:#64748b;}
                               setHasResultChanges(true);
                             }
                             setKaptVerifyModal(m => ({ ...m, stage: 'result', result: r }));
+                            // Q2+ 자동 정산대상 전환 (검증 성공 시)
+                            if (r && r.status === 'verified') {
+                              autoTransitionIfEligible(kaptVerifyModal.scheduleId, kaptVerifyModal.manager, 'auto-kapt-verified');
+                            }
                           } catch (err) {
                             setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'exception', message: err.message } }));
                           }
