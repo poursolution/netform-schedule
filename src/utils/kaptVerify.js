@@ -6,6 +6,30 @@
 // Worker 미배포 상태에서도 fallback으로 클라이언트가 직접 잔디 알림 호출
 
 import { sendJandiNotification, buildCrossCheckMessage } from './jandi.js';
+import { BRAND_TOKENS } from './apartmentMatch.js';
+
+// siteName 에서 브랜드 토큰 기반 변형 이름 생성
+//   예: "남악경남아너스빌" → ["남악경남아너스빌", "경남아너스빌"]
+//   예: "세마역트루엘더퍼스트" → ["세마역트루엘더퍼스트"] (트루엘 미포함 브랜드면 원본만)
+// 브랜드 앞 접두어(지역/역명)가 있을 때 해당 브랜드부터 끝까지를 추가 변형으로 반환.
+function buildSiteNameVariants(siteName) {
+  const variants = [siteName];
+  if (!siteName) return variants;
+  const norm = siteName.replace(/\s+/g, '');
+  // 길이순 정렬 (긴 브랜드 우선 매칭)
+  const sortedBrands = [...BRAND_TOKENS].sort((a, b) => b.length - a.length);
+  for (const brand of sortedBrands) {
+    const brandNorm = brand.replace(/\s+/g, '');
+    const idx = norm.indexOf(brandNorm);
+    if (idx > 0) {
+      // 브랜드 앞에 1자 이상 있으면 접두어가 있는 것 — 변형 추가
+      const stripped = norm.slice(idx);
+      if (!variants.includes(stripped)) variants.push(stripped);
+      break;  // 첫 매칭만 사용
+    }
+  }
+  return variants;
+}
 
 let cachedWorkerUrl = null;
 let cachedEnabled = true;
@@ -55,19 +79,54 @@ export async function verifyKaptForPt(args) {
 // K-APT 후보 검색 — 모달 자동 추천용.
 // siteName 으로 Firebase 에 수집된 bids 중 유사한 공고 top 5 반환.
 // Worker 미설정·미배포 시에는 빈 배열 반환 (→ 수동 입력 flow fallback)
+//
+// [개선] 지역 prefix 변형 자동 시도:
+//   "남악경남아너스빌" 입력 시 원본 외에 "경남아너스빌" 버전도 병렬로 검색.
+//   Worker 가 이름 정확 매칭 방식이라 지역 prefix 차이로 bid_not_found 나는 케이스 대응.
+//   결과는 bidNum 기준 dedupe 후 score 내림차순 정렬.
 export async function searchKaptCandidates({ siteName, ptDate, aliasMap } = {}) {
   if (!cachedEnabled) return { candidates: [], reason: 'disabled' };
   if (!cachedWorkerUrl) return { candidates: [], reason: 'worker_not_configured' };
   if (!siteName) return { candidates: [], reason: 'empty_siteName' };
-  try {
-    const resp = await fetch(`${cachedWorkerUrl.replace(/\/$/, '')}/search-candidates`, {
+
+  const variants = buildSiteNameVariants(siteName);
+  const endpoint = `${cachedWorkerUrl.replace(/\/$/, '')}/search-candidates`;
+
+  // 변형별 병렬 호출
+  const requests = variants.map(v =>
+    fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ siteName, ptDate: ptDate || null, aliasMap: aliasMap || null }),
-    });
-    if (!resp.ok) return { candidates: [], reason: `http_${resp.status}` };
-    const data = await resp.json();
-    return { candidates: Array.isArray(data?.candidates) ? data.candidates : [], reason: data?.reason || null };
+      body: JSON.stringify({ siteName: v, ptDate: ptDate || null, aliasMap: aliasMap || null }),
+    })
+      .then(r => r.ok ? r.json() : { candidates: [], reason: `http_${r.status}` })
+      .catch(e => ({ candidates: [], reason: 'network', error: e.message }))
+  );
+
+  try {
+    const results = await Promise.all(requests);
+    // 병합 + bidNum 기준 dedupe (가장 높은 score 유지)
+    const merged = new Map();
+    let lastReason = null;
+    for (const r of results) {
+      lastReason = r?.reason || lastReason;
+      const list = Array.isArray(r?.candidates) ? r.candidates : [];
+      for (const c of list) {
+        if (!c?.bidNum) continue;
+        const existing = merged.get(c.bidNum);
+        if (!existing || (c.score ?? 0) > (existing.score ?? 0)) {
+          merged.set(c.bidNum, c);
+        }
+      }
+    }
+    const candidates = Array.from(merged.values())
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+      .slice(0, 10);  // 상위 10개
+    return {
+      candidates,
+      reason: candidates.length > 0 ? null : lastReason,
+      variantsSearched: variants,
+    };
   } catch (e) {
     console.warn('[KAPT] searchCandidates failed', e);
     return { candidates: [], reason: 'network', error: e.message };

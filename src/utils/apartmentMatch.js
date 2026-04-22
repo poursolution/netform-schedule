@@ -21,7 +21,7 @@ const TRAILING_SUFFIXES = [
 
 // 자주 쓰이는 브랜드명 (토큰 추출 우선순위용)
 // src/utils/technologies.js 와 별개 — 경쟁사 포함
-const BRAND_TOKENS = [
+export const BRAND_TOKENS = [
   // 대형 브랜드
   '푸르지오', '더샵', '아이파크', '센트럴파크', '이편한세상', 'e편한세상', 'e 편한세상',
   '래미안', '자이', 'SK뷰', 'SK VIEW', '힐스테이트', '롯데캐슬', '두산위브',
