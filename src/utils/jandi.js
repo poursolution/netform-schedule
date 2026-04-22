@@ -94,29 +94,90 @@ export function buildReportSentMessage({ year, quarter, summary }) {
   };
 }
 
-// === 웹훅 호출 (no-cors fire-and-forget) ===
+// === 웹훅 호출 (no-cors fire-and-forget) + 실패 큐 재시도 ===
+//
+// no-cors 모드이므로 HTTP 응답 검증 불가.
+// fetch 자체가 throw 하는 경우(네트워크 오프라인·CSP 차단 등)만 실패로 감지 가능.
+// 그런 경우 localStorage 큐에 저장 → 다음 호출 또는 flushJandiQueue() 호출 시 재시도.
+const QUEUE_KEY = 'jandi_retry_queue_v1';
+const MAX_QUEUE_SIZE = 50;
+const MAX_ATTEMPTS = 3;
+
+function loadQueue() {
+  try {
+    const raw = localStorage.getItem(QUEUE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveQueue(q) {
+  try {
+    localStorage.setItem(QUEUE_KEY, JSON.stringify(q.slice(-MAX_QUEUE_SIZE)));
+  } catch {}
+}
+
+function enqueueFailed(message, reason) {
+  const q = loadQueue();
+  q.push({ message, reason, attempts: 1, ts: Date.now() });
+  saveQueue(q);
+  console.warn('[Jandi] queued for retry', message.body, 'queue size=', q.length);
+}
+
+async function trySend(message) {
+  await fetch(cachedWebhookUrl, {
+    method: 'POST',
+    mode: 'no-cors',
+    headers: {
+      'Accept': 'application/vnd.tosslab.jandi-v2+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(message),
+  });
+}
+
 export async function sendJandiNotification(message) {
   if (!cachedEnabled || !cachedWebhookUrl) {
     console.log('[Jandi] skip (config not set)', message.body);
     return { ok: false, reason: 'config_missing' };
   }
   try {
-    // mode: 'no-cors' — 응답 검증 불가, 보냄만 보장
-    await fetch(cachedWebhookUrl, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: {
-        'Accept': 'application/vnd.tosslab.jandi-v2+json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(message),
-    });
+    await trySend(message);
     console.log('[Jandi] sent', message.body);
+    // 성공 → 큐 flush 시도 (뒷건들도 빠르게 처리)
+    queueMicrotask(() => flushJandiQueue().catch(() => {}));
     return { ok: true };
   } catch (e) {
-    console.warn('[Jandi] send failed', e);
-    return { ok: false, reason: e.message };
+    console.warn('[Jandi] send failed — enqueue for retry', e);
+    enqueueFailed(message, e.message || 'send_failed');
+    return { ok: false, reason: e.message || 'send_failed', queued: true };
   }
+}
+
+// 실패 큐 flush — app 초기화 시 또는 다음 송신 성공 시 호출.
+// 각 항목 최대 MAX_ATTEMPTS 회까지 재시도 후 drop.
+export async function flushJandiQueue() {
+  if (!cachedEnabled || !cachedWebhookUrl) return { flushed: 0, dropped: 0 };
+  const q = loadQueue();
+  if (q.length === 0) return { flushed: 0, dropped: 0 };
+  const remaining = [];
+  let flushed = 0, dropped = 0;
+  for (const entry of q) {
+    try {
+      await trySend(entry.message);
+      flushed++;
+    } catch (e) {
+      entry.attempts = (entry.attempts || 1) + 1;
+      if (entry.attempts >= MAX_ATTEMPTS) {
+        console.warn('[Jandi] drop after', entry.attempts, 'attempts:', entry.message?.body);
+        dropped++;
+      } else {
+        remaining.push(entry);
+      }
+    }
+  }
+  saveQueue(remaining);
+  if (flushed || dropped) console.log('[Jandi] queue flush', { flushed, dropped, remaining: remaining.length });
+  return { flushed, dropped, remaining: remaining.length };
 }
 
 // 편의 헬퍼들

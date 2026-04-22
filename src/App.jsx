@@ -16,6 +16,7 @@ import {
 import {
   setKaptVerifyConfig,
   verifyKaptForPt,
+  searchKaptCandidates,
 } from './utils/kaptVerify.js';
 import {
   OUR_TECHNOLOGIES,
@@ -34,6 +35,7 @@ import {
   buildExceptionResultMessage,
 } from './utils/exceptions.js';
 import { sendJandiNotification } from './utils/jandi.js';
+import { deriveAssigneeResult } from './utils/settlement.js';
 
     // 시스템 명칭 상수
     const APP_NAME = 'POUR영업운영시스템';
@@ -1068,6 +1070,15 @@ import { sendJandiNotification } from './utils/jandi.js';
       const [showPriceTable, setShowPriceTable] = useState(false);
       const [statsMonth, setStatsMonth] = useState('all'); // 통계용 월 선택
       const [statsAssignee, setStatsAssignee] = useState('all'); // 통계용 담당자 선택
+
+      // 관리자 월정산 모달 (P7)
+      const [showMonthlySettlement, setShowMonthlySettlement] = useState(false);
+      const [monthlySettlementMonth, setMonthlySettlementMonth] = useState(() => {
+        const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      });
+      const [monthlySettlementData, setMonthlySettlementData] = useState(null);
+      const [monthlySettlementLoading, setMonthlySettlementLoading] = useState(false);
+      const [monthlySettlementStatusFilter, setMonthlySettlementStatusFilter] = useState('all'); // all | draft | confirmed | completed
       
       // 지역별 단가표 (2026년 4월 1일 이전: 구 단가)
       const regionPricesOld = {
@@ -2966,28 +2977,14 @@ import { sendJandiNotification } from './utils/jandi.js';
           return assignees.includes(assignee);
         });
         
-        // 개별 담당자 결과 가져오기 (지원 규칙: 주담 결과에 종속)
+        // 개별 담당자 결과 (지원 규칙 종속: util deriveAssigneeResult 위임)
+        //  editingResults 오버레이는 본 화면에서만 쓰이므로 stub pt 에 합성 후 util 호출
         const getResult = (s) => {
           const editKey = `${s.id}_${assignee}`;
-          let raw = null;
-          if (editingResults.hasOwnProperty(editKey)) raw = editingResults[editKey];
-          else if (s.results && s.results[assignee]) raw = s.results[assignee];
-          else {
-            const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
-            if (assignees.length > 1) raw = null;
-            else raw = s.result || null;
-          }
-          // 지원자 규칙: 주담당자 '승' 또는 '무' 일 때만 지원 인정, '패' 면 본인도 '패'
-          if (raw === '지원') {
-            const primary = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim())[0];
-            if (primary && primary !== assignee) {
-              const primaryResult = s.results?.[primary] || s.result;
-              if (primaryResult === '승' || primaryResult === '무') return '지원';
-              if (primaryResult === '패') return '패';
-              return null;
-            }
-          }
-          return raw;
+          const stub = editingResults.hasOwnProperty(editKey)
+            ? { ...s, results: { ...(s.results || {}), [assignee]: editingResults[editKey] } }
+            : s;
+          return deriveAssigneeResult(stub, assignee);
         };
         
         // 본인영업 여부 확인
@@ -3020,26 +3017,7 @@ import { sendJandiNotification } from './utils/jandi.js';
           return assignees.includes(assigneeName);
         });
 
-        const getResult = (s) => {
-          let raw = null;
-          if (s.results && s.results[assigneeName]) raw = s.results[assigneeName];
-          else {
-            const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
-            if (assignees.length > 1) raw = null;
-            else raw = s.result || null;
-          }
-          // 지원자 규칙 — 주담 승·무 때만 인정, 주담 패면 본인도 패
-          if (raw === '지원') {
-            const primary = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim())[0];
-            if (primary && primary !== assigneeName) {
-              const primaryResult = s.results?.[primary] || s.result;
-              if (primaryResult === '승' || primaryResult === '무') return '지원';
-              if (primaryResult === '패') return '패';
-              return null;
-            }
-          }
-          return raw;
-        };
+        const getResult = (s) => deriveAssigneeResult(s, assigneeName);
 
         const workTypeStats = {};
         const groupStats = {};
@@ -3544,26 +3522,7 @@ import { sendJandiNotification } from './utils/jandi.js';
               return assignees.includes(assignee);
             });
             
-            const getResult = (s) => {
-              let raw = null;
-              if (s.results && s.results[assignee]) raw = s.results[assignee];
-              else {
-                const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
-                if (assignees.length > 1) raw = null;
-                else raw = s.result || null;
-              }
-              // 지원자 규칙 — 주담 승·무 때만 인정
-              if (raw === '지원') {
-                const primary = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim())[0];
-                if (primary && primary !== assignee) {
-                  const primaryResult = s.results?.[primary] || s.result;
-                  if (primaryResult === '승' || primaryResult === '무') return '지원';
-                  if (primaryResult === '패') return '패';
-                  return null;
-                }
-              }
-              return raw;
-            };
+            const getResult = (s) => deriveAssigneeResult(s, assignee);
 
             const wins = list.filter(s => getResult(s) === '승').length;
             const draws = list.filter(s => getResult(s) === '무').length;
@@ -5571,6 +5530,13 @@ import { sendJandiNotification } from './utils/jandi.js';
                   <span>미확정 <strong style={{ color: '#f59e0b' }}>{pendingSchedules.length}</strong></span>
                   <span>미배정 <strong style={{ color: '#dc2626' }}>{allSchedules.filter(isUnassigned).length}</strong></span>
                 </div>
+              )}
+              {currentUser?.isAdmin && (
+                <button
+                  onClick={() => { setShowMonthlySettlement(true); }}
+                  style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', padding: isMobile ? '8px 10px' : '10px 14px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '700', cursor: 'pointer' }}
+                  title="관리자 월정산 — 담당자별 집계·확정"
+                >💰 월정산</button>
               )}
               <button onClick={() => setShowSettings(true)} style={{ background: '#f1f5f9', color: '#475569', border: 'none', padding: isMobile ? '8px 10px' : '10px 14px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}>설정</button>
             </div>
@@ -9387,20 +9353,37 @@ tr.suppressed td.fname{color:#64748b;}
                                                         return;
                                                       }
                                                     }
-                                                    // K-APT bidList 새 탭 자동 오픈 (단지명 prefill)
-                                                    const kaptSearchUrl = `https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(card.siteName || '')}`;
-                                                    window.open(kaptSearchUrl, '_blank');
-                                                    // 입력 모달 오픈
+                                                    // 1) 모달을 candidates-loading 로 먼저 오픈
                                                     setKaptVerifyBidInput(s?.bidNo || '');
                                                     setKaptVerifyModal({
-                                                      stage: 'input',
+                                                      stage: 'candidates-loading',
                                                       scheduleId: card.id,
                                                       manager: card.manager,
                                                       siteName: card.siteName,
                                                       workType: s?.workType,
                                                       date: card.date,
                                                       currentBidNo: s?.bidNo || '',
+                                                      candidates: [],
                                                     });
+                                                    // 2) 비동기로 Firebase 후보 검색 → stage 전이
+                                                    searchKaptCandidates({ siteName: card.siteName, ptDate: card.date })
+                                                      .then(({ candidates }) => {
+                                                        setKaptVerifyModal(m => m && m.scheduleId === card.id ? ({
+                                                          ...m,
+                                                          stage: (candidates && candidates.length > 0) ? 'candidates' : 'input',
+                                                          candidates: candidates || [],
+                                                        }) : m);
+                                                        // 후보 없을 때만 K-APT 새 탭 자동 오픈 (있으면 선택 후 건너뜀)
+                                                        if (!candidates || candidates.length === 0) {
+                                                          const kaptSearchUrl = `https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(card.siteName || '')}`;
+                                                          window.open(kaptSearchUrl, '_blank');
+                                                        }
+                                                      })
+                                                      .catch(() => {
+                                                        setKaptVerifyModal(m => m && m.scheduleId === card.id ? ({ ...m, stage: 'input', candidates: [] }) : m);
+                                                        const kaptSearchUrl = `https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(card.siteName || '')}`;
+                                                        window.open(kaptSearchUrl, '_blank');
+                                                      });
                                                   }}
                                                   style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: busy ? '#e5e7eb' : isVerified ? '#dcfce7' : '#f1f5f9', color: busy ? '#6b7280' : isVerified ? '#166534' : '#475569', border: '1px solid ' + (isVerified ? '#86efac' : '#cbd5e1'), cursor: busy ? 'wait' : 'pointer' }}
                                                   title={isVerified ? `이미 검증됨: ${kv.matchedValue || ''}` : 'K-APT 개별 검증 실행'}
@@ -12975,7 +12958,7 @@ tr.suppressed td.fname{color:#64748b;}
           {/* K-APT 수동 검증 모달 — 사용자가 직접 K-APT 에서 공고 찾아 공고번호 붙여넣기 */}
           {kaptVerifyModal && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10100, padding: '20px' }}
-              onClick={(e) => { if (e.target === e.currentTarget && kaptVerifyModal.stage !== 'verifying') { setKaptVerifyModal(null); setKaptVerifyBidInput(''); } }}>
+              onClick={(e) => { if (e.target === e.currentTarget && kaptVerifyModal.stage !== 'verifying' && kaptVerifyModal.stage !== 'candidates-loading') { setKaptVerifyModal(null); setKaptVerifyBidInput(''); } }}>
               <div style={{ background: 'white', borderRadius: '12px', padding: '24px', width: '560px', maxWidth: '95%', maxHeight: '90vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
                 {/* Header */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
@@ -12984,10 +12967,94 @@ tr.suppressed td.fname{color:#64748b;}
                     <h2 style={{ fontSize: '17px', fontWeight: '700', margin: 0, color: '#1e293b' }}>{kaptVerifyModal.siteName}</h2>
                     <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>{kaptVerifyModal.manager} · {kaptVerifyModal.date}</div>
                   </div>
-                  {kaptVerifyModal.stage !== 'verifying' && (
+                  {kaptVerifyModal.stage !== 'verifying' && kaptVerifyModal.stage !== 'candidates-loading' && (
                     <button onClick={() => { setKaptVerifyModal(null); setKaptVerifyBidInput(''); }} style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer', color: '#94a3b8' }}>×</button>
                   )}
                 </div>
+
+                {/* Stage: candidates-loading — 후보 검색 중 */}
+                {kaptVerifyModal.stage === 'candidates-loading' && (
+                  <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>🔎</div>
+                    <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '6px' }}>K-APT 공고 후보 검색 중...</div>
+                    <div style={{ fontSize: '12px', color: '#64748b' }}>"{kaptVerifyModal.siteName}"</div>
+                  </div>
+                )}
+
+                {/* Stage: candidates — Firebase 자동 추천 리스트 중 선택 */}
+                {kaptVerifyModal.stage === 'candidates' && (
+                  <>
+                    <div style={{ padding: '12px 14px', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '8px', fontSize: '12px', color: '#065f46', marginBottom: '14px', lineHeight: '1.6' }}>
+                      <div style={{ fontWeight: '700', marginBottom: '4px' }}>💡 자동 추천 ({kaptVerifyModal.candidates?.length || 0}개)</div>
+                      <div>단지명으로 매칭된 K-APT 공고입니다. 일치하는 항목을 선택하세요.</div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '380px', overflowY: 'auto', marginBottom: '14px' }}>
+                      {(kaptVerifyModal.candidates || []).map((c, idx) => {
+                        const scorePct = c.score != null ? Math.round(c.score * 100) : null;
+                        const scoreColor = scorePct >= 80 ? '#16a34a' : scorePct >= 50 ? '#d97706' : '#64748b';
+                        return (
+                          <button
+                            key={c.bidNum + '_' + idx}
+                            onClick={async () => {
+                              // 선택 → verifying 전이 + 자동 판정
+                              setKaptVerifyModal(m => ({ ...m, stage: 'verifying', bidNum: c.bidNum }));
+                              try {
+                                const r = await verifyKaptForPt({
+                                  scheduleId: kaptVerifyModal.scheduleId,
+                                  assignee: kaptVerifyModal.manager,
+                                  siteName: kaptVerifyModal.siteName,
+                                  workType: kaptVerifyModal.workType,
+                                  bidNo: c.bidNum,
+                                  ptDate: kaptVerifyModal.date,
+                                  by: currentUser?.name || 'manual',
+                                });
+                                if (c.bidNum !== kaptVerifyModal.currentBidNo) {
+                                  setPtSchedules(prev => prev.map(ps => ps.id === kaptVerifyModal.scheduleId ? { ...ps, bidNo: c.bidNum } : ps));
+                                  setDirtyScheduleIds(prev => new Set([...prev, kaptVerifyModal.scheduleId]));
+                                  setHasResultChanges(true);
+                                }
+                                setKaptVerifyModal(m => ({ ...m, stage: 'result', result: r }));
+                              } catch (err) {
+                                setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'exception', message: err.message } }));
+                              }
+                            }}
+                            style={{ textAlign: 'left', padding: '10px 12px', borderRadius: '8px', border: '1.5px solid #e2e8f0', background: 'white', cursor: 'pointer', transition: 'all 0.15s' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#2563eb'; e.currentTarget.style.background = '#f8fafc'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.background = 'white'; }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <span style={{ fontSize: '13px', fontWeight: '700', color: '#1e293b' }}>{c.bidKaptname || '(단지명 없음)'}</span>
+                              {scorePct != null && (
+                                <span style={{ fontSize: '11px', fontWeight: '700', color: scoreColor }}>유사도 {scorePct}%</span>
+                              )}
+                            </div>
+                            {c.bidTitle && <div style={{ fontSize: '11px', color: '#475569', marginBottom: '2px' }}>{c.bidTitle.slice(0, 60)}{c.bidTitle.length > 60 ? '…' : ''}</div>}
+                            <div style={{ fontSize: '10px', color: '#94a3b8', display: 'flex', gap: '8px' }}>
+                              <span>공고번호 {c.bidNum}</span>
+                              {c.bidRegdate && <span>· {c.bidRegdate}</span>}
+                              {c.bidLocation && <span>· {c.bidLocation}</span>}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        onClick={() => { setKaptVerifyModal(null); setKaptVerifyBidInput(''); }}
+                        style={{ flex: '1', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}
+                      >취소</button>
+                      <button
+                        onClick={() => {
+                          // 해당 없음 → 기존 수동 입력 flow
+                          const kaptSearchUrl = `https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(kaptVerifyModal.siteName || '')}`;
+                          window.open(kaptSearchUrl, '_blank');
+                          setKaptVerifyModal(m => ({ ...m, stage: 'input' }));
+                        }}
+                        style={{ flex: '1.5', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#f8fafc', color: '#1e293b', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}
+                      >해당 없음 — 직접 입력 →</button>
+                    </div>
+                  </>
+                )}
 
                 {/* Stage: input — 공고번호 붙여넣기 */}
                 {kaptVerifyModal.stage === 'input' && (
@@ -13152,6 +13219,195 @@ tr.suppressed td.fname{color:#64748b;}
               </div>
             </div>
           )}
+
+          {/* 관리자 월정산 모달 (P7) */}
+          {showMonthlySettlement && currentUser?.isAdmin && (() => {
+            // 데이터 로드 — Firebase monthlySettlements/{monthKey}
+            const loadData = async () => {
+              setMonthlySettlementLoading(true);
+              try {
+                const snap = await database.ref(`monthlySettlements/${monthlySettlementMonth}`).once('value');
+                setMonthlySettlementData(snap.val() || null);
+              } catch (e) {
+                console.error('[monthly] load failed', e);
+                setMonthlySettlementData(null);
+              } finally {
+                setMonthlySettlementLoading(false);
+              }
+            };
+            const data = monthlySettlementData;
+            const perAssignee = data?.perAssignee || {};
+            const totals = data?.totals || null;
+            const rows = Object.values(perAssignee)
+              .filter(a => a.totalCount > 0)
+              .filter(a => monthlySettlementStatusFilter === 'all' || a.status === monthlySettlementStatusFilter)
+              .sort((a, b) => (b.estimatedAmount || 0) - (a.estimatedAmount || 0));
+            const updateRowStatus = async (assignee, newStatus) => {
+              try {
+                await database.ref(`monthlySettlements/${monthlySettlementMonth}/perAssignee/${assignee}/status`).set(newStatus);
+                setMonthlySettlementData(prev => prev ? ({
+                  ...prev,
+                  perAssignee: { ...prev.perAssignee, [assignee]: { ...prev.perAssignee[assignee], status: newStatus } },
+                }) : prev);
+              } catch (e) { alert('상태 변경 실패: ' + e.message); }
+            };
+            const bulkConfirm = async () => {
+              if (!rows.length) return;
+              const draftRows = rows.filter(r => r.status === 'draft' && r.reviewCount === 0);
+              if (draftRows.length === 0) { alert('확정할 항목 없음 (검토필요 건은 수동 처리 필요).'); return; }
+              if (!confirm(`검토필요 없는 draft ${draftRows.length}건을 일괄 확정하시겠습니까?`)) return;
+              const updates = {};
+              draftRows.forEach(r => { updates[`${r.assignee}/status`] = 'confirmed'; });
+              try {
+                await database.ref(`monthlySettlements/${monthlySettlementMonth}/perAssignee`).update(updates);
+                await loadData();
+              } catch (e) { alert('일괄 확정 실패: ' + e.message); }
+            };
+            const triggerGenerate = async () => {
+              if (!kaptWorkerUrl) { alert('K-APT Worker URL 미설정 — 설정 모달에서 먼저 입력하세요.'); return; }
+              if (!confirm(`Worker 에 ${monthlySettlementMonth} 월정산 재생성을 요청합니다. 진행?`)) return;
+              setMonthlySettlementLoading(true);
+              try {
+                const r = await fetch(`${kaptWorkerUrl.replace(/\/$/, '')}/run-monthly-settlement`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ monthKey: monthlySettlementMonth, force: true }),
+                });
+                const d = await r.json();
+                if (d.status === 'ok') {
+                  alert(`✅ 생성 완료\n\n담당자 ${d.totals?.totalAssignees}명 · ${d.totals?.totalCount}건\n예상 ${(d.totals?.totalEstimated || 0).toLocaleString('ko-KR')}원`);
+                  await loadData();
+                } else {
+                  alert(`실패: ${d.reason || d.error || 'unknown'}`);
+                }
+              } catch (e) { alert('Worker 호출 실패: ' + e.message); }
+              finally { setMonthlySettlementLoading(false); }
+            };
+            // 최초/월변경 시 로드
+            if (data === null && !monthlySettlementLoading) {
+              // React 렌더 중이라 setTimeout 으로 분리
+              setTimeout(loadData, 0);
+            }
+            const statusBadge = (s) => {
+              const m = {
+                draft: { bg: '#f1f5f9', color: '#475569', label: '초안' },
+                confirmed: { bg: '#dbeafe', color: '#1e40af', label: '확정' },
+                completed: { bg: '#dcfce7', color: '#166534', label: '완료' },
+              };
+              const x = m[s] || m.draft;
+              return <span style={{ padding: '2px 8px', borderRadius: '10px', background: x.bg, color: x.color, fontSize: '11px', fontWeight: '700' }}>{x.label}</span>;
+            };
+            return (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 10200, padding: '20px 0', overflowY: 'auto' }}
+                onClick={(e) => { if (e.target === e.currentTarget) setShowMonthlySettlement(false); }}>
+                <div style={{ background: 'white', borderRadius: '14px', padding: '24px', width: '900px', maxWidth: '95%', margin: 'auto' }} onClick={e => e.stopPropagation()}>
+                  {/* Header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
+                    <div>
+                      <div style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', letterSpacing: '0.05em' }}>관리자 월정산</div>
+                      <h2 style={{ fontSize: '18px', fontWeight: '700', margin: '2px 0 0 0', color: '#1e293b' }}>{monthlySettlementMonth}</h2>
+                    </div>
+                    <button onClick={() => setShowMonthlySettlement(false)} style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer', color: '#94a3b8' }}>×</button>
+                  </div>
+
+                  {/* 필터 바 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                    <label style={{ fontSize: '12px', color: '#475569', fontWeight: '600' }}>월:</label>
+                    <input
+                      type="month"
+                      value={monthlySettlementMonth}
+                      onChange={(e) => { setMonthlySettlementMonth(e.target.value); setMonthlySettlementData(null); }}
+                      style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
+                    />
+                    <label style={{ fontSize: '12px', color: '#475569', fontWeight: '600', marginLeft: '8px' }}>상태:</label>
+                    <select
+                      value={monthlySettlementStatusFilter}
+                      onChange={(e) => setMonthlySettlementStatusFilter(e.target.value)}
+                      style={{ padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
+                    >
+                      <option value="all">전체</option>
+                      <option value="draft">초안</option>
+                      <option value="confirmed">확정</option>
+                      <option value="completed">완료</option>
+                    </select>
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
+                      <button onClick={loadData} disabled={monthlySettlementLoading} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', fontSize: '12px', fontWeight: '600', color: '#475569', cursor: 'pointer' }}>새로고침</button>
+                      <button onClick={triggerGenerate} disabled={monthlySettlementLoading} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2563eb', color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>지금 생성</button>
+                      <button onClick={bulkConfirm} disabled={monthlySettlementLoading || rows.length === 0} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#16a34a', color: 'white', fontSize: '12px', fontWeight: '700', cursor: rows.length === 0 ? 'not-allowed' : 'pointer', opacity: rows.length === 0 ? 0.5 : 1 }}>일괄 확정</button>
+                    </div>
+                  </div>
+
+                  {/* Summary 배너 */}
+                  {totals && (
+                    <div style={{ padding: '12px 14px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', marginBottom: '12px', display: 'flex', gap: '18px', flexWrap: 'wrap', fontSize: '12px' }}>
+                      <span><b>담당자:</b> {totals.totalAssignees}명</span>
+                      <span><b>건수:</b> {totals.totalCount}</span>
+                      <span><b>예상 합계:</b> <span style={{ color: '#2563eb', fontWeight: '700' }}>{(totals.totalEstimated || 0).toLocaleString('ko-KR')}원</span></span>
+                      <span><b>검토필요:</b> <span style={{ color: '#d97706' }}>{totals.totalReview}</span></span>
+                      <span style={{ color: '#94a3b8' }}>생성: {(totals.generatedAt || '').slice(0, 16).replace('T', ' ')} · {totals.generatedBy}</span>
+                    </div>
+                  )}
+
+                  {/* Body */}
+                  {monthlySettlementLoading ? (
+                    <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>⏳ 로딩 중...</div>
+                  ) : !data ? (
+                    <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '13px' }}>
+                      {monthlySettlementMonth} 월정산 데이터 없음<br />
+                      <span style={{ fontSize: '12px' }}>"지금 생성" 버튼으로 Worker 에 생성 요청할 수 있습니다.</span>
+                    </div>
+                  ) : rows.length === 0 ? (
+                    <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '13px' }}>조건에 맞는 항목 없음</div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                        <thead>
+                          <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                            <th style={{ padding: '8px', textAlign: 'left', fontWeight: '700', color: '#475569' }}>담당자</th>
+                            <th style={{ padding: '8px', textAlign: 'right', fontWeight: '700', color: '#475569' }}>건수</th>
+                            <th style={{ padding: '8px', textAlign: 'center', fontWeight: '700', color: '#475569' }}>승/무/지원</th>
+                            <th style={{ padding: '8px', textAlign: 'right', fontWeight: '700', color: '#475569' }}>예상금액</th>
+                            <th style={{ padding: '8px', textAlign: 'center', fontWeight: '700', color: '#475569' }}>검토</th>
+                            <th style={{ padding: '8px', textAlign: 'center', fontWeight: '700', color: '#475569' }}>상태</th>
+                            <th style={{ padding: '8px', textAlign: 'center', fontWeight: '700', color: '#475569' }}>액션</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map(r => (
+                            <tr key={r.assignee} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                              <td style={{ padding: '8px', fontWeight: '700', color: '#1e293b' }}>{r.assignee}</td>
+                              <td style={{ padding: '8px', textAlign: 'right' }}>{r.totalCount}</td>
+                              <td style={{ padding: '8px', textAlign: 'center', color: '#475569' }}>{r.winCount} / {r.drawCount} / {r.supportCount}</td>
+                              <td style={{ padding: '8px', textAlign: 'right', fontWeight: '700', color: '#2563eb' }}>{(r.estimatedAmount || 0).toLocaleString('ko-KR')}원</td>
+                              <td style={{ padding: '8px', textAlign: 'center', color: r.reviewCount > 0 ? '#d97706' : '#94a3b8', fontWeight: r.reviewCount > 0 ? '700' : '400' }}>{r.reviewCount}</td>
+                              <td style={{ padding: '8px', textAlign: 'center' }}>{statusBadge(r.status)}</td>
+                              <td style={{ padding: '8px', textAlign: 'center' }}>
+                                <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                                  {r.status === 'draft' && (
+                                    <button onClick={() => updateRowStatus(r.assignee, 'confirmed')} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #93c5fd', background: '#eff6ff', color: '#1e40af', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>확정</button>
+                                  )}
+                                  {r.status === 'confirmed' && (
+                                    <button onClick={() => updateRowStatus(r.assignee, 'completed')} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #86efac', background: '#dcfce7', color: '#166534', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>완료</button>
+                                  )}
+                                  {r.status === 'completed' && (
+                                    <button onClick={() => { if (confirm('완료 상태를 다시 확정으로 되돌립니다. 진행?')) updateRowStatus(r.assignee, 'confirmed'); }} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>되돌리기</button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: '14px', display: 'flex', justifyContent: 'flex-end' }}>
+                    <button onClick={() => setShowMonthlySettlement(false)} style={{ padding: '8px 18px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>닫기</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* 단가표 모달 */}
           {showPriceTable && (
@@ -13787,26 +14043,7 @@ tr.suppressed td.fname{color:#64748b;}
               if (!s.ptAssignee) return false;
               return s.ptAssignee.split(/[\/,+&]/).map(a => a.trim()).some(a => a === viewUser);
             });
-            const getUserResult = (s) => {
-              let raw = null;
-              if (s.results && s.results[viewUser] !== undefined) raw = s.results[viewUser];
-              else {
-                const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
-                if (assignees.length <= 1) raw = s.result || null;
-                else raw = null;
-              }
-              // 지원자 규칙 — 주담 승·무 때만 인정, 주담 패면 본인도 패
-              if (raw === '지원') {
-                const primary = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim())[0];
-                if (primary && primary !== viewUser) {
-                  const primaryResult = s.results?.[primary] || s.result;
-                  if (primaryResult === '승' || primaryResult === '무') return '지원';
-                  if (primaryResult === '패') return '패';
-                  return null;
-                }
-              }
-              return raw;
-            };
+            const getUserResult = (s) => deriveAssigneeResult(s, viewUser);
             const currentMonthStr2 = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
             let drillPts = [];
             if (drilldownFilter === 'completed') {

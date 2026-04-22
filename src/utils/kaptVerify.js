@@ -52,6 +52,28 @@ export async function verifyKaptForPt(args) {
   return { status: 'needs_review', reason: 'worker_not_configured' };
 }
 
+// K-APT 후보 검색 — 모달 자동 추천용.
+// siteName 으로 Firebase 에 수집된 bids 중 유사한 공고 top 5 반환.
+// Worker 미설정·미배포 시에는 빈 배열 반환 (→ 수동 입력 flow fallback)
+export async function searchKaptCandidates({ siteName, ptDate } = {}) {
+  if (!cachedEnabled) return { candidates: [], reason: 'disabled' };
+  if (!cachedWorkerUrl) return { candidates: [], reason: 'worker_not_configured' };
+  if (!siteName) return { candidates: [], reason: 'empty_siteName' };
+  try {
+    const resp = await fetch(`${cachedWorkerUrl.replace(/\/$/, '')}/search-candidates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName, ptDate: ptDate || null }),
+    });
+    if (!resp.ok) return { candidates: [], reason: `http_${resp.status}` };
+    const data = await resp.json();
+    return { candidates: Array.isArray(data?.candidates) ? data.candidates : [], reason: data?.reason || null };
+  } catch (e) {
+    console.warn('[KAPT] searchCandidates failed', e);
+    return { candidates: [], reason: 'network', error: e.message };
+  }
+}
+
 async function sendDirectJandiCrossCheck(args, extraNote) {
   const msg = buildCrossCheckMessage({
     assignee: args.assignee,
