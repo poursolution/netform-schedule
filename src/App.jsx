@@ -625,6 +625,7 @@ const SETTLEMENT_BADGE_STYLE = {
       const [quarterReportQuarter, setQuarterReportQuarter] = useState(1);
       const [quarterReportBusy, setQuarterReportBusy] = useState(false);
       const [quarterReportOverrideGuard, setQuarterReportOverrideGuard] = useState(false);  // Phase 5 — 전원 최종확정 우회
+      const [quarterReportSentHistory, setQuarterReportSentHistory] = useState({});  // { [qKey]: { sentAt, sentBy, ... } }
 
       // 잔디 웹훅 설정
       const [jandiUrl, setJandiUrl] = useState('');
@@ -1476,6 +1477,12 @@ const SETTLEMENT_BADGE_STYLE = {
         aliasRef.on('value', (snapshot) => {
           const data = snapshot.val() || {};
           setApartmentAliasMap(data);
+        });
+
+        // 김유림 분기보고서 발송 이력 로드
+        const sentHistRef = database.ref('quarterReportSent');
+        sentHistRef.on('value', (snapshot) => {
+          setQuarterReportSentHistory(snapshot.val() || {});
         });
 
         // CRM 영업 데이터 로드
@@ -9180,6 +9187,61 @@ const SETTLEMENT_BADGE_STYLE = {
                                 })}
                               </div>
 
+                              {/* 검토필요 묶음 처리 (admin only + unverified 탭일 때만) */}
+                              {siteListTab === 'unverified' && currentUser?.isAdmin && filteredRows.length > 0 && (
+                                <div style={{ marginBottom: 12, padding: '12px 14px', background: '#fef2f2', border: '1.5px solid #fecaca', borderRadius: 10, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+                                  <div style={{ flex: 1, minWidth: 200, fontSize: 12, color: '#991b1b' }}>
+                                    <div style={{ fontWeight: 700, marginBottom: 2 }}>🛠 관리자 묶음 처리 ({filteredRows.length}건)</div>
+                                    <div style={{ fontSize: 11, color: '#b91c1c', lineHeight: 1.5 }}>
+                                      현재 보이는 검토필요 건 전체에 일괄 적용. 개별 확인 불가할 때 직권 처리용.
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={async () => {
+                                      if (!window.confirm(`${filteredRows.length}건을 "관리자 수동 승인"으로 일괄 처리합니다.\n\n각 담당자의 settlement.manualVerified = true 로 저장되어 정산 대상으로 포함됩니다.\n\n진행?`)) return;
+                                      const now = new Date().toISOString();
+                                      const updates = {};
+                                      filteredRows.forEach(c => {
+                                        const ptId = c.id; const assignee = c.manager;
+                                        if (!ptId || !assignee) return;
+                                        updates[`pt/${ptId}/settlement/${assignee}/manualVerified`] = true;
+                                        updates[`pt/${ptId}/settlement/${assignee}/manualVerifiedAt`] = now;
+                                        updates[`pt/${ptId}/settlement/${assignee}/manualVerifiedBy`] = currentUser?.name || 'admin';
+                                        updates[`pt/${ptId}/settlement/${assignee}/reviewBypassedBy`] = currentUser?.name || 'admin';
+                                      });
+                                      try {
+                                        await database.ref().update(updates);
+                                        alert(`✅ ${filteredRows.length}건 수동 승인 완료`);
+                                      } catch (e) { alert('처리 실패: ' + e.message); }
+                                    }}
+                                    style={{ padding: '8px 14px', borderRadius: 6, border: 'none', background: '#059669', color: 'white', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                                    title="manualVerified=true 로 일괄 저장 (isSettlementEligible 통과)"
+                                  >✓ 전체 수동 승인</button>
+                                  <button
+                                    onClick={async () => {
+                                      const reason = window.prompt(`${filteredRows.length}건 전체를 "취소공고"로 일괄 표시합니다.\n\n사유를 입력해주세요 (예: 단체PT / 공고 없는 현장 / 기타):`);
+                                      if (reason === null) return;
+                                      const trimmed = (reason || '').trim() || '사유 미입력';
+                                      if (!window.confirm(`${filteredRows.length}건 취소공고 일괄 마킹 — 정산 대상에서 제외됩니다.\n\n사유: ${trimmed}\n\n진행?`)) return;
+                                      const now = new Date().toISOString();
+                                      const updates = {};
+                                      filteredRows.forEach(c => {
+                                        if (!c.id) return;
+                                        updates[`pt/${c.id}/kaptVerified/status`] = 'cancelled';
+                                        updates[`pt/${c.id}/kaptVerified/cancelReason`] = trimmed;
+                                        updates[`pt/${c.id}/kaptVerified/cancelledAt`] = now;
+                                        updates[`pt/${c.id}/kaptVerified/cancelledBy`] = currentUser?.name || 'admin-bulk';
+                                      });
+                                      try {
+                                        await database.ref().update(updates);
+                                        alert(`🚫 ${filteredRows.length}건 취소공고 일괄 마킹 완료`);
+                                      } catch (e) { alert('처리 실패: ' + e.message); }
+                                    }}
+                                    style={{ padding: '8px 14px', borderRadius: 6, border: 'none', background: '#dc2626', color: 'white', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                                  >🚫 전체 취소공고</button>
+                                </div>
+                              )}
+
                               {/* D — 월별 요약 바: 결과 카운트 + 정산 대상 건수 + 예상 금액 + 검토필요 */}
                               <div style={{ marginBottom: '12px', padding: isMobile ? '12px 14px' : '14px 18px', background: 'linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%)', borderRadius: '12px', border: '1px solid #dbeafe', display: 'flex', gap: isMobile ? '10px' : '20px', flexWrap: 'wrap', alignItems: 'center', fontSize: '12px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -16569,6 +16631,35 @@ tr.suppressed td.fname{color:#64748b;}
                         {isOverdue ? '⚠️ 발송 마감일 초과' : '📅 발송 마감일'}: <strong>{deadline}</strong>
                       </div>
                     )}
+
+                    {/* 김유림 발송 이력 배너 — 이미 발송한 분기 */}
+                    {(() => {
+                      const sent = quarterReportSentHistory?.[reportQKey];
+                      if (!sent?.sentAt) return null;
+                      return (
+                        <div style={{
+                          background: '#f0f9ff',
+                          border: '1px solid #7dd3fc',
+                          borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 12, color: '#075985',
+                        }}>
+                          <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                            ✉ 이미 발송됨 — {reportQKey}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#0369a1', lineHeight: 1.6 }}>
+                            발송시각: {(sent.sentAt || '').slice(0, 16).replace('T', ' ')} · 발송자: <b>{sent.sentBy || '-'}</b>
+                            <br />
+                            확정: {sent.finalConfirmedCount || 0}/{sent.totalAssignees || 0}
+                            {sent.overrideGuard && <span style={{ marginLeft: 6, padding: '1px 6px', background: '#fef2f2', color: '#991b1b', borderRadius: 3, fontWeight: 700, fontSize: 10 }}>⚠ 긴급 우회</span>}
+                            {(sent.missingFinalConfirm?.length || 0) > 0 && (
+                              <span> · 미확정: {sent.missingFinalConfirm.join(', ')}</span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 10, color: '#0284c7', marginTop: 6 }}>
+                            재발송하려면 아래 [승인 후 발송] 버튼 다시 누르면 이력이 덮어써집니다.
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Phase 5 — 담당자 최종확정 가드 배너 */}
                     {hasSettlementData ? (
