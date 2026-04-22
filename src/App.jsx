@@ -1159,6 +1159,10 @@ const SETTLEMENT_BADGE_STYLE = {
       const [monthlySettlementData, setMonthlySettlementData] = useState(null);
       const [monthlySettlementLoading, setMonthlySettlementLoading] = useState(false);
       const [monthlySettlementStatusFilter, setMonthlySettlementStatusFilter] = useState('all'); // all | draft | confirmed | completed
+      // [무한 로딩 버그 수정] 마지막으로 load 시도한 분기 키 저장
+      //   분기 데이터가 Firebase 에 없으면 load → data=null → 다시 load 조건 충족 → 무한루프.
+      //   이 키로 "해당 분기는 시도했음" 을 기록해 재시도 차단. 분기 변경되면 자동 초기화됨.
+      const [monthlySettlementLoadedFor, setMonthlySettlementLoadedFor] = useState(null);
       
       // 지역별 단가표 (2026년 4월 1일 이전: 구 단가)
       const regionPricesOld = {
@@ -14641,15 +14645,18 @@ tr.suppressed td.fname{color:#64748b;}
           {showMonthlySettlement && currentUser?.isAdmin && (() => {
             // 데이터 로드 — Firebase quarterlySettlements/{quarterKey}
             const loadData = async () => {
+              const targetKey = monthlySettlementMonth;
               setMonthlySettlementLoading(true);
               try {
-                const snap = await database.ref(`quarterlySettlements/${monthlySettlementMonth}`).once('value');
+                const snap = await database.ref(`quarterlySettlements/${targetKey}`).once('value');
                 setMonthlySettlementData(snap.val() || null);
               } catch (e) {
                 console.error('[quarterly] load failed', e);
                 setMonthlySettlementData(null);
               } finally {
                 setMonthlySettlementLoading(false);
+                // 해당 분기는 시도 완료 — 데이터 없어도 재시도 안 하도록 마킹
+                setMonthlySettlementLoadedFor(targetKey);
               }
             };
             const data = monthlySettlementData;
@@ -14988,9 +14995,9 @@ tr.suppressed td.fname{color:#64748b;}
               } catch (e) { alert('Worker 호출 실패: ' + e.message); }
               finally { setMonthlySettlementLoading(false); }
             };
-            // 최초/월변경 시 로드
-            if (data === null && !monthlySettlementLoading) {
-              // React 렌더 중이라 setTimeout 으로 분리
+            // 최초/월변경 시 로드 — 해당 분기를 아직 시도하지 않았을 때만
+            //   분기 데이터가 없어도 1회만 호출 (이후 null 유지, 무한루프 방지)
+            if (data === null && !monthlySettlementLoading && monthlySettlementLoadedFor !== monthlySettlementMonth) {
               setTimeout(loadData, 0);
             }
             const statusBadge = (s) => {
