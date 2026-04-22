@@ -8938,6 +8938,7 @@ const SETTLEMENT_BADGE_STYLE = {
                             const stl = c.rawData?.settlement?.[c.manager] || {};
                             const result = c._type === 'win' ? '승' : c._type === 'draw' ? '무' : c._type === 'support' ? '지원' : null;
                             if (result && result !== '패') {
+                              if (!stl.selfSales) acc.target++; // 정산대상: 본인영업 제외 모두
                               if (stl.completed || stl.selfSales) {
                                 acc.completed++;
                               } else if (stl.requested) {
@@ -8947,7 +8948,7 @@ const SETTLEMENT_BADGE_STYLE = {
                               }
                             }
                             return acc;
-                          }, { pending: 0, requested: 0, completed: 0 });
+                          }, { target: 0, pending: 0, requested: 0, completed: 0 });
 
                           // 미검증 판정 헬퍼: 정산대상(승/무/지원 + !정산완료·!selfPT·!감리) 인데 공고문·K-APT 증빙 둘 다 없으면 미검증
                           const isUnverified = (c) => {
@@ -8979,6 +8980,8 @@ const SETTLEMENT_BADGE_STYLE = {
                               if (c.rawData?.selfPT) return false; // 협약사자체PT 정산 제외
                               const stl = c.rawData?.settlement?.[c.manager] || {};
                               const result = c._type === 'win' ? '승' : c._type === 'draw' ? '무' : c._type === 'support' ? '지원' : null;
+                              // 신규 'target' — 정산 대상 전체 (승/무/지원 + 본인영업·자체PT 아닌 건, 상태 무관)
+                              if (settlementFilter === 'target') return result && result !== '패' && !stl.selfSales;
                               if (settlementFilter === 'pending') return result && result !== '패' && !stl.requested && !stl.completed && !stl.selfSales;
                               if (settlementFilter === 'requested') return result && result !== '패' && !!stl.requested && !stl.completed && !stl.selfSales;
                               if (settlementFilter === 'completed') return result && result !== '패' && (!!stl.completed || !!stl.selfSales);
@@ -9104,6 +9107,16 @@ const SETTLEMENT_BADGE_STYLE = {
                                   )}
                                 </div>
                                 <div style={{ display: 'flex', gap: isMobile ? '6px' : '10px', flexWrap: 'wrap' }}>
+                                  {/* 정산대상 (신규 — 승/무/지원 + 본인영업 아닌 모든 건) */}
+                                  <button onClick={() => setSettlementFilter(settlementFilter === 'target' ? 'all' : 'target')} style={{
+                                    flex: isMobile ? '1' : '0 0 auto', padding: isMobile ? '10px 8px' : '10px 16px', borderRadius: '10px',
+                                    border: settlementFilter === 'target' ? '2px solid #7c3aed' : '1px solid #e2e8f0',
+                                    background: settlementFilter === 'target' ? '#f3e8ff' : '#ffffff',
+                                    cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s', minWidth: isMobile ? '0' : '120px'
+                                  }} title="승·무·지원 결과가 있고 본인영업 아닌 정산 대상 전체 (상태 무관)">
+                                    <div style={{ fontSize: '11px', color: '#6b21a8', fontWeight: '600', marginBottom: '4px' }}>정산대상</div>
+                                    <div style={{ fontSize: '20px', fontWeight: '800', color: '#7c3aed' }}>{settlementCounts.target}<span style={{ fontSize: '11px', fontWeight: '600', color: '#6b21a8' }}>건</span></div>
+                                  </button>
                                   {/* 미정산 */}
                                   <button onClick={() => setSettlementFilter(settlementFilter === 'pending' ? 'all' : 'pending')} style={{
                                     flex: isMobile ? '1' : '0 0 auto', padding: isMobile ? '10px 8px' : '10px 16px', borderRadius: '10px',
@@ -9569,6 +9582,8 @@ tr.suppressed td.fname{color:#64748b;}
                                           return (
                                             <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: ai === 0 ? '10px' : '6px', paddingTop: ai === 0 ? '10px' : '6px', borderTop: ai === 0 ? '1px solid #f1f5f9' : '1px dashed #f1f5f9', flexWrap: 'wrap' }}>
                                               <span style={{ fontSize: '13px', fontWeight: '700', color: isSelfPT ? '#7c3aed' : '#2563eb', minWidth: '50px' }}>{assigneeName}</span>
+                                              {/* 영역 라벨 — 결과 */}
+                                              <span style={{ fontSize: '9px', fontWeight: '700', color: '#94a3b8', letterSpacing: '0.1em', textTransform: 'uppercase', paddingRight: '4px' }}>결과</span>
                                               <div style={{ display: 'flex', gap: '4px' }}>
                                                 {selfPTLabels.map(r => {
                                                   const rc = resultColors[r];
@@ -9597,7 +9612,9 @@ tr.suppressed td.fname{color:#64748b;}
                                               )}
                                               {/* 정산 체크박스 (승/무/지원만) - 자체PT는 정산 제외 */}
                                               {!isSelfPT && aResult && aResult !== '패' && (
-                                                <div style={{ display: 'flex', gap: '10px', fontSize: '11px', color: '#64748b', marginLeft: isMobile ? '0' : '8px', alignItems: 'center' }}>
+                                                <div style={{ display: 'flex', gap: '10px', fontSize: '11px', color: '#64748b', marginLeft: isMobile ? '0' : '8px', alignItems: 'center', paddingLeft: isMobile ? '0' : '10px', borderLeft: isMobile ? 'none' : '1px solid #e2e8f0' }}>
+                                                  {/* 영역 라벨 — 정산 */}
+                                                  <span style={{ fontSize: '9px', fontWeight: '700', color: '#94a3b8', letterSpacing: '0.1em', textTransform: 'uppercase' }}>정산</span>
                                                   <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer' }}>
                                                     <input type="checkbox" checked={!!aSettlement.requested} onChange={() => {
                                                       const newVal = !aSettlement.requested;
@@ -13579,20 +13596,37 @@ tr.suppressed td.fname{color:#64748b;}
             };
             const triggerGenerate = async () => {
               if (!kaptWorkerUrl) { alert('K-APT Worker URL 미설정 — 설정 모달에서 먼저 입력하세요.'); return; }
-              if (!confirm(`Worker 에 ${monthlySettlementMonth} 분기정산 재생성을 요청합니다. 진행?`)) return;
+              if (!confirm(`Worker 에 ${monthlySettlementMonth} 분기정산 생성을 요청합니다. 진행?`)) return;
               setMonthlySettlementLoading(true);
-              try {
-                const r = await fetch(`${kaptWorkerUrl.replace(/\/$/, '')}/run-quarterly-settlement`, {
+              const callWorker = async (overwrite) => {
+                const resp = await fetch(`${kaptWorkerUrl.replace(/\/$/, '')}/run-quarterly-settlement`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ quarterKey: monthlySettlementMonth, force: true }),
+                  body: JSON.stringify({ quarterKey: monthlySettlementMonth, force: true, overwrite }),
                 });
-                const d = await r.json();
-                if (d.status === 'ok') {
-                  alert(`✅ 생성 완료\n\n담당자 ${d.totals?.totalAssignees}명 · ${d.totals?.totalCount}건\n예상 ${(d.totals?.totalEstimated || 0).toLocaleString('ko-KR')}원`);
+                return { status: resp.status, data: await resp.json() };
+              };
+              try {
+                let { status, data } = await callWorker(false);
+                // 중복 가드 응답 (HTTP 409) — 덮어쓰기 확인 후 재호출
+                if (status === 409 || data.status === 'exists') {
+                  const ex = data.existing || {};
+                  const ok = confirm(
+                    `⚠ 이미 ${monthlySettlementMonth} 분기정산 데이터가 있습니다.\n\n` +
+                    `생성시각: ${(ex.generatedAt || '').slice(0, 19).replace('T', ' ')}\n` +
+                    `생성자: ${ex.generatedBy || '-'}\n` +
+                    `담당자: ${ex.totalAssignees || 0}명 · ${ex.totalCount || 0}건\n` +
+                    `예상: ${(ex.totalEstimated || 0).toLocaleString('ko-KR')}원\n\n` +
+                    `덮어쓰시겠습니까? (기존 status 는 초기화됨)`
+                  );
+                  if (!ok) { setMonthlySettlementLoading(false); return; }
+                  ({ status, data } = await callWorker(true));
+                }
+                if (data.status === 'ok') {
+                  alert(`✅ 생성 완료\n\n담당자 ${data.totals?.totalAssignees}명 · ${data.totals?.totalCount}건\n예상 ${(data.totals?.totalEstimated || 0).toLocaleString('ko-KR')}원`);
                   await loadData();
                 } else {
-                  alert(`실패: ${d.reason || d.error || 'unknown'}`);
+                  alert(`실패: ${data.reason || data.error || 'unknown'}`);
                 }
               } catch (e) { alert('Worker 호출 실패: ' + e.message); }
               finally { setMonthlySettlementLoading(false); }

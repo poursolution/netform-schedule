@@ -171,8 +171,15 @@ export default {
     if ((url.pathname === '/run-quarterly-settlement' || url.pathname === '/run-monthly-settlement') && request.method === 'POST') {
       try {
         const body = await request.json().catch(() => ({}));
-        const result = await runQuarterlySettlementIfLastMonday(env, { quarterKey: body.quarterKey, monthKey: body.monthKey, force: !!body.force });
-        return jsonResponse(result, env);
+        const result = await runQuarterlySettlementIfLastMonday(env, {
+          quarterKey: body.quarterKey,
+          monthKey: body.monthKey,
+          force: !!body.force,
+          overwrite: !!body.overwrite,
+        });
+        // 중복 가드 응답은 409 로 (admin 모달이 덮어쓰기 프롬프트 띄움)
+        const httpStatus = result.status === 'exists' ? 409 : 200;
+        return jsonResponse(result, env, httpStatus);
       } catch (e) {
         console.error('[quarterly-settlement] error', e);
         return jsonResponse({ status: 'error', error: e.message }, env, 500);
@@ -1108,6 +1115,33 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
   const quarterKey = opts.quarterKey || opts.monthKey /* 하위호환 */ || getCurrentQuarterKeyKST(now);
   const parsed = parseQuarterKey(quarterKey);
   if (!parsed) return { status: 'error', reason: 'invalid_quarter_key', quarterKey };
+
+  // 중복 생성 가드: 기존 데이터 있고 overwrite 플래그 없으면 거부
+  //   admin 모달은 이 응답 받으면 "덮어쓰기?" confirm 후 overwrite: true 로 재호출
+  if (!opts.overwrite) {
+    try {
+      const existUrl = `${env.FIREBASE_DB_URL}/quarterlySettlements/${quarterKey}/totals.json?auth=${env.FIREBASE_DB_SECRET}`;
+      const existResp = await fetch(existUrl);
+      if (existResp.ok) {
+        const existing = await existResp.json();
+        if (existing && existing.generatedAt) {
+          return {
+            status: 'exists',
+            reason: 'already_generated',
+            quarterKey,
+            existing: {
+              generatedAt: existing.generatedAt,
+              generatedBy: existing.generatedBy,
+              totalAssignees: existing.totalAssignees,
+              totalCount: existing.totalCount,
+              totalEstimated: existing.totalEstimated,
+            },
+            hint: 'overwrite: true 로 재호출하면 덮어씀',
+          };
+        }
+      }
+    } catch (e) { console.warn('[quarterly] existing check failed', e.message); }
+  }
 
   // 1) PT 전체 로드 (해당 분기 필터)
   const ptUrl = `${env.FIREBASE_DB_URL}/pt.json?auth=${env.FIREBASE_DB_SECRET}`;
