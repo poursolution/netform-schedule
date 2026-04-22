@@ -5860,55 +5860,65 @@ const SETTLEMENT_BADGE_STYLE = {
                   title="🐞 파일럿 피드백 제출 — 버그/개선/정책/예외 (5줄 + 3클릭)"
                 >🐞 피드백</button>
               )}
-              {currentUser?.isAdmin && (
-                <>
-                  <button
-                    onClick={() => setShowFeedbackList(true)}
-                    style={{ background: '#f59e0b', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer', position: 'relative' }}
-                    title="파일럿 피드백 목록 (관리자)"
-                  >📥 피드백 목록 {feedbackList.filter(f => f.status !== 'resolved').length > 0 && <span style={{ background: '#dc2626', color: 'white', fontSize: 10, padding: '1px 6px', borderRadius: 10, marginLeft: 4 }}>{feedbackList.filter(f => f.status !== 'resolved').length}</span>}</button>
-                  <button
-                    onClick={() => setShowQuarterReportModal(true)}
-                    style={{ background: '#7c3aed', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
-                    title="김유림에게 분기 종합 보고서 발송 (PT 정산 + 주말출근)"
-                  >📊 분기보고서</button>
-                  <button
-                    onClick={() => setShowAnalysisReport(true)}
-                    style={{ background: '#0f172a', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
-                    title="대표 보고용 분석 리포트 — 공종별 승률 / 공법 경쟁 / 패배 원인"
-                  >📈 분석</button>
-                  <button
-                    onClick={() => setShowUATModal(true)}
-                    style={{ background: '#059669', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
-                    title="UAT — 8가지 운영 시나리오 자동 검증 (운영 투입 전)"
-                  >🧪 UAT</button>
-                  <button
-                    onClick={() => setShowActivityLog(true)}
-                    style={{ background: '#475569', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
-                    title="Activity Log — 중요 이벤트 감사 추적 (최근 100건)"
-                  >📜 로그</button>
-                  {(() => {
-                    const pendingCount = listPendingExceptions(ptSchedules).length;
-                    return (
-                      <button
-                        onClick={() => setShowExceptionQueueModal(true)}
-                        style={{ background: pendingCount > 0 ? '#f59e0b' : '#94a3b8', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer', position: 'relative' }}
-                        title="PT 결과 예외 승인 (영업적 승리 / 공고문 없는 현장)"
-                      >📋 예외 {pendingCount}건</button>
-                    );
-                  })()}
-                  <button
-                    onClick={() => setShowJandiModal(true)}
-                    style={{ background: jandiUrl ? (jandiEnabled ? '#fbbf24' : '#94a3b8') : '#dc2626', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
-                    title="잔디 웹훅 설정 (정산요청·크로스체크·보고서 발송 알림)"
-                  >🔔 잔디 {jandiUrl ? (jandiEnabled ? 'ON' : 'OFF') : '미설정'}</button>
-                  <button
-                    onClick={() => setShowKaptModal(true)}
-                    style={{ background: kaptWorkerUrl ? (kaptEnabled ? '#10b981' : '#94a3b8') : '#dc2626', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
-                    title="K-APT 자동 검증 Worker URL 설정"
-                  >🏢 K-APT {kaptWorkerUrl ? (kaptEnabled ? 'ON' : 'OFF') : '미설정'}</button>
-                </>
-              )}
+              {currentUser?.isAdmin && (() => {
+                // === IT 팔레트 기반 관리자 버튼 토큰 ===
+                //   brandPrimary:  Royal Blue  #0F4C75  (테두리·텍스트)
+                //   brandDark:     Deep Space  #1B262C
+                //   surfaceAccent: Soft Cloud  #BBE1FA  (강조 배경)
+                //   danger:        #b91c1c / bg #fee2e2 (미설정)
+                //   warn:          #b45309 / bg #fef3c7 (주의: 예외 pending)
+                const baseBtn = {
+                  background: '#ffffff',
+                  color: '#0F4C75',
+                  border: '1px solid #0F4C75',
+                  padding: isMobile ? '8px 12px' : '10px 16px',
+                  borderRadius: '8px',
+                  fontSize: isMobile ? '12px' : '13px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                };
+                const warnBtn = { ...baseBtn, background: '#fef3c7', color: '#b45309', border: '1px solid #f59e0b' };
+                const dangerBtn = { ...baseBtn, background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5' };
+                const badgeStyle = { background: '#0F4C75', color: 'white', fontSize: 10, padding: '1px 6px', borderRadius: 10, marginLeft: 4, fontWeight: 700 };
+                const feedbackPending = feedbackList.filter(f => f.status !== 'resolved').length;
+                const pendingExceptions = listPendingExceptions(ptSchedules).length;
+                const jandiOk = jandiUrl && jandiEnabled;
+                const jandiState = jandiUrl ? (jandiEnabled ? 'ON' : 'OFF') : '미설정';
+                const kaptOk = kaptWorkerUrl && kaptEnabled;
+                const kaptState = kaptWorkerUrl ? (kaptEnabled ? 'ON' : 'OFF') : '미설정';
+                return (
+                  <>
+                    <button onClick={() => setShowFeedbackList(true)}
+                      style={feedbackPending > 0 ? { ...baseBtn, position: 'relative' } : { ...baseBtn, position: 'relative' }}
+                      title="파일럿 피드백 목록 (관리자)"
+                    >피드백 목록{feedbackPending > 0 && <span style={badgeStyle}>{feedbackPending}</span>}</button>
+                    <button onClick={() => setShowQuarterReportModal(true)} style={baseBtn}
+                      title="김유림에게 분기 종합 보고서 발송 (PT 정산 + 주말출근)"
+                    >분기보고서</button>
+                    <button onClick={() => setShowAnalysisReport(true)} style={baseBtn}
+                      title="대표 보고용 분석 리포트 — 공종별 승률 / 공법 경쟁 / 패배 원인"
+                    >분석</button>
+                    <button onClick={() => setShowUATModal(true)} style={baseBtn}
+                      title="UAT — 8가지 운영 시나리오 자동 검증 (운영 투입 전)"
+                    >UAT</button>
+                    <button onClick={() => setShowActivityLog(true)} style={baseBtn}
+                      title="Activity Log — 중요 이벤트 감사 추적 (최근 100건)"
+                    >로그</button>
+                    <button onClick={() => setShowExceptionQueueModal(true)}
+                      style={pendingExceptions > 0 ? warnBtn : baseBtn}
+                      title="PT 결과 예외 승인 (영업적 승리 / 공고문 없는 현장)"
+                    >예외{pendingExceptions > 0 && <span style={badgeStyle}>{pendingExceptions}</span>}</button>
+                    <button onClick={() => setShowJandiModal(true)}
+                      style={jandiUrl ? baseBtn : dangerBtn}
+                      title="잔디 웹훅 설정 (정산요청·크로스체크·보고서 발송 알림)"
+                    >잔디 {jandiState}</button>
+                    <button onClick={() => setShowKaptModal(true)}
+                      style={kaptWorkerUrl ? baseBtn : dangerBtn}
+                      title="K-APT 자동 검증 Worker URL 설정"
+                    >K-APT {kaptState}</button>
+                  </>
+                );
+              })()}
             </div>
           </div>
 
@@ -5954,11 +5964,11 @@ const SETTLEMENT_BADGE_STYLE = {
               {currentUser?.isAdmin && (
                 <button
                   onClick={() => { setShowMonthlySettlement(true); }}
-                  style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', padding: isMobile ? '8px 10px' : '10px 14px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '700', cursor: 'pointer' }}
+                  style={{ background: '#0F4C75', color: 'white', border: 'none', padding: isMobile ? '8px 10px' : '10px 14px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '700', cursor: 'pointer' }}
                   title="관리자 분기정산 — 담당자별 집계·확정"
                 >💰 분기정산</button>
               )}
-              <button onClick={() => setShowSettings(true)} style={{ background: '#f1f5f9', color: '#475569', border: 'none', padding: isMobile ? '8px 10px' : '10px 14px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}>설정</button>
+              <button onClick={() => setShowSettings(true)} style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: isMobile ? '8px 10px' : '10px 14px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}>설정</button>
             </div>
           </div>
 
