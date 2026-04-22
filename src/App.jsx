@@ -6772,12 +6772,12 @@ const SETTLEMENT_BADGE_STYLE = {
                       ))}
                     </div>
                     {/* 릴레잇 바로가기 */}
-                    <a href="https://app.relate.so" target="_blank" rel="noopener noreferrer" style={{ padding: '7px 14px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '13px', fontWeight: '600', cursor: 'pointer', color: '#3b82f6', background: 'white', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      🔗 릴레잇
+                    <a href="https://app.relate.so" target="_blank" rel="noopener noreferrer" style={{ padding: '7px 14px', borderRadius: '8px', border: '1px solid #0F4C75', fontSize: '13px', fontWeight: '600', cursor: 'pointer', color: '#0F4C75', background: 'white', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      릴레잇
                     </a>
                     {/* JSON 업로드 */}
-                    <label style={{ padding: '7px 14px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '13px', fontWeight: '600', cursor: 'pointer', color: '#6b7280', background: 'white' }}>
-                      📤 업로드
+                    <label style={{ padding: '7px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: '600', cursor: 'pointer', color: '#475569', background: 'white' }}>
+                      업로드
                       <input type="file" accept=".json" onChange={handlePipelineJsonUpload} style={{ display: 'none' }} />
                     </label>
                   </div>
@@ -6812,16 +6812,16 @@ const SETTLEMENT_BADGE_STYLE = {
                   </select>
                 </div>
 
-                {/* 요약 카드 */}
+                {/* 요약 카드 — IT 팔레트 (뉴트럴/브랜드/Sky/성공 의미) */}
                 <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
                   {[
-                    { label: '전체', value: totalCount + '건', color: '#6b7280', bg: '#f9fafb' },
-                    { label: '총 금액', value: formatValue(totalValue), color: '#3b82f6', bg: '#eff6ff' },
-                    { label: '진행중', value: activeCount + '건', color: '#f59e0b', bg: '#fffbeb' },
-                    { label: '수주/실패', value: wonCount + '/' + lostCount, color: '#10b981', bg: '#ecfdf5' }
+                    { label: '전체', value: totalCount + '건', color: '#64748b' },
+                    { label: '총 금액', value: formatValue(totalValue), color: '#0F4C75' },
+                    { label: '진행중', value: activeCount + '건', color: '#3282B8' },
+                    { label: '수주/실패', value: wonCount + '/' + lostCount, color: '#16a34a' }
                   ].map((card, i) => (
-                    <div key={i} style={{ background: 'white', borderRadius: '14px', padding: '16px 18px', border: '1px solid #f0f0f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
-                      <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '6px', fontWeight: '500' }}>{card.label}</div>
+                    <div key={i} style={{ background: 'white', borderRadius: '14px', padding: '16px 18px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                      <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '6px', fontWeight: '500' }}>{card.label}</div>
                       <div style={{ fontSize: '20px', fontWeight: '800', color: card.color, letterSpacing: '-0.5px' }}>{card.value}</div>
                     </div>
                   ))}
@@ -8306,17 +8306,17 @@ const SETTLEMENT_BADGE_STYLE = {
                 </div>
               ) : (
               <>
-              {/* 로그인 상태 바 */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', padding: isMobile ? '10px 12px' : '12px 16px', background: '#dcfce7', borderRadius: '8px', flexWrap: 'wrap', gap: '8px' }}>
-                <span style={{ fontSize: isMobile ? '12px' : '13px', color: '#166534' }}>
+              {/* 로그인 상태 바 — Soft Cloud 톤 */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', padding: isMobile ? '10px 12px' : '12px 16px', background: '#BBE1FA', borderRadius: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                <span style={{ fontSize: isMobile ? '12px' : '13px', color: '#0F4C75' }}>
                   로그인: <strong>{currentUser.name}</strong>님
                 </span>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                   {('Notification' in window) && (/Android/i.test(navigator.userAgent) || window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches) && (
-                    <button onClick={() => pushEnabled ? disablePushNotification() : initPushNotification()} style={{ padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: '6px', border: 'none', background: pushEnabled ? '#dcfce7' : '#dbeafe', color: pushEnabled ? '#166534' : '#1d4ed8', fontSize: isMobile ? '11px' : '12px', fontWeight: '600', cursor: 'pointer' }}>{pushEnabled ? '알림 ON' : '알림 OFF'}</button>
+                    <button onClick={() => pushEnabled ? disablePushNotification() : initPushNotification()} style={{ padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: '6px', border: 'none', background: pushEnabled ? '#dcfce7' : '#ffffff', color: pushEnabled ? '#166534' : '#0F4C75', fontSize: isMobile ? '11px' : '12px', fontWeight: '600', cursor: 'pointer' }}>{pushEnabled ? '알림 ON' : '알림 OFF'}</button>
                   )}
-                  <button onClick={() => setShowMyPasswordModal(true)} style={{ padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: '6px', border: 'none', background: '#fef3c7', color: '#92400e', fontSize: isMobile ? '11px' : '12px', fontWeight: '600', cursor: 'pointer' }}>비밀번호</button>
-                  <button onClick={handleLogout} style={{ padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: '6px', border: 'none', background: '#f1f5f9', color: '#64748b', fontSize: isMobile ? '11px' : '12px', fontWeight: '600', cursor: 'pointer' }}>로그아웃</button>
+                  <button onClick={() => setShowMyPasswordModal(true)} style={{ padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontSize: isMobile ? '11px' : '12px', fontWeight: '600', cursor: 'pointer' }}>비밀번호</button>
+                  <button onClick={handleLogout} style={{ padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: '6px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', fontSize: isMobile ? '11px' : '12px', fontWeight: '600', cursor: 'pointer' }}>로그아웃</button>
                 </div>
               </div>
 
@@ -8324,21 +8324,21 @@ const SETTLEMENT_BADGE_STYLE = {
               <div style={{ display: 'flex', gap: isMobile ? '6px' : '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '16px', padding: isMobile ? '10px' : '14px', background: 'white', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                 {/* 현장명 검색 */}
                 <div style={{ position: 'relative', flex: isMobile ? '1 1 100%' : '0 0 auto' }}>
-                  <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="현장명 검색" style={{ padding: '9px 32px 9px 12px', borderRadius: '8px', border: searchQuery ? '2px solid #6366f1' : '1px solid #e2e8f0', fontSize: '13px', width: isMobile ? '100%' : '140px', background: searchQuery ? '#eef2ff' : 'white', outline: 'none', fontWeight: '500' }} />
+                  <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="현장명 검색" style={{ padding: '9px 32px 9px 12px', borderRadius: '8px', border: searchQuery ? '2px solid #3282B8' : '1px solid #e2e8f0', fontSize: '13px', width: isMobile ? '100%' : '140px', background: searchQuery ? '#BBE1FA' : 'white', outline: 'none', fontWeight: '500' }} />
                   {searchQuery && <button onClick={() => setSearchQuery('')} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: '#94a3b8' }}>✕</button>}
                 </div>
                 {/* 담당자 */}
-                <select value={selectedAssignee} onChange={(e) => { setSelectedAssignee(e.target.value); setDashboardView('overview'); setShowWorkTypeAnalysis(false); setShowLossReasonAnalysis(false); }} style={{ padding: '9px 28px 9px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: selectedAssignee === 'all' ? 'white' : '#eef2ff', color: selectedAssignee === 'all' ? '#64748b' : '#4f46e5', outline: 'none', appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center', backgroundSize: '16px', minWidth: '90px' }}>
+                <select value={selectedAssignee} onChange={(e) => { setSelectedAssignee(e.target.value); setDashboardView('overview'); setShowWorkTypeAnalysis(false); setShowLossReasonAnalysis(false); }} style={{ padding: '9px 28px 9px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: selectedAssignee === 'all' ? 'white' : '#BBE1FA', color: selectedAssignee === 'all' ? '#64748b' : '#0F4C75', outline: 'none', appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center', backgroundSize: '16px', minWidth: '90px' }}>
                   {(() => { return (<><option value="all">전체</option>{assigneeList.map(a => <option key={a} value={a}>{a}</option>)}</>); })()}
                 </select>
                 {/* 연도 */}
-                <select value={exportYear} onChange={(e) => setExportYear(e.target.value)} style={{ padding: '9px 28px 9px 12px', borderRadius: '8px', border: exportYear === 'all' ? '2px solid #6366f1' : '1px solid #e2e8f0', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: exportYear === 'all' ? '#eef2ff' : 'white', color: exportYear === 'all' ? '#4f46e5' : '#1e293b', outline: 'none', appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center', backgroundSize: '16px', minWidth: '85px' }}>
+                <select value={exportYear} onChange={(e) => setExportYear(e.target.value)} style={{ padding: '9px 28px 9px 12px', borderRadius: '8px', border: exportYear === 'all' ? '2px solid #3282B8' : '1px solid #e2e8f0', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: exportYear === 'all' ? '#BBE1FA' : 'white', color: exportYear === 'all' ? '#0F4C75' : '#1e293b', outline: 'none', appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center', backgroundSize: '16px', minWidth: '85px' }}>
                   <option value="all">전체</option><option value="2025">2025년</option><option value="2026">2026년</option><option value="2027">2027년</option>
                 </select>
                 {/* 분기 탭 버튼 */}
                 <div style={{ display: 'flex', gap: '2px', background: '#f1f5f9', borderRadius: '8px', padding: '2px' }}>
                   {[{ key: 'all', label: '전체' }, { key: '1분기', label: '1Q' }, { key: '2분기', label: '2Q' }, { key: '3분기', label: '3Q' }, { key: '4분기', label: '4Q' }].map(q => (
-                    <button key={q.key} onClick={() => setExportQuarter(q.key)} style={{ padding: '6px 10px', borderRadius: '6px', border: 'none', fontSize: '12px', fontWeight: '600', cursor: 'pointer', background: exportQuarter === q.key ? '#6366f1' : 'transparent', color: exportQuarter === q.key ? 'white' : '#64748b', transition: 'all 0.2s' }}>{q.label}</button>
+                    <button key={q.key} onClick={() => setExportQuarter(q.key)} style={{ padding: '6px 10px', borderRadius: '6px', border: 'none', fontSize: '12px', fontWeight: '600', cursor: 'pointer', background: exportQuarter === q.key ? '#0F4C75' : 'transparent', color: exportQuarter === q.key ? 'white' : '#64748b', transition: 'all 0.2s' }}>{q.label}</button>
                   ))}
                 </div>
                 {!isMobile && <div style={{ width: '1px', height: '28px', background: '#e2e8f0' }} />}
