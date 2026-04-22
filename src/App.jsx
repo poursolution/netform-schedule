@@ -1492,6 +1492,7 @@ const SETTLEMENT_BADGE_STYLE = {
 
         // 잔디 웹훅 설정 로드 (admin 공통 채널 + 담당자별 개인 webhook)
         const jandiRef = database.ref('config/jandi');
+        let jandiSeedAttempted = false; // 1회만 시도
         jandiRef.on('value', (snapshot) => {
           const data = snapshot.val() || {};
           setJandiUrl(data.url || '');
@@ -1499,6 +1500,17 @@ const SETTLEMENT_BADGE_STYLE = {
           setJandiConfig({ url: data.url || '', enabled: data.enabled !== false });
           // 담당자별 개인 webhook (users/{name} = { url, enabled })
           setJandiUserWebhooks(data.users || {});
+          // 송보람(정산 검토자) webhook 자동 seed — 없을 때만 1회 기록
+          if (!jandiSeedAttempted) {
+            jandiSeedAttempted = true;
+            const existing = data.users?.['송보람']?.url;
+            if (!existing) {
+              database.ref('config/jandi/users/송보람').set({
+                url: 'https://wh.jandi.com/connect-api/webhook/26098605/610344130ec9258293e3e0fb87741d27',
+                enabled: true,
+              }).then(() => console.log('[jandi] seeded 송보람 personal webhook')).catch(e => console.warn('[jandi] seed failed', e));
+            }
+          }
         });
 
         // K-APT Worker 설정 로드
@@ -2797,6 +2809,15 @@ const SETTLEMENT_BADGE_STYLE = {
                 amount: 250000,
                 by: currentUser?.name,
               });
+              // 송보람(정산 검토자) 개인 채널에도 동시 발송
+              notifySettlementReviewer({
+                assignee: targetAssignee,
+                siteName: updatedSchedule.siteName,
+                bidNo: updatedSchedule.bidNo,
+                result: '무',
+                amount: 250000,
+                by: currentUser?.name,
+              });
             }
           }, 300);
         }
@@ -2937,6 +2958,44 @@ const SETTLEMENT_BADGE_STYLE = {
             ...payload,
           });
         } catch (e) { console.warn('[activityLog] push failed', e); }
+      };
+
+      // 정산 검토자(송보람) 개인 채널 알림
+      //   - 담당자가 "정산요청" 체크박스 체크 시 호출
+      //   - jandiUserWebhooks['송보람'] 에 저장된 개인 웹훅으로 직접 발송
+      //   - 미설정/비활성 시 silent skip (admin 공통 채널 알림은 그대로 유지)
+      const notifySettlementReviewer = async ({ assignee, siteName, bidNo, result, amount, by }) => {
+        const REVIEWER = '송보람';
+        const hook = jandiUserWebhooks?.[REVIEWER];
+        if (!hook?.url || hook.enabled === false) return { skipped: true };
+        try {
+          await fetch(hook.url, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+              'Accept': 'application/vnd.tosslab.jandi-v2+json',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              body: '💰 PT 정산요청 접수 (검토 필요)',
+              connectColor: '#2563eb',
+              connectInfo: [{
+                title: `${siteName || '단지명 미입력'} — ${assignee} 담당`,
+                description: [
+                  `결과: ${result || '-'} · 정산금액: ${(amount || 0).toLocaleString('ko-KR')}원`,
+                  bidNo ? `공고번호: ${bidNo}` : '⚠️ 공고번호 미입력',
+                  `요청자: ${by || '-'}`,
+                  '',
+                  '👉 마이페이지/성과보기에서 해당 건 검토 후 정산완료 처리 부탁드립니다.',
+                ].join('\n'),
+              }],
+            }),
+          });
+          return { ok: true };
+        } catch (e) {
+          console.warn('[송보람 알림] 발송 실패', e);
+          return { ok: false, error: e.message };
+        }
       };
 
       // Settlement derived fields 자동 저장 (#3 status · #6 excludedReason · #9 calculatedAmount)
@@ -3173,6 +3232,15 @@ const SETTLEMENT_BADGE_STYLE = {
                 }
                 setPtSchedules(prev => prev.map(s => s.id === schedule.id ? { ...s, settlement: { ...(s.settlement || {}), [assignee]: { ...(s.settlement?.[assignee] || {}), requested: true } } } : s));
                 notifySettlementRequest({
+                  assignee,
+                  siteName: schedule.siteName,
+                  bidNo: schedule.bidNo,
+                  result: '지원',
+                  amount: 250000,
+                  by: currentUser?.name,
+                });
+                // 송보람(정산 검토자) 개인 채널에도 동시 발송
+                notifySettlementReviewer({
                   assignee,
                   siteName: schedule.siteName,
                   bidNo: schedule.bidNo,
@@ -5760,7 +5828,31 @@ const SETTLEMENT_BADGE_STYLE = {
                 onClick={() => { setAddTypeModalDate(null); setShowAddTypeModal(true); }} 
                 style={{ background: '#4b5563', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}
               >+일정추가</button>
-              <button onClick={() => setShowMeetingModal(true)} style={{ background: '#4b5563', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}>+ 회의</button>
+              <button onClick={() => setShowMeetingModal(true)} style={{ background: '#4b5563', color: 'white', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}>+ 영업회의</button>
+              {/* 영업회의 목록/관리 진입 — 메인 탭에서 분리됨 */}
+              {isLoggedIn && (
+                <button
+                  onClick={() => {
+                    setShowDashboard(false);
+                    setShowPerformance(false);
+                    setShowMeetingView(true);
+                    setShowSalesView(false);
+                    setShowMyPage(false);
+                    updatePageTitle('영업회의');
+                  }}
+                  style={{
+                    background: showMeetingView ? '#0F4C75' : '#ffffff',
+                    color: showMeetingView ? '#ffffff' : '#0F4C75',
+                    border: '1px solid #0F4C75',
+                    padding: isMobile ? '6px 10px' : '8px 12px',
+                    borderRadius: '6px',
+                    fontSize: isMobile ? '11px' : '12px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                  }}
+                  title="영업회의 목록/관리"
+                >영업회의</button>
+              )}
               {isLoggedIn && (
                 <button
                   onClick={() => setShowFeedbackModal(true)}
@@ -5849,18 +5941,7 @@ const SETTLEMENT_BADGE_STYLE = {
                 updatePageTitle('실적');
               }} style={{ padding: isMobile ? '10px 14px' : '12px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '14px', fontWeight: '700', cursor: 'pointer', background: showPerformance ? '#4b5563' : '#e2e8f0', color: showPerformance ? 'white' : '#64748b' }}>실적</button>
             )}
-            <button onClick={() => {
-              if (!isLoggedIn) {
-                setShowLoginModal(true);
-                return;
-              }
-              setShowDashboard(false);
-              setShowPerformance(false);
-              setShowMeetingView(true);
-              setShowSalesView(false);
-              setShowMyPage(false);
-              updatePageTitle('회의');
-            }} style={{ padding: isMobile ? '10px 14px' : '12px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '14px', fontWeight: '700', cursor: 'pointer', background: showMeetingView ? '#4b5563' : '#e2e8f0', color: showMeetingView ? 'white' : '#64748b' }}>회의</button>
+            {/* 회의 탭 제거됨 — 회의 기능은 + 회의 버튼과 일정 뷰를 통해 계속 접근 가능 */}
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
               {!isMobile && (
                 <div style={{ display: 'flex', gap: '10px', fontSize: '12px', color: '#64748b' }}>
@@ -10054,6 +10135,19 @@ tr.suppressed td.fname{color:#64748b;}
                                                       setHasResultChanges(true);
                                                       // #3/#6/#9 derived 저장
                                                       setTimeout(() => persistSettlementDerived(card.id, assigneeName), 0);
+                                                      // 송보람(정산 검토자) 개인 채널 알림 — 체크(true)로 전환 시만
+                                                      if (newVal) {
+                                                        const aResultNow = card.results?.[assigneeName] || card.ptStatus?.[assigneeName]?.result;
+                                                        const calcNow = calculateSettlementAmount(card, assigneeName);
+                                                        notifySettlementReviewer({
+                                                          assignee: assigneeName,
+                                                          siteName: card.siteName,
+                                                          bidNo: card.bidNo,
+                                                          result: aResultNow,
+                                                          amount: calcNow?.amount || 0,
+                                                          by: currentUser?.name,
+                                                        });
+                                                      }
                                                     }} style={{ width: '14px', height: '14px', cursor: 'pointer' }} /> 정산요청
                                                   </label>
                                                   <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: currentUser?.isAdmin ? 'pointer' : 'not-allowed', opacity: currentUser?.isAdmin ? 1 : 0.6 }} title={currentUser?.isAdmin ? '' : '관리자만 변경 가능'}>
@@ -16621,7 +16715,6 @@ tr.suppressed td.fname{color:#64748b;}
               { key: 'home', label: '홈', icon: '🏠', active: showDashboard, onClick: () => { setShowDashboard(true); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); } },
               { key: 'perf', label: '실적', icon: '📊', active: showPerformance, onClick: () => { setShowDashboard(false); setShowPerformance(true); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); } },
               { key: 'settle', label: '정산', icon: '💰', active: showPerformance && settlementFilter === 'target', onClick: () => { setShowDashboard(false); setShowPerformance(true); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); setSettlementFilter('target'); } },
-              { key: 'meet', label: '회의', icon: '💬', active: showMeetingView, onClick: () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(true); setShowSalesView(false); setShowMyPage(false); } },
               { key: 'my', label: '마이', icon: '👤', active: showMyPage, onClick: () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(true); setMyPageUser(currentUser?.name || null); } },
             ];
             return (
