@@ -18640,19 +18640,27 @@ tr.suppressed td.fname{color:#64748b;}
                       </div>
                     )}
 
-                    {/* 미리보기 카드 */}
+                    {/* 미리보기 카드 — PT 실적 중심 (확정일 기준) */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
-                      <div style={{ background: '#f5f3ff', borderRadius: 8, padding: 14 }}>
-                        <div style={{ fontSize: 11, color: '#7c3aed', fontWeight: 600 }}>주말 환산일수</div>
-                        <div style={{ fontSize: 22, fontWeight: 700, color: '#7c3aed', marginTop: 4 }}>{totals.weekendWeighted.toFixed(1)}일</div>
-                      </div>
                       <div style={{ background: '#eff6ff', borderRadius: 8, padding: 14 }}>
-                        <div style={{ fontSize: 11, color: '#2563eb', fontWeight: 600 }}>정산 PT 건수</div>
-                        <div style={{ fontSize: 22, fontWeight: 700, color: '#2563eb', marginTop: 4 }}>{totals.ptCount}건</div>
+                        <div style={{ fontSize: 11, color: '#0F4C75', fontWeight: 600 }}>총 PT 건수</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: '#0F4C75', marginTop: 4 }}>{totals.ptCount}건</div>
+                        <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>승/무/지원 — 패 제외</div>
+                      </div>
+                      <div style={{ background: '#f8fafc', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#475569', fontWeight: 600 }}>결과 분포</div>
+                        <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4 }}>
+                          <span style={{ color: '#16a34a' }}>승 {totals.ptWin}</span>
+                          <span style={{ color: '#94a3b8' }}> · </span>
+                          <span style={{ color: '#2563eb' }}>무 {totals.ptDraw}</span>
+                          <span style={{ color: '#94a3b8' }}> · </span>
+                          <span style={{ color: '#7c3aed' }}>지원 {totals.ptSupport}</span>
+                        </div>
                       </div>
                       <div style={{ background: '#f0fdf4', borderRadius: 8, padding: 14 }}>
-                        <div style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>정산금액</div>
+                        <div style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>총 정산금액</div>
                         <div style={{ fontSize: 18, fontWeight: 700, color: '#16a34a', marginTop: 4 }}>{totals.settlementAmount.toLocaleString()}원</div>
+                        <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>확정일 기준 집계</div>
                       </div>
                     </div>
 
@@ -18666,31 +18674,33 @@ tr.suppressed td.fname{color:#64748b;}
                       </div>
                     )}
 
-                    {/* 담당자 요약 미니 테이블 */}
+                    {/* 담당자 요약 미니 테이블 — PT 실적 중심 */}
                     <div style={{ marginBottom: 20 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#1e293b' }}>담당자별 요약</div>
-                      <div style={{ maxHeight: 200, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#1e293b' }}>담당자별 실적</div>
+                      <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                           <thead style={{ position: 'sticky', top: 0, background: '#f1f5f9' }}>
                             <tr>
                               <th style={{ padding: 8, textAlign: 'left' }}>담당자</th>
-                              <th style={{ padding: 8 }}>주말</th>
-                              <th style={{ padding: 8 }}>환산</th>
                               <th style={{ padding: 8 }}>PT</th>
+                              <th style={{ padding: 8 }}>승</th>
+                              <th style={{ padding: 8 }}>무</th>
+                              <th style={{ padding: 8 }}>지원</th>
                               <th style={{ padding: 8, textAlign: 'right' }}>정산금액</th>
                             </tr>
                           </thead>
                           <tbody>
                             {report.summary.length === 0 && (
-                              <tr><td colSpan={5} style={{ padding: 16, textAlign: 'center', color: '#94a3b8' }}>해당 분기 데이터 없음</td></tr>
+                              <tr><td colSpan={6} style={{ padding: 16, textAlign: 'center', color: '#94a3b8' }}>해당 분기 데이터 없음</td></tr>
                             )}
                             {report.summary.map(r => (
                               <tr key={r.assignee} style={{ borderTop: '1px solid #f1f5f9' }}>
                                 <td style={{ padding: 8 }}>{r.assignee}</td>
-                                <td style={{ padding: 8, textAlign: 'center' }}>{r.weekendDays}일</td>
-                                <td style={{ padding: 8, textAlign: 'center', color: '#7c3aed', fontWeight: 600 }}>{r.weekendWeighted.toFixed(1)}</td>
                                 <td style={{ padding: 8, textAlign: 'center' }}>{r.ptCount}</td>
-                                <td style={{ padding: 8, textAlign: 'right' }}>{r.settlementAmount.toLocaleString()}원</td>
+                                <td style={{ padding: 8, textAlign: 'center', color: '#16a34a', fontWeight: 600 }}>{r.ptWin}</td>
+                                <td style={{ padding: 8, textAlign: 'center', color: '#2563eb', fontWeight: 600 }}>{r.ptDraw}</td>
+                                <td style={{ padding: 8, textAlign: 'center', color: '#7c3aed', fontWeight: 600 }}>{r.ptSupport}</td>
+                                <td style={{ padding: 8, textAlign: 'right', color: '#0F4C75', fontWeight: 700 }}>{r.settlementAmount.toLocaleString()}원</td>
                               </tr>
                             ))}
                           </tbody>
