@@ -14273,17 +14273,27 @@ tr.suppressed td.fname{color:#64748b;}
 
                   {/* Summary 배너 */}
                   {totals && (
-                    <div style={{ padding: '12px 14px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', marginBottom: '12px', display: 'flex', gap: '18px', flexWrap: 'wrap', fontSize: '12px' }}>
-                      <span><b>담당자:</b> {totals.totalAssignees}명</span>
-                      <span><b>건수:</b> {totals.totalCount}</span>
-                      <span><b>예상 합계:</b> <span style={{ color: '#2563eb', fontWeight: '700' }}>{(totals.totalEstimated || 0).toLocaleString('ko-KR')}원</span></span>
-                      <span><b>검토필요:</b> <span style={{ color: '#d97706' }}>{totals.totalReview}</span></span>
-                      <span><b>자가확인 완료:</b> <span style={{ color: '#16a34a', fontWeight: '700' }}>{confirmedCount} / {rows.length}</span></span>
-                      {totalOpenReviews > 0 && (
-                        <span><b>담당자 검증요청:</b> <span style={{ color: '#dc2626', fontWeight: '700' }}>{totalOpenReviews}건</span></span>
-                      )}
-                      <span style={{ color: '#94a3b8' }}>생성: {(totals.generatedAt || '').slice(0, 16).replace('T', ' ')} · {totals.generatedBy}</span>
-                    </div>
+                    <>
+                      {/* 분기 메타 — 마감일 / 급여반영월 / 집계기준 */}
+                      <div style={{ padding: '10px 14px', background: 'linear-gradient(135deg, #eff6ff 0%, #f0f9ff 100%)', border: '1px solid #bfdbfe', borderRadius: '8px', marginBottom: '8px', display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '12px', alignItems: 'center' }}>
+                        <span style={{ fontWeight: '800', color: '#1e40af', fontSize: '13px' }}>📅 {totals.quarterKey || monthlySettlementMonth}</span>
+                        {totals.closingDate && <span><b>마감일:</b> <span style={{ color: '#dc2626', fontWeight: '700' }}>{totals.closingDate}</span> <span style={{ color: '#94a3b8', fontSize: '10px' }}>(다음달 마지막주 월요일)</span></span>}
+                        {totals.payrollMonth && <span><b>급여 반영월:</b> <span style={{ color: '#16a34a', fontWeight: '700' }}>{totals.payrollMonth}</span></span>}
+                        {totals.reportedTo && <span><b>전달:</b> <span style={{ color: '#7c3aed', fontWeight: '700' }}>{totals.reportedTo}</span></span>}
+                        {totals.aggregationBasis && <span style={{ color: '#94a3b8', fontSize: '10px' }}>· 집계기준: {totals.aggregationBasis === 'resultConfirmDate' ? '실적확정일' : 'PT일자'}</span>}
+                      </div>
+                      <div style={{ padding: '12px 14px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', marginBottom: '12px', display: 'flex', gap: '18px', flexWrap: 'wrap', fontSize: '12px' }}>
+                        <span><b>담당자:</b> {totals.totalAssignees}명</span>
+                        <span><b>건수:</b> {totals.totalCount}</span>
+                        <span><b>예상 합계:</b> <span style={{ color: '#2563eb', fontWeight: '700' }}>{(totals.totalEstimated || 0).toLocaleString('ko-KR')}원</span></span>
+                        <span><b>검토필요:</b> <span style={{ color: '#d97706' }}>{totals.totalReview}</span></span>
+                        <span><b>자가확인 완료:</b> <span style={{ color: '#16a34a', fontWeight: '700' }}>{confirmedCount} / {rows.length}</span></span>
+                        {totalOpenReviews > 0 && (
+                          <span><b>담당자 검증요청:</b> <span style={{ color: '#dc2626', fontWeight: '700' }}>{totalOpenReviews}건</span></span>
+                        )}
+                        <span style={{ color: '#94a3b8' }}>생성: {(totals.generatedAt || '').slice(0, 16).replace('T', ' ')} · {totals.generatedBy}</span>
+                      </div>
+                    </>
                   )}
 
                   {/* Body */}
@@ -16597,6 +16607,14 @@ tr.suppressed td.fname{color:#64748b;}
                     <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>
                       수신: <strong>yurim@netformrnd.com</strong> · 주말출근(1.5배) + PT(검증통과) + 일정 통합
                     </div>
+                    {/* 분기 메타 배너 — 집계기준·마감일·급여반영월 */}
+                    {qSettlement?.totals && (
+                      <div style={{ marginTop: 10, padding: '10px 12px', background: 'linear-gradient(135deg, #eff6ff 0%, #f0f9ff 100%)', border: '1px solid #bfdbfe', borderRadius: 6, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11, color: '#1e40af' }}>
+                        <span><b>집계기준:</b> {qSettlement.totals.aggregationBasis === 'resultConfirmDate' ? '실적확정일 (finalConfirmedAt > requestedAt > PT일)' : 'PT일자'}</span>
+                        {qSettlement.totals.closingDate && <span><b>마감일:</b> <span style={{ color: '#dc2626', fontWeight: 700 }}>{qSettlement.totals.closingDate}</span></span>}
+                        {qSettlement.totals.payrollMonth && <span><b>급여 반영월:</b> <span style={{ color: '#16a34a', fontWeight: 700 }}>{qSettlement.totals.payrollMonth}</span></span>}
+                      </div>
+                    )}
                   </div>
 
                   <div style={{ padding: 24 }}>

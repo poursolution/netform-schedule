@@ -1228,6 +1228,46 @@ function ptBelongsToQuarter(ptDate, quarterKey) {
   return y === p.year && m >= p.startMonth && m <= p.endMonth;
 }
 
+// ===== 실적 확정일 기준 분기 귀속 =====
+// PT + assignee 의 실적 확정일: finalConfirmedAt > requestedAt > pt.date
+function getResultConfirmDateWorker(pt, assignee) {
+  if (!pt || !assignee) return null;
+  const stl = pt.settlement?.[assignee] || {};
+  if (stl.finalConfirmedAt) return String(stl.finalConfirmedAt).slice(0, 10);
+  if (stl.requestedAt) return String(stl.requestedAt).slice(0, 10);
+  return pt.date || null;
+}
+function getQuarterKeyByConfirmDate(confirmDate) {
+  if (!confirmDate) return null;
+  const m = String(confirmDate).match(/^(\d{4})-(\d{2})/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  return `${y}-Q${Math.ceil(mo / 3)}`;
+}
+
+// 분기 종료 다음달 마지막주 월요일
+function getQuarterClosingDate(quarterKey) {
+  const p = parseQuarterKey(quarterKey);
+  if (!p) return null;
+  let cY = p.year;
+  let cM = p.endMonth + 1;
+  if (cM > 12) { cM = 1; cY += 1; }
+  // cY-cM 의 마지막 월요일 계산
+  const d = new Date(Date.UTC(cY, cM, 0));  // 해당 월 마지막 날 (UTC)
+  while (d.getUTCDay() !== 1) d.setUTCDate(d.getUTCDate() - 1);
+  return d;
+}
+
+function getPayrollMonthByQuarterKey(quarterKey) {
+  const p = parseQuarterKey(quarterKey);
+  if (!p) return null;
+  let y = p.year;
+  let m = p.endMonth + 1;
+  if (m > 12) { m = 1; y += 1; }
+  return `${y}-${String(m).padStart(2, '0')}`;
+}
+
 // pt·assignee 조합에 대한 결과 파생 (client settlement.js 와 동일한 규칙)
 function deriveResultWorker(pt, assignee) {
   if (!pt || !assignee) return null;
@@ -1309,43 +1349,50 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
     } catch (e) { console.warn('[quarterly] existing check failed', e.message); }
   }
 
-  // 1) PT 전체 로드 (해당 분기 필터)
+  // 분기 마감일 + 급여 반영월 미리 계산
+  const closingDate = getQuarterClosingDate(quarterKey);
+  const closingDateStr = closingDate ? `${closingDate.getUTCFullYear()}-${String(closingDate.getUTCMonth() + 1).padStart(2, '0')}-${String(closingDate.getUTCDate()).padStart(2, '0')}` : null;
+  const payrollMonth = getPayrollMonthByQuarterKey(quarterKey);
+
+  // 1) PT 전체 로드
   const ptUrl = `${env.FIREBASE_DB_URL}/pt.json?auth=${env.FIREBASE_DB_SECRET}`;
   const ptResp = await fetch(ptUrl);
   if (!ptResp.ok) return { status: 'error', reason: `pt_fetch_http_${ptResp.status}` };
   const ptData = await ptResp.json();
   const allPts = ptData ? Object.entries(ptData).map(([id, pt]) => ({ id, ...pt })) : [];
-  const quarterPts = allPts.filter(p => ptBelongsToQuarter(p?.date, quarterKey));
 
-  // 2) 담당자 집합 추출
-  const assigneeSet = new Set();
-  for (const pt of quarterPts) {
-    const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
-    tokens.forEach(t => assigneeSet.add(t));
-  }
-
-  // 3) 담당자별 집계
+  // 2) 담당자별 집계 — assignee 단위로 실적확정일 기준 분기 귀속 판별
+  //    같은 PT 라도 담당자별 확정일이 다를 수 있으므로 (assignee 별 settlement.requestedAt)
   const perAssignee = {};
-  for (const a of assigneeSet) {
-    perAssignee[a] = {
-      quarterKey, assignee: a,
-      totalCount: 0, winCount: 0, drawCount: 0, supportCount: 0, excludedCount: 0, reviewCount: 0,
-      estimatedAmount: 0,
-      status: 'draft',
-      generatedAt: now.toISOString(),
-      generatedBy: opts.force ? 'manual' : 'cron',
-      items: [],
-    };
-  }
-  for (const pt of quarterPts) {
+  for (const pt of allPts) {
     const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
     for (const assignee of tokens) {
+      const confirmDate = getResultConfirmDateWorker(pt, assignee);
+      const assigneeQK = getQuarterKeyByConfirmDate(confirmDate);
+      if (assigneeQK !== quarterKey) continue;
+
+      if (!perAssignee[assignee]) {
+        perAssignee[assignee] = {
+          quarterKey, assignee,
+          totalCount: 0, winCount: 0, drawCount: 0, supportCount: 0, excludedCount: 0, reviewCount: 0,
+          estimatedAmount: 0,
+          status: 'draft',
+          closingDate: closingDateStr, payrollMonth, reportedTo: '김유림',
+          reportedToPayroll: false, reportedAt: null,
+          generatedAt: now.toISOString(),
+          generatedBy: opts.force ? 'manual' : 'cron',
+          items: [],
+        };
+      }
       const agg = perAssignee[assignee];
-      if (!agg) continue;
       const calc = calcAmountWorker(pt, assignee);
       agg.totalCount++;
-      agg.items.push({ ptId: pt.id, siteName: pt.siteName, date: pt.date, result: calc.result, amount: calc.amount, reason: calc.reason });
-      if (calc.reason === 'loss' || calc.reason === 'vendor_self_pt' || calc.reason === 'self_sales' || calc.reason === 'draw_support_excluded') {
+      agg.items.push({
+        ptId: pt.id, siteName: pt.siteName, ptDate: pt.date,
+        resultConfirmDate: confirmDate,
+        result: calc.result, amount: calc.amount, reason: calc.reason,
+      });
+      if (calc.reason === 'loss' || calc.reason === 'vendor_self_pt' || calc.reason === 'self_sales' || calc.reason === 'draw_support_excluded' || calc.reason === 'cancelled_notice') {
         agg.excludedCount++;
         continue;
       }
@@ -1360,10 +1407,12 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
     }
   }
 
-  // 4) 전체 summary
+  // 3) 전체 summary
   const totals = {
     quarterKey, totalAssignees: 0, totalCount: 0, totalEstimated: 0, totalReview: 0,
+    closingDate: closingDateStr, payrollMonth, reportedTo: '김유림',
     generatedAt: now.toISOString(), generatedBy: opts.force ? 'manual' : 'cron',
+    aggregationBasis: 'resultConfirmDate',
   };
   for (const agg of Object.values(perAssignee)) {
     if (agg.totalCount === 0) continue;

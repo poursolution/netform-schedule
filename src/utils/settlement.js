@@ -397,3 +397,106 @@ export function isQuarterlySettlementTime(now = new Date()) {
     now.getHours() >= 9
   );
 }
+
+// ===== 실적 확정일 기준 분기 귀속 (resultConfirmDate) =====
+//
+// 운영 원칙:
+//   정산 귀속 기준은 PT 진행일이 아니라 담당자가 실적을 확정한 날짜.
+//   예: 2025-12-20 PT 라도 2026-04-08 에 확정되면 2026-Q2 귀속.
+//
+// 실적 확정일 추출 우선순위 (가장 강한 신호 → 약한 신호):
+//   1. settlement.{assignee}.finalConfirmedAt  (Phase 4 최종확정)
+//   2. settlement.{assignee}.requestedAt       (승/정산요청 체크)
+//   3. results[assignee] 저장 시각 없음 → pt.date fallback
+//
+// finalConfirmedAt 이 가장 신뢰도 높음 (담당자가 명시적 "최종 확정" 클릭).
+// requestedAt 은 승 입력 시 자동 세팅되는 타임스탬프.
+// 둘 다 없으면 pt.date (PT 진행일) 로 fallback — 과도기 데이터 호환.
+
+/**
+ * PT + assignee 의 실적 확정일 추출
+ */
+export function getResultConfirmDate(pt, assignee) {
+  if (!pt || !assignee) return null;
+  const stl = pt.settlement?.[assignee] || {};
+  // 우선순위 1: 최종확정
+  if (stl.finalConfirmedAt) return stl.finalConfirmedAt.slice(0, 10);
+  // 우선순위 2: 정산요청 (자동 혹은 수동)
+  if (stl.requestedAt) return stl.requestedAt.slice(0, 10);
+  // 우선순위 3: PT 일자 fallback
+  return pt.date || null;
+}
+
+/**
+ * 실적 확정일 기준 분기 키 반환
+ */
+export function getQuarterKeyByConfirmDate(confirmDate) {
+  if (!confirmDate) return null;
+  const m = String(confirmDate).match(/^(\d{4})-(\d{2})/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  return `${y}-Q${Math.ceil(mo / 3)}`;
+}
+
+/**
+ * PT + assignee 가 어느 분기에 귀속되는지 (확정일 기준)
+ */
+export function getAssigneeQuarterKey(pt, assignee) {
+  const cd = getResultConfirmDate(pt, assignee);
+  return getQuarterKeyByConfirmDate(cd);
+}
+
+/**
+ * 분기 마감일 — 분기 종료 다음달 마지막주 월요일
+ *   Q1 (1-3월) → 4월 마지막주 월요일
+ *   Q2 (4-6월) → 7월 마지막주 월요일
+ *   Q3 (7-9월) → 10월 마지막주 월요일
+ *   Q4 (10-12월) → 다음해 1월 마지막주 월요일
+ *
+ * 반환: Date 객체
+ */
+export function getQuarterClosingDate(quarterKey) {
+  const p = parseQuarterKey(quarterKey);
+  if (!p) return null;
+  // 분기 종료 다음달
+  let closingYear = p.year;
+  let closingMonth = p.endMonth + 1;
+  if (closingMonth > 12) { closingMonth = 1; closingYear += 1; }
+  return getLastMondayOfMonth(closingYear, closingMonth);
+}
+
+/**
+ * 분기별 급여 반영월 "YYYY-MM"
+ *   Q1 → 해당년 4월, Q2 → 7월, Q3 → 10월, Q4 → 다음해 1월
+ */
+export function getPayrollMonthByQuarterKey(quarterKey) {
+  const p = parseQuarterKey(quarterKey);
+  if (!p) return null;
+  let y = p.year;
+  let m = p.endMonth + 1;
+  if (m > 12) { m = 1; y += 1; }
+  return `${y}-${String(m).padStart(2, '0')}`;
+}
+
+/**
+ * PT+assignee 가 해당 분기 마감 전까지 집계 대상인지
+ *  - 확정일이 분기 범위 안
+ *  - 확정일이 마감일(다음달 마지막주 월요일) 이전
+ *
+ * now 파라미터로 현재 시각 주입 가능 (과거 분기 재집계 등).
+ */
+export function isInQuarterSettlementScope(pt, assignee, quarterKey, now = new Date()) {
+  const cd = getResultConfirmDate(pt, assignee);
+  if (!cd) return false;
+  const qk = getQuarterKeyByConfirmDate(cd);
+  if (qk !== quarterKey) return false;
+  // 마감일 체크 — 현재가 마감일 이후면 해당 분기 마감 (확정일 제한 없음)
+  // 현재가 마감일 이전이면 확정일 자체가 현재 이전이어야 집계 대상
+  const closing = getQuarterClosingDate(quarterKey);
+  if (!closing) return true;
+  if (now > closing) return true; // 마감 이후 재집계 요청 — 분기 내 확정건 모두 포함
+  // 마감 이전 호출 — 확정일이 현재 이전인 건만
+  const cdDate = new Date(cd + 'T00:00:00');
+  return cdDate <= now;
+}
