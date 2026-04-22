@@ -35,7 +35,28 @@ import {
   buildExceptionResultMessage,
 } from './utils/exceptions.js';
 import { sendJandiNotification } from './utils/jandi.js';
-import { deriveAssigneeResult } from './utils/settlement.js';
+import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculateSettlementAmount, EXCLUSION_REASONS } from './utils/settlement.js';
+
+// 제외 사유 한글 라벨
+const EXCLUSION_REASON_LABEL = {
+  [EXCLUSION_REASONS.SELF_PT]: '본인PT',
+  [EXCLUSION_REASONS.SELF_SALES]: '본인영업',
+  [EXCLUSION_REASONS.VENDOR_SELF_PT]: '협약사자체PT',
+  [EXCLUSION_REASONS.MAIN_LOST]: '주담패배',
+  [EXCLUSION_REASONS.DRAW_SUPPORT_EXCLUDED]: '주담무승부',
+  [EXCLUSION_REASONS.LOSS]: '패배',
+};
+import { normalizeApartmentName, addApartmentAlias } from './utils/apartmentMatch.js';
+
+// 정산 상태 6단계 배지 스타일 (#4 — 실적 카드용)
+const SETTLEMENT_BADGE_STYLE = {
+  [SETTLEMENT_STATUS.UNSETTLED]:    { bg: '#f1f5f9', color: '#64748b', border: '#e2e8f0', label: '미정산' },
+  [SETTLEMENT_STATUS.NEEDS_REVIEW]: { bg: '#fef3c7', color: '#92400e', border: '#fcd34d', label: '검토필요' },
+  [SETTLEMENT_STATUS.REQUESTED]:    { bg: '#dbeafe', color: '#1e40af', border: '#93c5fd', label: '정산요청' },
+  [SETTLEMENT_STATUS.CONFIRMED]:    { bg: '#e0e7ff', color: '#4338ca', border: '#a5b4fc', label: '정산확정' },
+  [SETTLEMENT_STATUS.COMPLETED]:    { bg: '#dcfce7', color: '#166534', border: '#86efac', label: '정산완료' },
+  [SETTLEMENT_STATUS.EXCLUDED]:     { bg: '#fee2e2', color: '#991b1b', border: '#fca5a5', label: '제외' },
+};
 
     // 시스템 명칭 상수
     const APP_NAME = 'POUR영업운영시스템';
@@ -1071,10 +1092,14 @@ import { deriveAssigneeResult } from './utils/settlement.js';
       const [statsMonth, setStatsMonth] = useState('all'); // 통계용 월 선택
       const [statsAssignee, setStatsAssignee] = useState('all'); // 통계용 담당자 선택
 
-      // 관리자 월정산 모달 (P7)
+      // 단지명 alias 사전 (#1 — Firebase config/apartmentAliases 에 동기화)
+      //   형태: { [normalizedKey]: [aliasName1, aliasName2, ...] } — 양방향 저장
+      const [apartmentAliasMap, setApartmentAliasMap] = useState({});
+
+      // 관리자 분기정산 모달 (P7 — 월정산 → 분기정산 전환)
       const [showMonthlySettlement, setShowMonthlySettlement] = useState(false);
       const [monthlySettlementMonth, setMonthlySettlementMonth] = useState(() => {
-        const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        const d = new Date(); return `${d.getFullYear()}-Q${Math.ceil((d.getMonth() + 1) / 3)}`;
       });
       const [monthlySettlementData, setMonthlySettlementData] = useState(null);
       const [monthlySettlementLoading, setMonthlySettlementLoading] = useState(false);
@@ -1427,6 +1452,13 @@ import { deriveAssigneeResult } from './utils/settlement.js';
           setKaptWorkerUrl(data.url || '');
           setKaptEnabled(data.enabled !== false);
           setKaptVerifyConfig({ workerUrl: data.url || '', enabled: data.enabled !== false });
+        });
+
+        // 단지명 alias 사전 로드 (#1)
+        const aliasRef = database.ref('config/apartmentAliases');
+        aliasRef.on('value', (snapshot) => {
+          const data = snapshot.val() || {};
+          setApartmentAliasMap(data);
         });
 
         // CRM 영업 데이터 로드
@@ -5535,8 +5567,8 @@ import { deriveAssigneeResult } from './utils/settlement.js';
                 <button
                   onClick={() => { setShowMonthlySettlement(true); }}
                   style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', padding: isMobile ? '8px 10px' : '10px 14px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '700', cursor: 'pointer' }}
-                  title="관리자 월정산 — 담당자별 집계·확정"
-                >💰 월정산</button>
+                  title="관리자 분기정산 — 담당자별 집계·확정"
+                >💰 분기정산</button>
               )}
               <button onClick={() => setShowSettings(true)} style={{ background: '#f1f5f9', color: '#475569', border: 'none', padding: isMobile ? '8px 10px' : '10px 14px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}>설정</button>
             </div>
@@ -8962,6 +8994,25 @@ import { deriveAssigneeResult } from './utils/settlement.js';
                             });
 
                           const unverifiedCount = allRows.filter(isUnverified).length;
+
+                          // D — 상단 월별 요약 바: 필터/월 적용된 allRows 기준 집계
+                          const summaryBar = allRows.reduce((acc, c) => {
+                            const sd = c.rawData;
+                            if (!sd) return acc;
+                            if (sd.selfPT) return acc;
+                            if (supersededMap.has(c.id)) return acc;
+                            if (c._type === 'win') acc.win++;
+                            else if (c._type === 'draw') acc.draw++;
+                            else if (c._type === 'lose') acc.lose++;
+                            else if (c._type === 'support') acc.support++;
+                            const calc = calculateSettlementAmount(sd, c.manager);
+                            const stl = sd.settlement?.[c.manager] || {};
+                            if (calc.amount > 0 && !stl.completed && !stl.selfSales) {
+                              acc.targetCount++;
+                              acc.estimated += calc.amount;
+                            }
+                            return acc;
+                          }, { win: 0, draw: 0, lose: 0, support: 0, targetCount: 0, estimated: 0 });
                           const statusTabs = [
                             { key: 'all', label: '전체', count: allRows.length },
                             { key: 'win', label: '승리', count: listKanban.win.length },
@@ -9006,16 +9057,42 @@ import { deriveAssigneeResult } from './utils/settlement.js';
                                   const highlight = tab.highlight && tab.count > 0;
                                   return (
                                   <button key={tab.key} onClick={() => setSiteListTab(tab.key)}
-                                    title={tab.key === 'unverified' ? '잔디 공고문·K-APT 검증 둘 다 없는 정산대상 (감리 제외)' : undefined}
+                                    title={tab.key === 'unverified' ? '잔디 공고문·K-APT 검증 둘 다 없는 정산대상 (감리 제외) — 운영상 즉시 확인 필요' : undefined}
                                     style={{
                                     flex: isMobile ? '1' : '0 0 auto', padding: '8px 16px', borderRadius: '8px',
-                                    border: active ? '1px solid #1e293b' : (highlight ? '1px solid #f59e0b' : '1px solid #e2e8f0'),
-                                    background: active ? '#1e293b' : (highlight ? '#fffbeb' : '#ffffff'),
-                                    color: active ? '#ffffff' : (highlight ? '#92400e' : '#64748b'),
-                                    fontSize: '12px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.2s'
-                                  }}>{tab.label} {tab.count}</button>
+                                    border: active ? (highlight ? '2px solid #dc2626' : '1px solid #1e293b') : (highlight ? '2px solid #dc2626' : '1px solid #e2e8f0'),
+                                    background: active ? (highlight ? '#dc2626' : '#1e293b') : (highlight ? '#fef2f2' : '#ffffff'),
+                                    color: active ? '#ffffff' : (highlight ? '#991b1b' : '#64748b'),
+                                    fontSize: '12px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.2s',
+                                    boxShadow: highlight && !active ? '0 0 0 3px rgba(220,38,38,0.12)' : 'none',
+                                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                  }}>
+                                    {highlight && <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: active ? '#ffffff' : '#dc2626', display: 'inline-block', boxShadow: active ? 'none' : '0 0 0 3px rgba(220,38,38,0.2)' }} />}
+                                    {tab.label} {tab.count}
+                                  </button>
                                   );
                                 })}
+                              </div>
+
+                              {/* D — 월별 요약 바: 결과 카운트 + 정산 대상 건수 + 예상 금액 + 검토필요 */}
+                              <div style={{ marginBottom: '12px', padding: isMobile ? '12px 14px' : '14px 18px', background: 'linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%)', borderRadius: '12px', border: '1px solid #dbeafe', display: 'flex', gap: isMobile ? '10px' : '20px', flexWrap: 'wrap', alignItems: 'center', fontSize: '12px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', letterSpacing: '0.05em' }}>실적</span>
+                                  <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#eff6ff', color: '#2563eb', fontWeight: '700', border: '1px solid #bfdbfe' }}>승 {summaryBar.win}</span>
+                                  <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#fffbeb', color: '#d97706', fontWeight: '700', border: '1px solid #fcd34d' }}>무 {summaryBar.draw}</span>
+                                  <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', fontWeight: '700', border: '1px solid #fca5a5' }}>패 {summaryBar.lose}</span>
+                                  <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#f3e8ff', color: '#7c3aed', fontWeight: '700', border: '1px solid #c4b5fd' }}>지원 {summaryBar.support}</span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: isMobile ? 0 : 'auto' }}>
+                                  <span style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', letterSpacing: '0.05em' }}>정산</span>
+                                  <span style={{ color: '#1e293b' }}>대상 <b style={{ color: '#2563eb' }}>{summaryBar.targetCount}</b>건</span>
+                                  <span style={{ color: '#1e293b' }}>예상 <b style={{ color: '#16a34a' }}>{summaryBar.estimated.toLocaleString('ko-KR')}원</b></span>
+                                  {unverifiedCount > 0 && (
+                                    <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#fef3c7', color: '#92400e', fontWeight: '800', border: '1px solid #fcd34d' }} title="잔디 공고문·K-APT 검증 둘 다 없는 정산대상 (감리 제외)">
+                                      ⚠ 검토필요 {unverifiedCount}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
 
                               {/* 정산 필터 */}
@@ -9100,6 +9177,24 @@ import { deriveAssigneeResult } from './utils/settlement.js';
                                     : ss.border;
                                   const cardOpacity = (isSettled || isSuperseded) ? 0.6 : 1;
 
+                                  // C — 카드 종합 상태 배지: 전 담당자 중 가장 눈에 띄는 상태 하나로 요약
+                                  //   우선순위: NEEDS_REVIEW > EXCLUDED(전원) > REQUESTED > CONFIRMED > COMPLETED(전원) > UNSETTLED
+                                  //   자체PT/중복 카드는 기존 배지로 충분하므로 생략
+                                  const overallBadge = (() => {
+                                    if (isSelfPT || isSuperseded) return null;
+                                    const aList = (s?.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(Boolean);
+                                    if (aList.length === 0) return null;
+                                    const statuses = aList.map(a => getSettlementStatus(s, a));
+                                    if (statuses.includes(SETTLEMENT_STATUS.NEEDS_REVIEW)) return SETTLEMENT_STATUS.NEEDS_REVIEW;
+                                    if (statuses.every(st => st === SETTLEMENT_STATUS.EXCLUDED)) return SETTLEMENT_STATUS.EXCLUDED;
+                                    if (statuses.every(st => st === SETTLEMENT_STATUS.COMPLETED)) return SETTLEMENT_STATUS.COMPLETED;
+                                    if (statuses.some(st => st === SETTLEMENT_STATUS.REQUESTED)) return SETTLEMENT_STATUS.REQUESTED;
+                                    if (statuses.some(st => st === SETTLEMENT_STATUS.CONFIRMED)) return SETTLEMENT_STATUS.CONFIRMED;
+                                    if (statuses.some(st => st === SETTLEMENT_STATUS.COMPLETED)) return SETTLEMENT_STATUS.COMPLETED;
+                                    return null; // 전부 UNSETTLED — 기본 상태라 생략
+                                  })();
+                                  const overallBadgeStyle = overallBadge ? SETTLEMENT_BADGE_STYLE[overallBadge] : null;
+
                                   return (
                                     <div key={card.id + '_ptcard_' + card._type} style={{ padding: isMobile ? '12px' : '16px 20px', background: cardBg, borderRadius: '10px', border: `1px solid ${cardBorder}`, borderLeft: `4px solid ${cardAccent}`, opacity: cardOpacity }}>
                                       {/* 1행: 날짜 + 현장명 + 상태배지 */}
@@ -9115,6 +9210,25 @@ import { deriveAssigneeResult } from './utils/settlement.js';
                                               <span style={{ fontSize: '10px', fontWeight: '800', padding: '2px 8px', borderRadius: '6px', background: '#ddd6fe', color: '#5b21b6', letterSpacing: '0.02em' }} title="감리 건 · 건당 80,000원 (공고문·결과 무관)">감리</span>
                                             )}
                                             <span onClick={(e) => { e.stopPropagation(); handleEditClick({ ...card.rawData, type: 'pt' }); }} style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: '700', color: '#1e293b', cursor: 'pointer', textDecoration: 'underline', textDecorationColor: '#cbd5e1', textUnderlineOffset: '2px' }} onMouseOver={e => e.currentTarget.style.color = '#3b82f6'} onMouseOut={e => e.currentTarget.style.color = '#1e293b'}>{card.siteName}</span>
+                                            {/* C — 카드 종합 정산 상태 배지 (최악 담당자 기준) */}
+                                            {overallBadgeStyle && (
+                                              <span style={{ fontSize: '10px', fontWeight: '800', padding: '2px 10px', borderRadius: '10px', background: overallBadgeStyle.bg, color: overallBadgeStyle.color, border: `1px solid ${overallBadgeStyle.border}`, letterSpacing: '0.02em' }} title="카드 종합 정산 상태 (담당자 중 우선순위 최고)">
+                                                {overallBadgeStyle.label}
+                                              </span>
+                                            )}
+                                            {/* F — K-APT 후보있음 배지 (candidates 저장됐지만 verified 아닌 상태) */}
+                                            {(() => {
+                                              const kv = s?.kaptVerified || {};
+                                              const hasCands = (kv.candidates?.list?.length || 0) > 0;
+                                              if (!hasCands || kv.status === 'verified') return null;
+                                              const n = kv.candidates.list.length;
+                                              const picked = kv.candidates.selectedBidNum;
+                                              return (
+                                                <span style={{ fontSize: '10px', fontWeight: '800', padding: '2px 10px', borderRadius: '10px', background: '#fef9c3', color: '#854d0e', border: '1px solid #fde047', letterSpacing: '0.02em' }} title={`K-APT 후보 ${n}개 저장됨${picked ? ` · 선택: ${picked}` : ''} — 재확인 필요`}>
+                                                  🟡 후보있음 {n}
+                                                </span>
+                                              );
+                                            })()}
                                             {currentResult && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: ss.badge, color: ss.text }}>{ss.label}</span>}
                                             {card._type === 'inProgress' && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: '#dbeafe', color: '#1d4ed8' }}>진행중</span>}
                                             {/* PT 리스크 뱃지 (진행중 PT 승률 예측 35% 미만) */}
@@ -9366,7 +9480,7 @@ tr.suppressed td.fname{color:#64748b;}
                                                       candidates: [],
                                                     });
                                                     // 2) 비동기로 Firebase 후보 검색 → stage 전이
-                                                    searchKaptCandidates({ siteName: card.siteName, ptDate: card.date })
+                                                    searchKaptCandidates({ siteName: card.siteName, ptDate: card.date, aliasMap: apartmentAliasMap })
                                                       .then(({ candidates }) => {
                                                         setKaptVerifyModal(m => m && m.scheduleId === card.id ? ({
                                                           ...m,
@@ -9415,6 +9529,20 @@ tr.suppressed td.fname{color:#64748b;}
                                           const aEditKey = `${card.id}_${assigneeName}`;
                                           const aResult = editingResults.hasOwnProperty(aEditKey) ? editingResults[aEditKey] : (s?.results?.[assigneeName] || (allAssignees.length === 1 ? s?.result : null) || null);
                                           const aSettlement = s?.settlement?.[assigneeName] || {};
+                                          // 정산 상태 배지 (#4) — 결과가 있거나 제외 사유 존재 시에만 표시 (자체PT 는 기존 처리 유지)
+                                          const ptRef = card.rawData || ptSchedules.find(p => p.id === card.id) || s;
+                                          const settlementStatus = (!isSelfPT && aResult) ? getSettlementStatus(ptRef, assigneeName) : null;
+                                          const badgeStyle = settlementStatus ? SETTLEMENT_BADGE_STYLE[settlementStatus] : null;
+                                          // A — 예상 정산금액 + 제외사유 (결과 있을 때만 계산; 자체PT 기존 UI 유지)
+                                          const calc = (!isSelfPT && aResult) ? calculateSettlementAmount(ptRef, assigneeName) : null;
+                                          const amountLabel = calc && calc.amount > 0 ? calc.amount.toLocaleString('ko-KR') + '원' : null;
+                                          const exclusionLabel = calc && calc.reason ? (EXCLUSION_REASON_LABEL[calc.reason] || calc.reason) : null;
+                                          // B — 지원자 규칙 안내: 주담 아닌 담당자가 지원 선택 시 주담 결과 기반 cascade 설명
+                                          const mainAssignee = allAssignees[0] || null;
+                                          const isSupporter = !isSelfPT && mainAssignee && assigneeName !== mainAssignee;
+                                          const rawPicked = editingResults.hasOwnProperty(aEditKey) ? editingResults[aEditKey] : (s?.results?.[assigneeName] || null);
+                                          const mainResult = s?.results?.[mainAssignee] || s?.result || null;
+                                          const showSupportHint = isSupporter && rawPicked === '지원';
                                           return (
                                             <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: ai === 0 ? '10px' : '6px', paddingTop: ai === 0 ? '10px' : '6px', borderTop: ai === 0 ? '1px solid #f1f5f9' : '1px dashed #f1f5f9', flexWrap: 'wrap' }}>
                                               <span style={{ fontSize: '13px', fontWeight: '700', color: isSelfPT ? '#7c3aed' : '#2563eb', minWidth: '50px' }}>{assigneeName}</span>
@@ -9427,6 +9555,23 @@ tr.suppressed td.fname{color:#64748b;}
                                                   );
                                                 })}
                                               </div>
+                                              {/* 정산 상태 배지 — 미정산은 시각적 노이즈 방지 위해 숨김 */}
+                                              {badgeStyle && settlementStatus !== SETTLEMENT_STATUS.UNSETTLED && (
+                                                <span style={{ padding: '3px 10px', borderRadius: '10px', fontSize: '11px', fontWeight: '700', background: badgeStyle.bg, color: badgeStyle.color, border: `1px solid ${badgeStyle.border}`, whiteSpace: 'nowrap' }} title={`정산 상태: ${badgeStyle.label}`}>
+                                                  {badgeStyle.label}
+                                                </span>
+                                              )}
+                                              {/* A — 예상 금액 or 제외사유 (결과 선택 시 자동 표시) */}
+                                              {amountLabel && (
+                                                <span style={{ fontSize: '12px', fontWeight: '700', color: '#16a34a', whiteSpace: 'nowrap' }} title="예상 정산금액 (자동 계산)">
+                                                  💰 {amountLabel}
+                                                </span>
+                                              )}
+                                              {exclusionLabel && (
+                                                <span style={{ fontSize: '11px', fontWeight: '600', color: '#dc2626', whiteSpace: 'nowrap', padding: '2px 8px', borderRadius: '8px', background: '#fef2f2', border: '1px solid #fecaca' }} title={`정산 제외: ${exclusionLabel}`}>
+                                                  제외: {exclusionLabel}
+                                                </span>
+                                              )}
                                               {/* 정산 체크박스 (승/무/지원만) - 자체PT는 정산 제외 */}
                                               {!isSelfPT && aResult && aResult !== '패' && (
                                                 <div style={{ display: 'flex', gap: '10px', fontSize: '11px', color: '#64748b', marginLeft: isMobile ? '0' : '8px', alignItems: 'center' }}>
@@ -9475,6 +9620,16 @@ tr.suppressed td.fname{color:#64748b;}
                                                       setHasResultChanges(true);
                                                     }} style={{ width: '14px', height: '14px', cursor: 'pointer' }} /> 본인영업
                                                   </label>
+                                                </div>
+                                              )}
+                                              {/* B — 지원자 규칙 안내: 주담 결과에 종속됨을 명시 */}
+                                              {showSupportHint && (
+                                                <div style={{ flexBasis: '100%', marginTop: '4px', fontSize: '11px', color: mainResult === '패' ? '#dc2626' : mainResult === '무' ? '#d97706' : mainResult === '승' ? '#16a34a' : '#94a3b8', padding: '4px 8px', background: '#f8fafc', borderRadius: '4px', borderLeft: `3px solid ${mainResult === '패' ? '#dc2626' : mainResult === '무' ? '#d97706' : mainResult === '승' ? '#16a34a' : '#cbd5e1'}` }}>
+                                                  ※ 지원자 정산은 주담 <b>{mainAssignee}</b> 결과에 종속됨
+                                                  {mainResult === '승' && ' — 현재 주담 [승] → 지원 250,000원 인정'}
+                                                  {mainResult === '무' && ' — 현재 주담 [무] → 지원 제외 (관리자 예외승인 필요)'}
+                                                  {mainResult === '패' && ' — 현재 주담 [패] → 지원자도 [패] 처리'}
+                                                  {!mainResult && ' — 주담 결과 입력 전 (지원 판정 대기)'}
                                                 </div>
                                               )}
                                             </div>
@@ -10826,13 +10981,52 @@ tr.suppressed td.fname{color:#64748b;}
                 // 결과 미입력 PT (날짜 지남)
                 const unenteredPts = myPtSchedules.filter(s => s.dateType === 'confirmed' && s.date < todayStr && !getMyResult(s));
 
+                // ② UX 재설계 — 신규 action 항목:
+                //   K-APT 검토필요: 결과 있지만 K-APT needs_review + 증빙 파일 없음 + 미정산 + 감리 아님
+                //   정산요청 필요: 결과(승/무/지원) 있지만 settlement.requested=false + 미완료 + 본인영업/자체PT 아님
+                const kaptReviewNeededPts = myPtSchedules.filter(s => {
+                  if (s.selfPT) return false;
+                  if (/감리/.test((s.workType || '') + '|' + (s.siteName || ''))) return false;
+                  const r = getMyResult(s);
+                  if (!r || r === '패') return false;
+                  const stl = s.settlement?.[viewingUser] || {};
+                  if (stl.completed || stl.selfSales) return false;
+                  const hasEvidence = s.evidenceFiles && Object.keys(s.evidenceFiles).length > 0;
+                  const verified = s.kaptVerified?.status === 'verified';
+                  if (verified || hasEvidence) return false;
+                  return true;
+                });
+                const settlementRequestNeededPts = myPtSchedules.filter(s => {
+                  if (s.selfPT) return false;
+                  const r = getMyResult(s);
+                  if (!r || r === '패') return false;
+                  const stl = s.settlement?.[viewingUser] || {};
+                  if (stl.completed || stl.selfSales) return false;
+                  if (stl.requested) return false;
+                  return true;
+                });
+
                 // 이번 달 PT 통계
                 const currentMonthStr = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
                 const thisMonthPts = myPtSchedules.filter(s => s.date && s.date.startsWith(currentMonthStr));
                 const thisMonthWins = thisMonthPts.filter(s => getMyResult(s) === '승').length;
 
-                // 총 조치 필요 건수
-                const totalActionItems = pipelineWarnings.length + unenteredPts.length;
+                // ② UX 재설계 — 이번 분기 실적 요약 (qStart/qEnd 는 위에서 계산됨)
+                const thisQuarterPts = myPtSchedules.filter(s => s.date && s.date >= qStart && s.date <= qEnd);
+                const qWins = thisQuarterPts.filter(s => getMyResult(s) === '승').length;
+                const qDraws = thisQuarterPts.filter(s => getMyResult(s) === '무').length;
+                const qLosses = thisQuarterPts.filter(s => getMyResult(s) === '패').length;
+                const qSupports = thisQuarterPts.filter(s => getMyResult(s) === '지원').length;
+                const qUnsettledCount = thisQuarterPts.filter(s => {
+                  if (s.selfPT) return false;
+                  const r = getMyResult(s);
+                  if (!r || r === '패') return false;
+                  const stl = s.settlement?.[viewingUser] || {};
+                  return !stl.completed && !stl.selfSales;
+                }).length;
+
+                // 총 조치 필요 건수 — 신규 항목 포함
+                const totalActionItems = pipelineWarnings.length + unenteredPts.length + kaptReviewNeededPts.length + settlementRequestNeededPts.length;
 
                 return (
                   <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', gap: 14, flexDirection: 'column' }}>
@@ -10969,10 +11163,38 @@ tr.suppressed td.fname{color:#64748b;}
                               onMouseOut={e => e.currentTarget.style.background = '#fef2f2'}>
                               <div style={{ width: 4, height: 28, borderRadius: 2, background: '#ef4444', flexShrink: 0 }} />
                               <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: '#dc2626' }}>PT 결과 미입력</div>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#dc2626' }}>📌 PT 결과 미입력</div>
                                 <div style={{ fontSize: 10, color: '#ef4444', opacity: 0.7, marginTop: 1 }}>최종 결과 입력이 필요한 PT</div>
                               </div>
                               <span style={{ fontSize: 18, fontWeight: 800, color: '#ef4444' }}>{unenteredPts.length}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
+                            </div>
+                          )}
+                          {/* ② 신규 — K-APT 검토필요 (Warning, 노랑) */}
+                          {kaptReviewNeededPts.length > 0 && (
+                            <div onClick={() => { setShowMyPage(false); setShowPerformance(true); setShowDashboard(false); setShowMeetingView(false); setShowSalesView(false); setSelectedAssignee(viewingUser); setPreviewAssignee(viewingUser); setSiteListTab('unverified'); }}
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 4, cursor: 'pointer', background: '#fef3c7', border: '1px solid #fcd34d', transition: 'background 0.15s' }}
+                              onMouseOver={e => e.currentTarget.style.background = '#fde68a'}
+                              onMouseOut={e => e.currentTarget.style.background = '#fef3c7'}>
+                              <div style={{ width: 4, height: 28, borderRadius: 2, background: '#f59e0b', flexShrink: 0 }} />
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e' }}>⚠ K-APT 검증 필요</div>
+                                <div style={{ fontSize: 10, color: '#d97706', opacity: 0.8, marginTop: 1 }}>공고문·K-APT 증빙 둘 다 없는 정산대상</div>
+                              </div>
+                              <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>{kaptReviewNeededPts.length}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
+                            </div>
+                          )}
+                          {/* ② 신규 — 정산요청 필요 (Info, 파랑) */}
+                          {settlementRequestNeededPts.length > 0 && (
+                            <div onClick={() => { setShowMyPage(false); setShowPerformance(true); setShowDashboard(false); setShowMeetingView(false); setShowSalesView(false); setSelectedAssignee(viewingUser); setPreviewAssignee(viewingUser); setSettlementFilter('pending'); }}
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 4, cursor: 'pointer', background: '#eff6ff', border: '1px solid #bfdbfe', transition: 'background 0.15s' }}
+                              onMouseOver={e => e.currentTarget.style.background = '#dbeafe'}
+                              onMouseOut={e => e.currentTarget.style.background = '#eff6ff'}>
+                              <div style={{ width: 4, height: 28, borderRadius: 2, background: '#3b82f6', flexShrink: 0 }} />
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#1e40af' }}>💰 정산요청 필요</div>
+                                <div style={{ fontSize: 10, color: '#3b82f6', opacity: 0.8, marginTop: 1 }}>결과 입력됐지만 정산요청 체크 안 된 PT</div>
+                              </div>
+                              <span style={{ fontSize: 18, fontWeight: 800, color: '#2563eb' }}>{settlementRequestNeededPts.length}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
                             </div>
                           )}
                           {/* Pipeline warnings - grouped by stage with severity colors */}
@@ -11044,6 +11266,46 @@ tr.suppressed td.fname{color:#64748b;}
                           {'\u2728'} 오늘 처리할 업무가 없습니다
                         </div>
                       )}
+                    </div>
+
+                    {/* ② 신규 — 이번 분기 실적·정산 요약 */}
+                    <div style={cardStyle}>
+                      <div style={{ padding: '16px 20px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>이번 분기 요약</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', background: '#f1f5f9', borderRadius: 10, padding: '2px 10px' }}>{nowY}-Q{nowQ}</span>
+                      </div>
+                      <div style={{ padding: '0 16px 14px' }}>
+                        {/* 실적 4색 */}
+                        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                          <div style={{ flex: 1, padding: '10px 8px', background: '#eff6ff', borderRadius: 8, border: '1px solid #bfdbfe', textAlign: 'center' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#2563eb', marginBottom: 2 }}>승</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: '#1e40af' }}>{qWins}</div>
+                          </div>
+                          <div style={{ flex: 1, padding: '10px 8px', background: '#fffbeb', borderRadius: 8, border: '1px solid #fde68a', textAlign: 'center' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#d97706', marginBottom: 2 }}>무</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: '#a16207' }}>{qDraws}</div>
+                          </div>
+                          <div style={{ flex: 1, padding: '10px 8px', background: '#fef2f2', borderRadius: 8, border: '1px solid #fca5a5', textAlign: 'center' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#dc2626', marginBottom: 2 }}>패</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: '#991b1b' }}>{qLosses}</div>
+                          </div>
+                          <div style={{ flex: 1, padding: '10px 8px', background: '#f3e8ff', borderRadius: 8, border: '1px solid #c4b5fd', textAlign: 'center' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#7c3aed', marginBottom: 2 }}>지원</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: '#6b21a8' }}>{qSupports}</div>
+                          </div>
+                        </div>
+                        {/* 정산 블록 */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: 'linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%)', borderRadius: 10, border: '1px solid #a7f3d0' }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#047857', marginBottom: 2 }}>이번 분기 예상 정산금액</div>
+                            <div style={{ fontSize: 20, fontWeight: 800, color: '#065f46' }}>{thisQuarterAmount.toLocaleString('ko-KR')}<span style={{ fontSize: 12, fontWeight: 600, marginLeft: 2 }}>원</span></div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', marginBottom: 2 }}>미정산</div>
+                            <div style={{ fontSize: 16, fontWeight: 800, color: qUnsettledCount > 0 ? '#f59e0b' : '#10b981' }}>{qUnsettledCount}<span style={{ fontSize: 10, fontWeight: 600, marginLeft: 2 }}>건</span></div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
 
                     {/* 분기 미확정 PT */}
@@ -12998,6 +13260,35 @@ tr.suppressed td.fname{color:#64748b;}
                             onClick={async () => {
                               // 선택 → verifying 전이 + 자동 판정
                               setKaptVerifyModal(m => ({ ...m, stage: 'verifying', bidNum: c.bidNum }));
+
+                              // #1 Alias 학습 — PT 입력 단지명과 선택된 K-APT 공고 단지명이 normalize 후에도 다르면 양방향 alias 저장
+                              const ptName = kaptVerifyModal.siteName || '';
+                              const bidName = c.bidKaptname || '';
+                              if (ptName && bidName) {
+                                const nPt = normalizeApartmentName(ptName);
+                                const nBid = normalizeApartmentName(bidName);
+                                if (nPt && nBid && nPt !== nBid) {
+                                  try {
+                                    const next = addApartmentAlias({ ...(apartmentAliasMap || {}) }, ptName, bidName);
+                                    await database.ref('config/apartmentAliases').set(next);
+                                    console.log('[alias] learned', { ptName, bidName });
+                                  } catch (e) { console.warn('[alias] save failed', e); }
+                                }
+                              }
+
+                              // #2 candidates 스냅샷 저장 — 사후 감사용 (사용자가 어떤 후보 중 어느 것을 선택했는지 기록)
+                              try {
+                                await database.ref(`pt/${kaptVerifyModal.scheduleId}/kaptVerified/candidates`).set({
+                                  list: (kaptVerifyModal.candidates || []).map(cc => ({
+                                    bidNum: cc.bidNum, bidKaptname: cc.bidKaptname || null,
+                                    bidTitle: cc.bidTitle || null, bidRegdate: cc.bidRegdate || null, score: cc.score ?? null,
+                                  })),
+                                  selectedBidNum: c.bidNum,
+                                  selectedAt: new Date().toISOString(),
+                                  selectedBy: currentUser?.name || 'manual',
+                                });
+                              } catch (e) { console.warn('[candidates] snapshot save failed', e); }
+
                               try {
                                 const r = await verifyKaptForPt({
                                   scheduleId: kaptVerifyModal.scheduleId,
@@ -13220,16 +13511,16 @@ tr.suppressed td.fname{color:#64748b;}
             </div>
           )}
 
-          {/* 관리자 월정산 모달 (P7) */}
+          {/* 관리자 분기정산 모달 (P7 — 월정산 → 분기정산 전환) */}
           {showMonthlySettlement && currentUser?.isAdmin && (() => {
-            // 데이터 로드 — Firebase monthlySettlements/{monthKey}
+            // 데이터 로드 — Firebase quarterlySettlements/{quarterKey}
             const loadData = async () => {
               setMonthlySettlementLoading(true);
               try {
-                const snap = await database.ref(`monthlySettlements/${monthlySettlementMonth}`).once('value');
+                const snap = await database.ref(`quarterlySettlements/${monthlySettlementMonth}`).once('value');
                 setMonthlySettlementData(snap.val() || null);
               } catch (e) {
-                console.error('[monthly] load failed', e);
+                console.error('[quarterly] load failed', e);
                 setMonthlySettlementData(null);
               } finally {
                 setMonthlySettlementLoading(false);
@@ -13244,7 +13535,7 @@ tr.suppressed td.fname{color:#64748b;}
               .sort((a, b) => (b.estimatedAmount || 0) - (a.estimatedAmount || 0));
             const updateRowStatus = async (assignee, newStatus) => {
               try {
-                await database.ref(`monthlySettlements/${monthlySettlementMonth}/perAssignee/${assignee}/status`).set(newStatus);
+                await database.ref(`quarterlySettlements/${monthlySettlementMonth}/perAssignee/${assignee}/status`).set(newStatus);
                 setMonthlySettlementData(prev => prev ? ({
                   ...prev,
                   perAssignee: { ...prev.perAssignee, [assignee]: { ...prev.perAssignee[assignee], status: newStatus } },
@@ -13259,19 +13550,19 @@ tr.suppressed td.fname{color:#64748b;}
               const updates = {};
               draftRows.forEach(r => { updates[`${r.assignee}/status`] = 'confirmed'; });
               try {
-                await database.ref(`monthlySettlements/${monthlySettlementMonth}/perAssignee`).update(updates);
+                await database.ref(`quarterlySettlements/${monthlySettlementMonth}/perAssignee`).update(updates);
                 await loadData();
               } catch (e) { alert('일괄 확정 실패: ' + e.message); }
             };
             const triggerGenerate = async () => {
               if (!kaptWorkerUrl) { alert('K-APT Worker URL 미설정 — 설정 모달에서 먼저 입력하세요.'); return; }
-              if (!confirm(`Worker 에 ${monthlySettlementMonth} 월정산 재생성을 요청합니다. 진행?`)) return;
+              if (!confirm(`Worker 에 ${monthlySettlementMonth} 분기정산 재생성을 요청합니다. 진행?`)) return;
               setMonthlySettlementLoading(true);
               try {
-                const r = await fetch(`${kaptWorkerUrl.replace(/\/$/, '')}/run-monthly-settlement`, {
+                const r = await fetch(`${kaptWorkerUrl.replace(/\/$/, '')}/run-quarterly-settlement`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ monthKey: monthlySettlementMonth, force: true }),
+                  body: JSON.stringify({ quarterKey: monthlySettlementMonth, force: true }),
                 });
                 const d = await r.json();
                 if (d.status === 'ok') {
@@ -13304,7 +13595,7 @@ tr.suppressed td.fname{color:#64748b;}
                   {/* Header */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
                     <div>
-                      <div style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', letterSpacing: '0.05em' }}>관리자 월정산</div>
+                      <div style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', letterSpacing: '0.05em' }}>관리자 분기정산</div>
                       <h2 style={{ fontSize: '18px', fontWeight: '700', margin: '2px 0 0 0', color: '#1e293b' }}>{monthlySettlementMonth}</h2>
                     </div>
                     <button onClick={() => setShowMonthlySettlement(false)} style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer', color: '#94a3b8' }}>×</button>
@@ -13312,13 +13603,22 @@ tr.suppressed td.fname{color:#64748b;}
 
                   {/* 필터 바 */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
-                    <label style={{ fontSize: '12px', color: '#475569', fontWeight: '600' }}>월:</label>
-                    <input
-                      type="month"
-                      value={monthlySettlementMonth}
-                      onChange={(e) => { setMonthlySettlementMonth(e.target.value); setMonthlySettlementData(null); }}
-                      style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
-                    />
+                    <label style={{ fontSize: '12px', color: '#475569', fontWeight: '600' }}>분기:</label>
+                    {(() => {
+                      const now = new Date();
+                      const thisYear = now.getFullYear();
+                      const years = [thisYear - 1, thisYear, thisYear + 1];
+                      const opts = years.flatMap(y => [1, 2, 3, 4].map(q => `${y}-Q${q}`));
+                      return (
+                        <select
+                          value={monthlySettlementMonth}
+                          onChange={(e) => { setMonthlySettlementMonth(e.target.value); setMonthlySettlementData(null); }}
+                          style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', fontFamily: 'monospace' }}
+                        >
+                          {opts.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      );
+                    })()}
                     <label style={{ fontSize: '12px', color: '#475569', fontWeight: '600', marginLeft: '8px' }}>상태:</label>
                     <select
                       value={monthlySettlementStatusFilter}
@@ -13353,7 +13653,7 @@ tr.suppressed td.fname{color:#64748b;}
                     <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>⏳ 로딩 중...</div>
                   ) : !data ? (
                     <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '13px' }}>
-                      {monthlySettlementMonth} 월정산 데이터 없음<br />
+                      {monthlySettlementMonth} 분기정산 데이터 없음<br />
                       <span style={{ fontSize: '12px' }}>"지금 생성" 버튼으로 Worker 에 생성 요청할 수 있습니다.</span>
                     </div>
                   ) : rows.length === 0 ? (

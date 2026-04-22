@@ -286,3 +286,55 @@ export function isMonthlySettlementTime(now = new Date()) {
     now.getHours() >= 9
   );
 }
+
+// ===== 분기정산 util (월정산 → 분기정산 전환) =====
+
+/**
+ * Date/now 기준 분기 키 반환. "YYYY-Q{1..4}"
+ */
+export function getQuarterKey(now = new Date()) {
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1;
+  return `${y}-Q${Math.ceil(m / 3)}`;
+}
+
+/**
+ * "YYYY-QN" → { year, quarter, startMonth, endMonth } (월은 1~12)
+ */
+export function parseQuarterKey(quarterKey) {
+  const m = String(quarterKey || '').match(/^(\d{4})-Q([1-4])$/);
+  if (!m) return null;
+  const year = parseInt(m[1], 10);
+  const quarter = parseInt(m[2], 10);
+  return { year, quarter, startMonth: (quarter - 1) * 3 + 1, endMonth: quarter * 3 };
+}
+
+/**
+ * PT 일자(YYYY-MM-DD) 가 해당 분기에 속하는지
+ */
+export function ptBelongsToQuarter(ptDate, quarterKey) {
+  const p = parseQuarterKey(quarterKey);
+  if (!p || !ptDate) return false;
+  const dm = String(ptDate).match(/^(\d{4})-(\d{2})/);
+  if (!dm) return false;
+  const y = parseInt(dm[1], 10);
+  const m = parseInt(dm[2], 10);
+  return y === p.year && m >= p.startMonth && m <= p.endMonth;
+}
+
+/**
+ * 현재 분기가 마지막월의 마지막주 월요일 오전 9시 이후인지
+ *  자동 실행 기준점 판별용
+ */
+export function isQuarterlySettlementTime(now = new Date()) {
+  const month = now.getMonth() + 1;
+  if (![3, 6, 9, 12].includes(month)) return false;
+  const year = now.getFullYear();
+  const targetDate = getLastMondayOfMonth(year, month);
+  return (
+    now.getFullYear() === targetDate.getFullYear() &&
+    now.getMonth() === targetDate.getMonth() &&
+    now.getDate() === targetDate.getDate() &&
+    now.getHours() >= 9
+  );
+}

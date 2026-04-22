@@ -103,25 +103,47 @@ export default {
       }
     }
 
-    // 후보 검색 (모달 자동 추천용): POST /search-candidates { siteName }
-    // 반환: { candidates: [{bidNum, bidKaptname, bidTitle, bidRegdate, bidLocation}] (top 5) }
+    // 후보 검색 (모달 자동 추천용): POST /search-candidates { siteName, aliasMap? }
+    // aliasMap: { [normalizedKey]: [aliasName, ...] } — 있으면 해당 bid 에 score=1 부스트
+    // 반환: { candidates: [{bidNum, bidKaptname, bidTitle, bidRegdate, bidLocation, score, matchedByAlias}] (top 5) }
     if (url.pathname === '/search-candidates' && request.method === 'POST') {
       try {
         const body = await request.json();
         const siteName = (body.siteName || '').trim();
         if (!siteName) return jsonResponse({ candidates: [], reason: 'empty_siteName' }, env);
-        const rawList = await queryFirebaseByAptName(env, siteName, body.ptDate || null);
+
+        // alias 확장: 입력 siteName 과 aliasMap 에서 연결된 이름들을 모두 정규화해서 후보 검색 시드로 사용
         const target = normalizeKoreanName(siteName);
-        // 간단 스코어: normalize 이름 겹침 길이 / 가장 긴 이름 길이
-        const scored = (rawList || []).map(b => {
+        const aliasMap = body.aliasMap || {};
+        const aliasKeys = new Set([target]);
+        if (aliasMap[target]) {
+          (aliasMap[target] || []).forEach(n => aliasKeys.add(normalizeKoreanName(n)));
+        }
+
+        // 주 검색 + alias 각각 검색해 합집합
+        const allBids = [];
+        const seen = new Set();
+        for (const seed of aliasKeys) {
+          if (!seed) continue;
+          const list = await queryFirebaseByAptName(env, seed, body.ptDate || null).catch(() => []);
+          for (const b of (list || [])) {
+            const key = b.bidNum || b.bidcode;
+            if (key && !seen.has(key)) { seen.add(key); allBids.push(b); }
+          }
+        }
+
+        const scored = allBids.map(b => {
           const n = b.bidKaptnameNormalized || normalizeKoreanName(b.bidKaptname || '');
           let score = 0;
+          let matchedByAlias = false;
           if (n && target) {
-            const minLen = Math.min(n.length, target.length);
-            const maxLen = Math.max(n.length, target.length);
-            if (n === target) score = 1;
-            else if (n.includes(target) || target.includes(n)) score = minLen / maxLen;
-            else score = 0;
+            if (aliasKeys.has(n) && n !== target) { score = 1; matchedByAlias = true; }
+            else if (n === target) score = 1;
+            else if (n.includes(target) || target.includes(n)) {
+              const minLen = Math.min(n.length, target.length);
+              const maxLen = Math.max(n.length, target.length);
+              score = minLen / maxLen;
+            }
           }
           return {
             bidNum: b.bidNum || b.bidcode || null,
@@ -130,6 +152,7 @@ export default {
             bidRegdate: b.bidRegdate || '',
             bidLocation: b.bidLocation || b.bidAddress || '',
             score,
+            matchedByAlias,
           };
         })
         .filter(c => c.bidNum)
@@ -141,16 +164,17 @@ export default {
       }
     }
 
-    // 관리자 수동 트리거: POST /run-monthly-settlement { monthKey?, force? }
-    //   monthKey: "YYYY-MM" (생략 시 현재 월 KST)
-    //   force: true 면 마지막주 월요일 아니어도 실행 (테스트/재실행용)
-    if (url.pathname === '/run-monthly-settlement' && request.method === 'POST') {
+    // 관리자 수동 트리거: POST /run-quarterly-settlement { quarterKey?, force? }
+    //   quarterKey: "YYYY-QN" (생략 시 현재 분기 KST)
+    //   force: true 면 분기 마지막월 마지막주 월요일 아니어도 실행
+    // 하위호환: /run-monthly-settlement 도 받아서 같은 함수 호출 (Body 의 monthKey 는 무시됨 — 현재분기로 동작)
+    if ((url.pathname === '/run-quarterly-settlement' || url.pathname === '/run-monthly-settlement') && request.method === 'POST') {
       try {
         const body = await request.json().catch(() => ({}));
-        const result = await runMonthlySettlementIfLastMonday(env, { monthKey: body.monthKey, force: !!body.force });
+        const result = await runQuarterlySettlementIfLastMonday(env, { quarterKey: body.quarterKey, monthKey: body.monthKey, force: !!body.force });
         return jsonResponse(result, env);
       } catch (e) {
-        console.error('[monthly-settlement] error', e);
+        console.error('[quarterly-settlement] error', e);
         return jsonResponse({ status: 'error', error: e.message }, env, 500);
       }
     }
@@ -176,14 +200,14 @@ export default {
 
     return jsonResponse({
       error: 'Not found',
-      endpoints: ['POST /verify', 'POST /search-candidates', 'POST /run-monthly-settlement', 'POST /sync?days=N', 'GET /bid/:bidNum', 'GET /health'],
+      endpoints: ['POST /verify', 'POST /search-candidates', 'POST /run-quarterly-settlement', 'POST /sync?days=N', 'GET /bid/:bidNum', 'GET /health'],
     }, env, 404);
   },
 
   async scheduled(event, env, ctx) {
     // cron 표현식으로 분기:
     //   "0 17 * * *" → 매일 02:00 KST 공고 동기화
-    //   "0 0 * * 1"  → 매주 월요일 09:00 KST — 마지막주 월요일일 때만 월정산 실행
+    //   "0 0 * * 1"  → 매주 월요일 09:00 KST — 분기 마지막월(3/6/9/12) 마지막주 월요일일 때만 분기정산 실행
     console.log('[cron] triggered', event.cron, new Date().toISOString());
     if (event.cron === '0 17 * * *') {
       try {
@@ -194,9 +218,9 @@ export default {
     }
     if (event.cron === '0 0 * * 1') {
       try {
-        const result = await runMonthlySettlementIfLastMonday(env);
-        console.log('[cron] monthly settlement result', result);
-      } catch (e) { console.error('[cron] monthly settlement failed', e); }
+        const result = await runQuarterlySettlementIfLastMonday(env);
+        console.log('[cron] quarterly settlement result', result);
+      } catch (e) { console.error('[cron] quarterly settlement failed', e); }
       return;
     }
   },
@@ -976,11 +1000,11 @@ function jsonResponse(data, env, status = 200) {
 }
 
 // =================================================================
-// 월정산 (P5)
+// 분기정산 (P5 개정 — 월정산 → 분기정산 전환)
 // =================================================================
-// 운영 기준: 마지막주 월요일 09:00 KST 에 자동 실행.
-// 해당 월의 PT 전체 조회 → 담당자별 승/무/지원/제외/검토 집계 + 예상 금액
-// Firebase monthlySettlements/{YYYY-MM}/totals 와 /{YYYY-MM}/perAssignee/{name} 에 저장
+// 운영 기준: 분기 마지막월(3/6/9/12)의 마지막 주 월요일 09:00 KST 에 자동 실행.
+// 해당 분기의 PT 전체 조회 → 담당자별 승/무/지원/제외/검토 집계 + 예상 금액
+// Firebase quarterlySettlements/{YYYY-QN}/totals 와 /{YYYY-QN}/perAssignee/{name} 에 저장
 // 관리자 잔디 알림 발송 (요약).
 
 const SETTLEMENT_AMOUNTS = {
@@ -990,19 +1014,46 @@ const SETTLEMENT_AMOUNTS = {
   SUPERVISION: 80000,
 };
 
-// KST 기준 오늘이 해당 월의 마지막 주 월요일인지
-function isLastMondayOfMonthKST(now = new Date()) {
-  // KST offset = +9
+// KST 기준 오늘이 분기 마지막월의 마지막 주 월요일인지
+function isLastMondayOfQuarterKST(now = new Date()) {
   const kst = new Date(now.getTime() + 9 * 3600 * 1000);
   if (kst.getUTCDay() !== 1) return false;  // 월요일 아님
-  // +7일 해서 같은 달이 아니면 마지막 월요일
+  const month = kst.getUTCMonth() + 1; // 1~12
+  // 분기 마지막월만 허용 (3/6/9/12)
+  if (![3, 6, 9, 12].includes(month)) return false;
+  // 다음 주 월요일이 다른 달이면 마지막 월요일
   const next = new Date(kst.getTime() + 7 * 86400 * 1000);
   return next.getUTCMonth() !== kst.getUTCMonth();
 }
 
-function getCurrentMonthKeyKST(now = new Date()) {
+function getCurrentQuarterKeyKST(now = new Date()) {
   const kst = new Date(now.getTime() + 9 * 3600 * 1000);
-  return `${kst.getUTCFullYear()}-${String(kst.getUTCMonth() + 1).padStart(2, '0')}`;
+  const y = kst.getUTCFullYear();
+  const m = kst.getUTCMonth() + 1;
+  const q = Math.ceil(m / 3);
+  return `${y}-Q${q}`;
+}
+
+// "YYYY-QN" 에서 startMonth, endMonth (1-12) 추출
+function parseQuarterKey(quarterKey) {
+  const m = String(quarterKey || '').match(/^(\d{4})-Q([1-4])$/);
+  if (!m) return null;
+  const year = parseInt(m[1], 10);
+  const q = parseInt(m[2], 10);
+  const startMonth = (q - 1) * 3 + 1;
+  const endMonth = q * 3;
+  return { year, quarter: q, startMonth, endMonth };
+}
+
+// PT.date (YYYY-MM-DD) 가 해당 quarterKey 에 속하는지
+function ptBelongsToQuarter(ptDate, quarterKey) {
+  const p = parseQuarterKey(quarterKey);
+  if (!p || !ptDate) return false;
+  const dm = String(ptDate).match(/^(\d{4})-(\d{2})/);
+  if (!dm) return false;
+  const y = parseInt(dm[1], 10);
+  const m = parseInt(dm[2], 10);
+  return y === p.year && m >= p.startMonth && m <= p.endMonth;
 }
 
 // pt·assignee 조합에 대한 결과 파생 (client settlement.js 와 동일한 규칙)
@@ -1045,28 +1096,30 @@ function calcAmountWorker(pt, assignee) {
   return { amount: 0, result, reason: null };
 }
 
-async function runMonthlySettlementIfLastMonday(env, opts = {}) {
+async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
   const now = new Date();
-  const isLastMon = isLastMondayOfMonthKST(now);
+  const isLastMon = isLastMondayOfQuarterKST(now);
   if (!isLastMon && !opts.force) {
-    return { status: 'skipped', reason: 'not_last_monday', now: now.toISOString() };
+    return { status: 'skipped', reason: 'not_last_monday_of_quarter', now: now.toISOString() };
   }
   if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) {
     return { status: 'error', reason: 'firebase_not_configured' };
   }
-  const monthKey = opts.monthKey || getCurrentMonthKeyKST(now);
+  const quarterKey = opts.quarterKey || opts.monthKey /* 하위호환 */ || getCurrentQuarterKeyKST(now);
+  const parsed = parseQuarterKey(quarterKey);
+  if (!parsed) return { status: 'error', reason: 'invalid_quarter_key', quarterKey };
 
-  // 1) PT 전체 로드 (해당 월 필터)
+  // 1) PT 전체 로드 (해당 분기 필터)
   const ptUrl = `${env.FIREBASE_DB_URL}/pt.json?auth=${env.FIREBASE_DB_SECRET}`;
   const ptResp = await fetch(ptUrl);
   if (!ptResp.ok) return { status: 'error', reason: `pt_fetch_http_${ptResp.status}` };
   const ptData = await ptResp.json();
   const allPts = ptData ? Object.entries(ptData).map(([id, pt]) => ({ id, ...pt })) : [];
-  const monthPts = allPts.filter(p => p?.date?.startsWith(monthKey));
+  const quarterPts = allPts.filter(p => ptBelongsToQuarter(p?.date, quarterKey));
 
   // 2) 담당자 집합 추출
   const assigneeSet = new Set();
-  for (const pt of monthPts) {
+  for (const pt of quarterPts) {
     const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
     tokens.forEach(t => assigneeSet.add(t));
   }
@@ -1075,7 +1128,7 @@ async function runMonthlySettlementIfLastMonday(env, opts = {}) {
   const perAssignee = {};
   for (const a of assigneeSet) {
     perAssignee[a] = {
-      monthKey, assignee: a,
+      quarterKey, assignee: a,
       totalCount: 0, winCount: 0, drawCount: 0, supportCount: 0, excludedCount: 0, reviewCount: 0,
       estimatedAmount: 0,
       status: 'draft',
@@ -1084,7 +1137,7 @@ async function runMonthlySettlementIfLastMonday(env, opts = {}) {
       items: [],
     };
   }
-  for (const pt of monthPts) {
+  for (const pt of quarterPts) {
     const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
     for (const assignee of tokens) {
       const agg = perAssignee[assignee];
@@ -1109,7 +1162,7 @@ async function runMonthlySettlementIfLastMonday(env, opts = {}) {
 
   // 4) 전체 summary
   const totals = {
-    monthKey, totalAssignees: 0, totalCount: 0, totalEstimated: 0, totalReview: 0,
+    quarterKey, totalAssignees: 0, totalCount: 0, totalEstimated: 0, totalReview: 0,
     generatedAt: now.toISOString(), generatedBy: opts.force ? 'manual' : 'cron',
   };
   for (const agg of Object.values(perAssignee)) {
@@ -1120,8 +1173,8 @@ async function runMonthlySettlementIfLastMonday(env, opts = {}) {
     totals.totalReview += agg.reviewCount;
   }
 
-  // 5) Firebase 저장 (monthlySettlements/{monthKey})
-  const writeUrl = `${env.FIREBASE_DB_URL}/monthlySettlements/${monthKey}.json?auth=${env.FIREBASE_DB_SECRET}`;
+  // 5) Firebase 저장 (quarterlySettlements/{quarterKey})
+  const writeUrl = `${env.FIREBASE_DB_URL}/quarterlySettlements/${quarterKey}.json?auth=${env.FIREBASE_DB_SECRET}`;
   const writeResp = await fetch(writeUrl, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -1136,7 +1189,7 @@ async function runMonthlySettlementIfLastMonday(env, opts = {}) {
     .map(a => `${a.assignee}: ${a.totalCount}건 · 예상 ${(a.estimatedAmount || 0).toLocaleString('ko-KR')}원 (검토 ${a.reviewCount})`)
     .slice(0, 15);
   await notifyJandi(env, {
-    body: `[${monthKey} 월정산 생성 완료 — 관리자 확인 필요]`,
+    body: `[${quarterKey} 분기정산 생성 완료 — 관리자 확인 필요]`,
     connectColor: '#dc2626',
     connectInfo: [{
       title: `총 ${totals.totalAssignees}명 · ${totals.totalCount}건 · 예상 ${(totals.totalEstimated || 0).toLocaleString('ko-KR')}원`,
@@ -1146,10 +1199,10 @@ async function runMonthlySettlementIfLastMonday(env, opts = {}) {
         '담당자별:',
         ...perList,
         '',
-        '👉 관리자 월정산 화면에서 정산확정/완료 처리하세요.',
+        '👉 관리자 분기정산 화면에서 정산확정/완료 처리하세요.',
       ].join('\n'),
     }],
   });
 
-  return { status: 'ok', monthKey, totals, assigneesWritten: Object.keys(perAssignee).length };
+  return { status: 'ok', quarterKey, totals, assigneesWritten: Object.keys(perAssignee).length };
 }
