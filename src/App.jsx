@@ -5869,13 +5869,7 @@ const SETTLEMENT_BADGE_STYLE = {
                   title="영업회의 목록/관리"
                 >영업회의</button>
               )}
-              {isLoggedIn && (
-                <button
-                  onClick={() => setShowFeedbackModal(true)}
-                  style={{ background: '#fbbf24', color: '#78350f', border: 'none', padding: isMobile ? '8px 12px' : '10px 16px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '700', cursor: 'pointer' }}
-                  title="🐞 파일럿 피드백 제출 — 버그/개선/정책/예외 (5줄 + 3클릭)"
-                >🐞 피드백</button>
-              )}
+              {/* 피드백 버튼은 우측 하단 플로팅 FAB 로 이동 (아래 renderFeedbackFab 참조) */}
               {currentUser?.isAdmin && (() => {
                 // === IT 팔레트 기반 관리자 버튼 토큰 ===
                 //   brandPrimary:  Royal Blue  #0F4C75  (테두리·텍스트)
@@ -9726,15 +9720,7 @@ const SETTLEMENT_BADGE_STYLE = {
                                                 </span>
                                               );
                                             })()}
-                                            {/* 지원자 대기 배지 — 주담 결과 없이 지원자 결과만 입력된 상태 */}
-                                            {supportWaitingInfo && (
-                                              <span
-                                                style={{ fontSize: '10px', fontWeight: '800', padding: '2px 10px', borderRadius: '10px', background: '#ede9fe', color: '#5b21b6', border: '1px solid #c4b5fd', letterSpacing: '0.02em', whiteSpace: 'nowrap' }}
-                                                title={`⏳ 지원자 정산 보류\n주담 ${supportWaitingInfo.mainAssignee} 결과 입력 전 — 지원자 ${supportWaitingInfo.supporters.join(', ')} 정산 판정 대기 중.\n주담 결과가 승이면 지원 인정, 무/패면 제외/패 처리됨.`}
-                                              >
-                                                ⏳ 지원자 대기
-                                              </span>
-                                            )}
+                                            {/* ⏳ 지원자 대기 배지 제거 — 리스크 카드에서 일괄 집계되어 중복 */}
                                             {/* 취소공고 배지 — kaptVerified.status === 'cancelled' */}
                                             {s?.kaptVerified?.status === 'cancelled' && (
                                               <span
@@ -10220,17 +10206,7 @@ tr.suppressed td.fname{color:#64748b;}
                                                   </label>
                                                 </div>
                                               )}
-                                              {/* #7 — 확정일·분기귀속·급여반영월 미니 라벨 (정산 대상일 때만) */}
-                                              {confirmDateInfo && (
-                                                <div
-                                                  style={{ flexBasis: '100%', marginTop: '4px', fontSize: '10px', color: '#64748b', display: 'flex', flexWrap: 'wrap', gap: '10px', paddingLeft: '4px' }}
-                                                  title={`확정일: ${confirmDateInfo.cd}\n출처: ${confirmDateInfo.source === 'finalConfirmed' ? 'Phase 4 최종확정' : confirmDateInfo.source === 'requested' ? '정산요청 시점' : confirmDateInfo.source === 'resultInput' ? '결과 입력 시점 (승/무/패 클릭일)' : 'PT일 (레거시 fallback)'}\n분기 귀속: ${confirmDateInfo.qKey}\n급여 반영월: ${confirmDateInfo.payrollMonth}`}
-                                                >
-                                                  <span>📅 확정일 <b style={{ color: '#475569' }}>{confirmDateInfo.cd}</b>{confirmDateInfo.sameAsPtDate ? '' : ' (PT일 ≠)'}</span>
-                                                  <span>· 귀속 <b style={{ color: '#2563eb' }}>{confirmDateInfo.qKey}</b></span>
-                                                  <span>· 급여 <b style={{ color: '#16a34a' }}>{confirmDateInfo.payrollMonth}</b></span>
-                                                </div>
-                                              )}
+                                              {/* 확정일·귀속·급여 미니 라벨 — 리스트에서 제거됨 (관리자 분기정산 모달에서 조회 가능). 계산은 persist 용도로 유지. */}
                                               {/* B — 지원자 규칙 안내: 주담 결과에 종속됨을 명시 */}
                                               {showSupportHint && (
                                                 <div style={{ flexBasis: '100%', marginTop: '4px', fontSize: '11px', color: mainResult === '패' ? '#dc2626' : mainResult === '무' ? '#d97706' : mainResult === '승' ? '#16a34a' : '#94a3b8', padding: '4px 8px', background: '#f8fafc', borderRadius: '4px', borderLeft: `3px solid ${mainResult === '패' ? '#dc2626' : mainResult === '무' ? '#d97706' : mainResult === '승' ? '#16a34a' : '#cbd5e1'}` }}>
@@ -16798,6 +16774,38 @@ tr.suppressed td.fname{color:#64748b;}
             </div>
           )}
           
+          {/* Feedback FAB — 우측 하단 플로팅 (모바일은 Bottom Nav 위로 72px 간격) */}
+          {isLoggedIn && (
+            <button
+              onClick={() => setShowFeedbackModal(true)}
+              title={currentUser?.isAdmin ? '피드백 / 버그 제출 (관리자)' : '의견 보내기'}
+              style={{
+                position: 'fixed',
+                right: isMobile ? '16px' : '24px',
+                bottom: isMobile ? `calc(72px + env(safe-area-inset-bottom))` : '24px',
+                zIndex: 9999,
+                width: isMobile ? '52px' : '56px',
+                height: isMobile ? '52px' : '56px',
+                borderRadius: '50%',
+                background: '#0F4C75',
+                color: 'white',
+                border: 'none',
+                fontSize: isMobile ? '22px' : '24px',
+                fontWeight: '700',
+                cursor: 'pointer',
+                boxShadow: '0 4px 12px rgba(15,76,117,0.35)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'transform 0.15s',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.08)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+            >
+              {currentUser?.isAdmin ? '🐞' : '💬'}
+            </button>
+          )}
+
           {/* Bottom Navigation — 모바일 앱 느낌 (상단 nav 유지, 추가 접근 경로) */}
           {isMobile && isLoggedIn && (() => {
             const navItems = [
