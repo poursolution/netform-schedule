@@ -14446,6 +14446,26 @@ tr.suppressed td.fname{color:#64748b;}
             };
             const updateRowStatus = async (assignee, newStatus) => {
               if (isQuarterClosed) { alert('분기 마감 상태 — 수정 불가. [🔓 마감 해제] 후 재시도.'); return; }
+              // 검증 강제력: needs_review 상태의 담당자는 confirmed 로 승격 불가
+              //   → 미검증 건이 정산 파이프라인에 올라가는 것 차단
+              if (newStatus === 'confirmed') {
+                const row = rows.find(r => r.assignee === assignee);
+                const unreviewed = (row?.items || []).filter(it => {
+                  if (it.reason === 'cancelled_notice') return false;
+                  if (['loss','vendor_self_pt','self_sales','draw_support_excluded'].includes(it.reason)) return false;
+                  if (it.result === '감리') return false;
+                  const pt = ptSchedules.find(p => p.id === it.ptId);
+                  if (!pt) return false;
+                  const hasEvidence = pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0;
+                  const kaptVerified = pt.kaptVerified?.status === 'verified';
+                  const manualVerified = pt.settlement?.[assignee]?.manualVerified;
+                  return !(kaptVerified || hasEvidence || manualVerified);
+                });
+                if (unreviewed.length > 0) {
+                  alert(`⚠ 검증 강제 차단\n\n${assignee} 담당 건 중 검증 미완 ${unreviewed.length}건 있음:\n\n${unreviewed.slice(0, 5).map(i => `- ${i.siteName}`).join('\n')}${unreviewed.length > 5 ? `\n... 외 ${unreviewed.length - 5}건` : ''}\n\nK-APT 검증 · 잔디 증빙 · 관리자 수동 승인 중 하나를 먼저 처리해주세요.\n(⚠ 미검증 탭의 [✓ 전체 수동 승인] 일괄 처리 가능)`);
+                  return;
+                }
+              }
               try {
                 await database.ref(`quarterlySettlements/${monthlySettlementMonth}/perAssignee/${assignee}/status`).set(newStatus);
                 setMonthlySettlementData(prev => prev ? ({
@@ -14636,6 +14656,33 @@ tr.suppressed td.fname{color:#64748b;}
                         </span>
                         <span style={{ color: '#94a3b8' }}>생성: {(totals.generatedAt || '').slice(0, 16).replace('T', ' ')} · {totals.generatedBy}</span>
                       </div>
+
+                      {/* 신뢰도 70% 미만 경고 + 액션 배너 */}
+                      {reliability.reliabilityPct < 70 && reliability.totalActive > 0 && (
+                        <div style={{ padding: '12px 14px', background: '#fef2f2', border: '1.5px solid #fca5a5', borderRadius: 8, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <div style={{ fontSize: 24 }}>⚠</div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: '#991b1b', marginBottom: 2 }}>신뢰도 낮음 — 리포트 생성·발송 전 반드시 점검</div>
+                            <div style={{ fontSize: 11, color: '#b91c1c', lineHeight: 1.6 }}>
+                              미검증 {reliability.issues.unverified}건 · 결과없음 {reliability.issues.noResult}건
+                              {reliability.issues.cancelled > 0 && ` · 취소공고 ${reliability.issues.cancelled}건`}
+                              {' — '}검증 완료율 <b>{reliability.reliabilityPct}%</b> (권장: 90% 이상)
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setShowMonthlySettlement(false);
+                              setShowPerformance(true);
+                              setShowDashboard(false);
+                              setShowMeetingView(false);
+                              setShowSalesView(false);
+                              setShowMyPage(false);
+                              setSiteListTab('unverified');
+                            }}
+                            style={{ padding: '8px 14px', borderRadius: 6, border: 'none', background: '#dc2626', color: 'white', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          >⚠ 미검증 탭으로 이동</button>
+                        </div>
+                      )}
                     </>
                   )}
 
@@ -16575,26 +16622,47 @@ tr.suppressed td.fname{color:#64748b;}
                     <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>아직 기록된 이벤트가 없습니다.</div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {activityLog.map(log => (
-                        <div key={log.id} style={{ padding: '8px 12px', background: '#f8fafc', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: eventColor[log.event] || '#64748b', minWidth: 130 }}>
-                            {eventLabel[log.event] || log.event}
-                          </span>
-                          <span style={{ flex: 1, fontSize: 11, color: '#475569' }}>
-                            {log.siteName && <b>{log.siteName}</b>}
-                            {log.assignee && <span> · {log.assignee}</span>}
-                            {log.result && <span> · 결과 <b style={{ color: '#2563eb' }}>{log.result}</b></span>}
-                            {log.quarterKey && <b> {log.quarterKey}</b>}
-                            {log.reportVersion && <span> · v{log.reportVersion}</span>}
-                          </span>
-                          <span style={{ fontSize: 10, color: '#94a3b8', whiteSpace: 'nowrap' }}>
-                            {log.by}
-                          </span>
-                          <span style={{ fontSize: 10, color: '#94a3b8', whiteSpace: 'nowrap' }}>
-                            {(log.at || '').slice(5, 16).replace('T', ' ')}
-                          </span>
-                        </div>
-                      ))}
+                      {activityLog.map(log => {
+                        // 의미 요약 문장 생성 — 읽기 쉬운 형태로
+                        const summarize = () => {
+                          const who = log.by || '-';
+                          switch (log.event) {
+                            case 'result_input':
+                              return `${who} → ${log.siteName || '-'} / ${log.assignee || '-'} 결과 [${log.result || '-'}] 입력`;
+                            case 'settlement_requested':
+                              return `${who} → ${log.siteName || '-'} / ${log.assignee || '-'} 정산요청`;
+                            case 'settlement_completed':
+                              return `${who} → ${log.siteName || '-'} / ${log.assignee || '-'} 정산완료${log.amount ? ` (${log.amount.toLocaleString('ko-KR')}원)` : ''}`;
+                            case 'quarter_closed':
+                              return `${who} → ${log.quarterKey || '-'} 분기 마감${log.warnings?.length ? ` (경고 ${log.warnings.length})` : ''}`;
+                            case 'quarter_reopened':
+                              return `${who} → ${log.quarterKey || '-'} 분기 마감 해제`;
+                            case 'final_confirmed':
+                              return `${who} → ${log.quarterKey || '-'} / ${log.assignee || '-'} 최종 확정`;
+                            case 'manual_verified':
+                              return `${who} → ${log.siteName || '-'} / ${log.assignee || '-'} 수동 검증 승인`;
+                            case 'candidate_selected':
+                              return `${who} → ${log.siteName || '-'} K-APT 후보 선택 (bidNum ${log.bidNum || '-'})`;
+                            case 'report_sent':
+                              return `${who} → ${log.quarterKey || '-'}${log.assignee ? ' / ' + log.assignee : ''} 리포트 발송${log.reportVersion ? ` (v${log.reportVersion})` : ''}${log.amount ? ` ${log.amount.toLocaleString('ko-KR')}원` : ''}${log.status ? ` [${log.status}]` : ''}`;
+                            default:
+                              return `${who} → ${log.event}`;
+                          }
+                        };
+                        return (
+                          <div key={log.id} style={{ padding: '8px 12px', background: '#f8fafc', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: eventColor[log.event] || '#64748b', minWidth: 110, flexShrink: 0 }}>
+                              {eventLabel[log.event] || log.event}
+                            </span>
+                            <span style={{ flex: 1, fontSize: 11, color: '#1e293b' }}>
+                              {summarize()}
+                            </span>
+                            <span style={{ fontSize: 10, color: '#94a3b8', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                              {(log.at || '').slice(5, 16).replace('T', ' ')}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
 
@@ -16725,6 +16793,51 @@ tr.suppressed td.fname{color:#64748b;}
               return { reason: k, count: v, pct };
             }).sort((a, b) => b.count - a.count);
 
+            // 자동 인사이트 생성 — 데이터에서 주목할 패턴 자동 감지
+            const insights = (() => {
+              const ins = [];
+              // 1) 전체 승률 변화 (±5%p 이상)
+              if (prevTotal > 0 && Math.abs(rateDelta) >= 5) {
+                if (rateDelta >= 5) {
+                  ins.push({ type: 'good', text: `전체 승률 ${rateDelta}%p 상승 (${prevRate}% → ${curRate}%) — 긍정 트렌드` });
+                } else {
+                  ins.push({ type: 'bad', text: `전체 승률 ${Math.abs(rateDelta)}%p 하락 (${prevRate}% → ${curRate}%) — 원인 분석 필요` });
+                }
+              }
+              // 2) 공종별 취약점 (승률 40% 미만 + 3건 이상)
+              workTypeRanked.filter(w => w.total >= 3 && w.winRate < 40).forEach(w => {
+                ins.push({ type: 'bad', text: `[${w.cat}] 공종 승률 ${w.winRate}% (${w.win}/${w.total}) — 약점 영역, 전략 개선 필요` });
+              });
+              // 3) 공종별 강점 (승률 70% 이상 + 3건 이상)
+              workTypeRanked.filter(w => w.total >= 3 && w.winRate >= 70).forEach(w => {
+                ins.push({ type: 'good', text: `[${w.cat}] 공종 승률 ${w.winRate}% (${w.win}/${w.total}) — 강점 영역, 집중 공략 가능` });
+              });
+              // 4) 담당자별 이상치 (승률 20%p 이상 차이)
+              const avgWinRate = totalWin + totalLose > 0 ? Math.round(totalWin / (totalWin + totalLose + totalDraw) * 100) : 0;
+              assigneeRanked.filter(r => (r.win + r.lose) >= 3).forEach(r => {
+                const diff = r.winRate - avgWinRate;
+                if (diff >= 20) ins.push({ type: 'good', text: `${r.name} 승률 ${r.winRate}% (평균 +${diff}%p) — 우수 성과` });
+                if (diff <= -20) ins.push({ type: 'bad', text: `${r.name} 승률 ${r.winRate}% (평균 ${diff}%p) — 개인 지원·코칭 검토` });
+              });
+              // 5) 공법 경쟁 (POUR/CNC 승률 50% 미만)
+              Object.entries(byOurTech).forEach(([tag, v]) => {
+                const total = v.win + v.lose;
+                if (total < 3 || tag === '기타') return;
+                const rate = Math.round(v.win / total * 100);
+                if (rate < 50) ins.push({ type: 'bad', text: `${tag} 공법 승률 ${rate}% (${v.win}/${total}) — 타사 경쟁력 점검 필요` });
+                if (rate >= 75) ins.push({ type: 'good', text: `${tag} 공법 승률 ${rate}% (${v.win}/${total}) — 우리 주력 공법` });
+              });
+              // 6) 패배 원인 TOP1 (40% 이상)
+              if (lossReasonRanked.length > 0 && lossReasonRanked[0].pct >= 40) {
+                ins.push({ type: 'bad', text: `패배 원인 TOP: "${lossReasonRanked[0].reason}" ${lossReasonRanked[0].pct}% — 전사 대응 필요` });
+              }
+              // 7) 패배 건 자체가 너무 적으면 데이터 부족 주의
+              if (totalLose < 3 && totalWin + totalLose > 0) {
+                ins.push({ type: 'info', text: `패배 ${totalLose}건으로 원인 분석 표본 부족 — 다음 분기 누적 필요` });
+              }
+              return ins;
+            })();
+
             return (
               <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 10300, padding: '20px 0', overflowY: 'auto' }}
                 onClick={(e) => { if (e.target === e.currentTarget) setShowAnalysisReport(false); }}>
@@ -16788,6 +16901,27 @@ tr.suppressed td.fname{color:#64748b;}
                       <span style={{ marginLeft: 'auto', color: rateDelta >= 0 ? '#16a34a' : '#dc2626', fontWeight: 700 }}>
                         승률 {rateDelta >= 0 ? '상승' : '하락'} {Math.abs(rateDelta)}%p · 건수 {curTotal - prevTotal >= 0 ? '+' : ''}{curTotal - prevTotal}
                       </span>
+                    </div>
+                  )}
+
+                  {/* 🤖 자동 인사이트 — 데이터 기반 해석 */}
+                  {insights.length > 0 && (
+                    <div style={{ marginBottom: 16, padding: 14, background: 'linear-gradient(135deg, #f8fafc 0%, #ecfdf5 100%)', border: '1.5px solid #a7f3d0', borderRadius: 10 }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: '#065f46', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>🤖 자동 인사이트</span>
+                        <span style={{ fontSize: 10, fontWeight: 600, color: '#6b7280' }}>({insights.length}개 감지)</span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {insights.map((ins, i) => (
+                          <div key={i} style={{ padding: '6px 10px', background: 'white', borderRadius: 6, borderLeft: `3px solid ${ins.type === 'good' ? '#16a34a' : ins.type === 'bad' ? '#dc2626' : '#64748b'}`, fontSize: 11, color: '#1e293b' }}>
+                            <span style={{ marginRight: 6 }}>{ins.type === 'good' ? '🟢' : ins.type === 'bad' ? '🔴' : '🔵'}</span>
+                            {ins.text}
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: 10, color: '#6b7280', marginTop: 8 }}>
+                        ※ 규칙 기반 자동 감지 (승률 ±5%p · 공종 승률 40·70% · 담당자 평균 ±20%p · 공법 50·75% · 패배 사유 40% 기준)
+                      </div>
                     </div>
                   )}
 
