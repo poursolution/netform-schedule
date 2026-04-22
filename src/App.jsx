@@ -601,6 +601,11 @@ import { sendJandiNotification } from './utils/jandi.js';
       const [showKaptModal, setShowKaptModal] = useState(false);
       // 개별 PT 검증 상태: { [cardId+assignee]: 'busy'|'done' }
       const [kaptVerifyingId, setKaptVerifyingId] = useState(null);
+      // K-APT 수동검증 모달 state
+      // 단계: 'input'(공고번호 붙여넣기) → 'verifying'(백엔드 판정) → 'result'(결과 표시)
+      const [kaptVerifyModal, setKaptVerifyModal] = useState(null);
+      //  { stage, scheduleId, assignee, siteName, workType, manager, date, bidNumInput, result }
+      const [kaptVerifyBidInput, setKaptVerifyBidInput] = useState('');
 
       // 예외 신청 승인 큐 (admin)
       const [showExceptionQueueModal, setShowExceptionQueueModal] = useState(false);
@@ -9369,100 +9374,33 @@ tr.suppressed td.fname{color:#64748b;}
                                               return (
                                                 <button
                                                   disabled={busy}
-                                                  onClick={async (e) => {
+                                                  onClick={(e) => {
                                                     e.stopPropagation();
                                                     if (busy) return;
-                                                    if (isVerified && !window.confirm(`"${card.siteName}" 이미 검증됨 (${kv.matchedValue || kv.matchedBy || ''}). 다시 검증할까요?`)) return;
-                                                    setKaptVerifyingId(vkey);
-                                                    try {
-                                                      const r = await verifyKaptForPt({
-                                                        scheduleId: card.id,
-                                                        assignee: card.manager,
-                                                        siteName: card.siteName,
-                                                        workType: s?.workType,
-                                                        bidNo: s?.bidNo || '',
-                                                        ptDate: card.date,
-                                                        by: currentUser?.name || 'manual',
-                                                      });
-                                                      if (r.status === 'verified') {
-                                                        alert(`✅ 검증 통과\n\n공법: ${r.matchedValue || r.matchedBy}\n${r.message || ''}`);
-                                                      } else if (r.status === 'needs_review' && r.reason === 'site_not_found') {
-                                                        // 단지명을 못 찾은 경우: 21line/K-APT 직접 검색 유도 + bidNum 수동 입력
-                                                        const brandGuess = (card.siteName || '').replace(/\s+/g, '').replace(/아파트|APT/gi, '').slice(-5);
-                                                        const msg = `⚠ 단지명으로 자동 검색 실패 (site_not_found)\n\n원인: 변형 검색 시도했으나 K-APT·data.go.kr 매칭 0건.\n\n해결 방법:\n1. 확인 버튼 → 21line.co.kr 새 탭 오픈 ("${brandGuess}" 검색)\n2. 공고번호(17자리 숫자 or kg2b_XXX) 찾으면 아래 입력\n3. 취소 → 나중에 PT 수정 모달에서 저장\n\n공고번호 직접 입력하시겠습니까?`;
-                                                        if (window.confirm(msg)) {
-                                                          window.open(`https://www.21line.co.kr/conty/?cd=first`, '_blank');
-                                                          const bidNumInput = window.prompt(`공고번호 입력 (예: 20260401144113799 또는 kg2b_128097)\n\n빈 값이면 취소됩니다.`, s?.bidNo || '');
-                                                          if (bidNumInput && bidNumInput.trim()) {
-                                                            const trimmed = bidNumInput.trim();
-                                                            // PT 데이터에 bidNo 저장 + 재검증
-                                                            setPtSchedules(prev => prev.map(ps => ps.id === card.id ? { ...ps, bidNo: trimmed } : ps));
-                                                            setDirtyScheduleIds(prev => new Set([...prev, card.id]));
-                                                            setHasResultChanges(true);
-                                                            // 입력된 bidNum 으로 즉시 재검증
-                                                            try {
-                                                              const r2 = await verifyKaptForPt({
-                                                                scheduleId: card.id,
-                                                                assignee: card.manager,
-                                                                siteName: card.siteName,
-                                                                workType: s?.workType,
-                                                                bidNo: trimmed,
-                                                                ptDate: card.date,
-                                                                by: currentUser?.name || 'manual',
-                                                              });
-                                                              if (r2.status === 'verified') {
-                                                                alert(`✅ 재검증 통과\n\n공고번호: ${trimmed}\n공법: ${r2.matchedValue || r2.matchedBy}\n${r2.message || ''}`);
-                                                              } else {
-                                                                alert(`⚠ 공고번호 ${trimmed} 검증 실패\n\n사유: ${r2.reason || ''}\n${r2.message || ''}\n\n공고번호가 맞는지 확인해주세요.`);
-                                                              }
-                                                            } catch (e2) {
-                                                              alert(`❌ 재검증 오류: ${e2.message}`);
-                                                            }
-                                                          }
-                                                        }
-                                                      } else if (r.status === 'needs_review' && r.reason === 'bid_not_found') {
-                                                        // 공고번호로 조회 했으나 K-APT / data.go.kr 에 없음 → 공고번호 재입력 유도
-                                                        const curBid = s?.bidNo || '';
-                                                        const msg = `⚠ 공고번호 ${curBid ? `'${curBid}' ` : ''}K-APT 조회 실패 (bid_not_found)\n\n원인:\n  • 입력된 공고번호가 틀림\n  • K-APT/data.go.kr 에 아직 등재되지 않음 (당일 공고는 다음날 반영)\n  • 공고가 취소·철회됨\n\n해결:\n  1. 확인 → 21line.co.kr 새 탭 열어 단지명으로 재검색\n  2. 올바른 공고번호(17~18자리 숫자 or kg2b_XXX) 입력 → 즉시 재검증\n  3. 취소 → 나중에 수동 수정\n\n공고번호 재입력하시겠습니까?`;
-                                                        if (window.confirm(msg)) {
-                                                          const brandGuess = (card.siteName || '').replace(/\s+/g, '').replace(/아파트|APT/gi, '').slice(-5);
-                                                          window.open(`https://www.21line.co.kr/conty/?cd=first`, '_blank');
-                                                          const bidNumInput = window.prompt(`공고번호 재입력 (예: 20260401144113799 또는 kg2b_128097)\n\n단지명 힌트: "${brandGuess}"\n빈 값이면 취소됩니다.`, curBid);
-                                                          if (bidNumInput && bidNumInput.trim() && bidNumInput.trim() !== curBid) {
-                                                            const trimmed = bidNumInput.trim();
-                                                            setPtSchedules(prev => prev.map(ps => ps.id === card.id ? { ...ps, bidNo: trimmed } : ps));
-                                                            setDirtyScheduleIds(prev => new Set([...prev, card.id]));
-                                                            setHasResultChanges(true);
-                                                            try {
-                                                              const r3 = await verifyKaptForPt({
-                                                                scheduleId: card.id,
-                                                                assignee: card.manager,
-                                                                siteName: card.siteName,
-                                                                workType: s?.workType,
-                                                                bidNo: trimmed,
-                                                                ptDate: card.date,
-                                                                by: currentUser?.name || 'manual',
-                                                              });
-                                                              if (r3.status === 'verified') {
-                                                                alert(`✅ 재검증 통과\n\n공고번호: ${trimmed}\n공법: ${r3.matchedValue || r3.matchedBy}\n${r3.message || ''}`);
-                                                              } else {
-                                                                alert(`⚠ 공고번호 ${trimmed} 검증 실패\n\n사유: ${r3.reason || ''}\n${r3.message || ''}`);
-                                                              }
-                                                            } catch (e3) {
-                                                              alert(`❌ 재검증 오류: ${e3.message}`);
-                                                            }
-                                                          }
-                                                        }
-                                                      } else if (r.status === 'needs_review') {
-                                                        alert(`⚠ 확인 필요\n\n사유: ${r.reason || ''}\n${r.message || ''}`);
-                                                      } else {
-                                                        alert(`결과: ${r.status}\n${JSON.stringify(r).slice(0, 300)}`);
+                                                    // 먼저 잔디 evidenceFiles 있으면 → "이미 검증됨" 안내하고 종료
+                                                    if (s?.evidenceFiles && Object.keys(s.evidenceFiles).length > 0) {
+                                                      const activeFiles = Object.entries(s.evidenceFiles).filter(([, f]) => !f?.suppressed);
+                                                      if (activeFiles.length > 0) {
+                                                        const fileList = activeFiles.slice(0, 5).map(([, f]) => `• ${f.filename || '(이름없음)'}`).join('\n');
+                                                        const more = activeFiles.length > 5 ? `\n...외 ${activeFiles.length - 5}건` : '';
+                                                        alert(`✅ 잔디 공고문으로 이미 검증됨\n\n연결된 파일 ${activeFiles.length}개:\n${fileList}${more}\n\n파일 상세는 📎 배지를 눌러 확인하세요.`);
+                                                        return;
                                                       }
-                                                    } catch (err) {
-                                                      alert(`❌ 오류: ${err.message}`);
-                                                    } finally {
-                                                      setKaptVerifyingId(null);
                                                     }
+                                                    // K-APT bidList 새 탭 자동 오픈 (단지명 prefill)
+                                                    const kaptSearchUrl = `https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(card.siteName || '')}`;
+                                                    window.open(kaptSearchUrl, '_blank');
+                                                    // 입력 모달 오픈
+                                                    setKaptVerifyBidInput(s?.bidNo || '');
+                                                    setKaptVerifyModal({
+                                                      stage: 'input',
+                                                      scheduleId: card.id,
+                                                      manager: card.manager,
+                                                      siteName: card.siteName,
+                                                      workType: s?.workType,
+                                                      date: card.date,
+                                                      currentBidNo: s?.bidNo || '',
+                                                    });
                                                   }}
                                                   style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: busy ? '#e5e7eb' : isVerified ? '#dcfce7' : '#f1f5f9', color: busy ? '#6b7280' : isVerified ? '#166534' : '#475569', border: '1px solid ' + (isVerified ? '#86efac' : '#cbd5e1'), cursor: busy ? 'wait' : 'pointer' }}
                                                   title={isVerified ? `이미 검증됨: ${kv.matchedValue || ''}` : 'K-APT 개별 검증 실행'}
@@ -13030,6 +12968,180 @@ tr.suppressed td.fname{color:#64748b;}
                 <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'center' }}>
                   <button onClick={() => setShowBriefingExport(false)} style={{ padding: '10px 30px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', fontSize: '14px', fontWeight: '600', color: '#64748b', cursor: 'pointer' }}>닫기</button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* K-APT 수동 검증 모달 — 사용자가 직접 K-APT 에서 공고 찾아 공고번호 붙여넣기 */}
+          {kaptVerifyModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10100, padding: '20px' }}
+              onClick={(e) => { if (e.target === e.currentTarget && kaptVerifyModal.stage !== 'verifying') { setKaptVerifyModal(null); setKaptVerifyBidInput(''); } }}>
+              <div style={{ background: 'white', borderRadius: '12px', padding: '24px', width: '560px', maxWidth: '95%', maxHeight: '90vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
+                {/* Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+                  <div>
+                    <div style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', marginBottom: '4px', letterSpacing: '0.05em' }}>K-APT 검증</div>
+                    <h2 style={{ fontSize: '17px', fontWeight: '700', margin: 0, color: '#1e293b' }}>{kaptVerifyModal.siteName}</h2>
+                    <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>{kaptVerifyModal.manager} · {kaptVerifyModal.date}</div>
+                  </div>
+                  {kaptVerifyModal.stage !== 'verifying' && (
+                    <button onClick={() => { setKaptVerifyModal(null); setKaptVerifyBidInput(''); }} style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer', color: '#94a3b8' }}>×</button>
+                  )}
+                </div>
+
+                {/* Stage: input — 공고번호 붙여넣기 */}
+                {kaptVerifyModal.stage === 'input' && (
+                  <>
+                    <div style={{ padding: '12px 14px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', fontSize: '12px', color: '#1e40af', marginBottom: '16px', lineHeight: '1.6' }}>
+                      <div style={{ fontWeight: '700', marginBottom: '6px' }}>📋 검증 방법</div>
+                      <div>① K-APT 검색 페이지가 새 탭에 열렸습니다. "{kaptVerifyModal.siteName}" 단지로 검색하세요.</div>
+                      <div>② 해당 공고를 찾은 후 <b>공고번호</b>를 복사 (예: 20260401144113799 또는 kg2b_128097)</div>
+                      <div>③ 아래 칸에 붙여넣고 [자동 판정] 클릭</div>
+                    </div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px' }}>공고번호 또는 K-APT 상세페이지 URL</label>
+                    <input
+                      type="text"
+                      value={kaptVerifyBidInput}
+                      onChange={(e) => setKaptVerifyBidInput(e.target.value)}
+                      placeholder="20260401144113799 또는 kg2b_128097 또는 bidDetail URL 전체"
+                      autoFocus
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '14px', fontFamily: 'monospace', boxSizing: 'border-box' }}
+                    />
+                    <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '6px' }}>URL 붙여넣으시면 공고번호 자동 추출됩니다.</div>
+
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
+                      <button
+                        onClick={() => { window.open(`https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(kaptVerifyModal.siteName || '')}`, '_blank'); }}
+                        style={{ flex: '0 0 auto', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}
+                      >K-APT 다시 열기</button>
+                      <button
+                        onClick={() => { setKaptVerifyModal(null); setKaptVerifyBidInput(''); }}
+                        style={{ flex: '1', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}
+                      >취소</button>
+                      <button
+                        disabled={!kaptVerifyBidInput.trim()}
+                        onClick={async () => {
+                          // URL 에서 bidNum 추출
+                          let input = kaptVerifyBidInput.trim();
+                          const urlMatch = input.match(/bidNum=([a-z0-9_]+)/i) || input.match(/bidcode=(\d+)/i);
+                          if (urlMatch) input = urlMatch[1].startsWith('kg2b_') || /^\d+$/.test(urlMatch[1]) ? urlMatch[1] : 'kg2b_' + urlMatch[1];
+                          // 유효성 체크 (숫자 17~18자리 또는 kg2b_숫자)
+                          if (!/^(\d{14,20}|kg2b_\d+)$/.test(input)) {
+                            alert(`공고번호 형식이 맞지 않습니다:\n  "${input}"\n\n17~18자리 숫자 또는 kg2b_XXX 형식이어야 합니다.`);
+                            return;
+                          }
+                          // verifying 상태로 전환 + Worker 호출
+                          setKaptVerifyModal(m => ({ ...m, stage: 'verifying', bidNum: input }));
+                          try {
+                            const r = await verifyKaptForPt({
+                              scheduleId: kaptVerifyModal.scheduleId,
+                              assignee: kaptVerifyModal.manager,
+                              siteName: kaptVerifyModal.siteName,
+                              workType: kaptVerifyModal.workType,
+                              bidNo: input,
+                              ptDate: kaptVerifyModal.date,
+                              by: currentUser?.name || 'manual',
+                            });
+                            // PT bidNo 갱신 (입력된 값 저장)
+                            if (input !== kaptVerifyModal.currentBidNo) {
+                              setPtSchedules(prev => prev.map(ps => ps.id === kaptVerifyModal.scheduleId ? { ...ps, bidNo: input } : ps));
+                              setDirtyScheduleIds(prev => new Set([...prev, kaptVerifyModal.scheduleId]));
+                              setHasResultChanges(true);
+                            }
+                            setKaptVerifyModal(m => ({ ...m, stage: 'result', result: r }));
+                          } catch (err) {
+                            setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'exception', message: err.message } }));
+                          }
+                        }}
+                        style={{ flex: '1.2', padding: '10px', borderRadius: '8px', border: 'none', background: kaptVerifyBidInput.trim() ? '#2563eb' : '#cbd5e1', color: 'white', fontSize: '13px', fontWeight: '700', cursor: kaptVerifyBidInput.trim() ? 'pointer' : 'not-allowed' }}
+                      >자동 판정 →</button>
+                    </div>
+                  </>
+                )}
+
+                {/* Stage: verifying — 판정 중 */}
+                {kaptVerifyModal.stage === 'verifying' && (
+                  <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>⏳</div>
+                    <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '6px' }}>K-APT 공고 분석 중...</div>
+                    <div style={{ fontSize: '12px', color: '#64748b' }}>공고번호 {kaptVerifyModal.bidNum} · 최대 60초 소요</div>
+                  </div>
+                )}
+
+                {/* Stage: result — 결과 표시 + results 자동 업데이트 confirm */}
+                {kaptVerifyModal.stage === 'result' && (() => {
+                  const r = kaptVerifyModal.result || {};
+                  const isVerifiedOk = r.status === 'verified';
+                  const isNeedsReview = r.status === 'needs_review';
+                  const isError = r.status === 'error';
+                  const matchedBy = r.matchedBy;
+                  const matchedValue = r.matchedValue;
+                  // 판정 → 실적 결과 매핑
+                  //   matchedBy === 'technology'/'patent'/'patent_name' → 우리 공법 검출 = '승' 후보
+                  //   (타사 공법 함께 있으면 '무') — r.competitorPatents/r.competitorTechs 확인
+                  const hasCompetitor = (r.competitorPatents?.length || 0) + (r.competitorTechs?.length || 0) > 0;
+                  const suggested = isVerifiedOk ? (hasCompetitor ? '무' : '승') : null;
+                  return (
+                    <>
+                      {isVerifiedOk && (
+                        <div style={{ padding: '14px 16px', background: suggested === '승' ? '#dcfce7' : '#fef9c3', border: `1.5px solid ${suggested === '승' ? '#86efac' : '#fde047'}`, borderRadius: '10px', marginBottom: '14px' }}>
+                          <div style={{ fontSize: '13px', fontWeight: '800', color: suggested === '승' ? '#166534' : '#a16207', marginBottom: '6px' }}>
+                            {suggested === '승' ? '✅ 우리 공법 단독 검출 → 판정: 승' : '🟡 우리 + 타사 공법 혼재 → 판정: 무승부'}
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#1e293b', lineHeight: '1.6' }}>
+                            <div>• 매칭 기준: <b>{matchedBy === 'technology' ? `공법명 [${matchedValue}]` : matchedBy === 'patent' ? `특허번호 [${matchedValue}]` : matchedBy === 'patent_name' ? `특허명 일치` : matchedBy}</b></div>
+                            {(r.ourPatents?.length || 0) > 0 && <div>• 확인된 우리 특허: {r.ourPatents.slice(0, 5).join(', ')}{r.ourPatents.length > 5 ? ` 외 ${r.ourPatents.length - 5}건` : ''}</div>}
+                            {hasCompetitor && <div>• 타사 감지: {[...(r.competitorTechs || []), ...(r.competitorPatents || [])].slice(0, 5).join(', ')}</div>}
+                          </div>
+                        </div>
+                      )}
+                      {isNeedsReview && (
+                        <div style={{ padding: '14px 16px', background: '#fef3c7', border: '1.5px solid #fcd34d', borderRadius: '10px', marginBottom: '14px' }}>
+                          <div style={{ fontSize: '13px', fontWeight: '800', color: '#92400e', marginBottom: '6px' }}>⚠ 자동 판정 불가 — 수동 확인 필요</div>
+                          <div style={{ fontSize: '12px', color: '#92400e' }}>사유: {r.reason || '알 수 없음'}</div>
+                          {r.message && <div style={{ fontSize: '12px', color: '#92400e', marginTop: '4px' }}>{r.message}</div>}
+                        </div>
+                      )}
+                      {isError && (
+                        <div style={{ padding: '14px 16px', background: '#fee2e2', border: '1.5px solid #fecaca', borderRadius: '10px', marginBottom: '14px' }}>
+                          <div style={{ fontSize: '13px', fontWeight: '800', color: '#991b1b', marginBottom: '6px' }}>❌ 오류</div>
+                          <div style={{ fontSize: '12px', color: '#991b1b' }}>{r.message || r.reason}</div>
+                        </div>
+                      )}
+
+                      {/* 결과 → 실적 자동 반영 (승/무일 때만) */}
+                      {suggested && (
+                        <div style={{ padding: '12px', background: '#f8fafc', borderRadius: '8px', marginBottom: '14px', fontSize: '12px', color: '#475569', lineHeight: '1.6' }}>
+                          주담당자 <b>{kaptVerifyModal.manager}</b> 결과를 <b style={{ color: suggested === '승' ? '#16a34a' : '#a16207' }}>[{suggested}]</b>으로 자동 저장하시겠습니까?
+                          <br /><span style={{ fontSize: '11px', color: '#94a3b8' }}>저장 후에도 수동 수정 가능합니다.</span>
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          onClick={() => { setKaptVerifyModal(null); setKaptVerifyBidInput(''); }}
+                          style={{ flex: '1', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}
+                        >닫기</button>
+                        {suggested && (
+                          <button
+                            onClick={() => {
+                              // results[주담당자] 에 자동 저장
+                              const assignee = kaptVerifyModal.manager;
+                              const editKey = `${kaptVerifyModal.scheduleId}_${assignee}`;
+                              setEditingResults(prev => ({ ...prev, [editKey]: suggested }));
+                              setDirtyScheduleIds(prev => new Set([...prev, kaptVerifyModal.scheduleId]));
+                              setHasResultChanges(true);
+                              setKaptVerifyModal(null);
+                              setKaptVerifyBidInput('');
+                              alert(`✅ 결과 [${suggested}] 로 자동 저장되었습니다.\n화면 상단에 '저장' 버튼이 나타나면 눌러서 확정하세요.`);
+                            }}
+                            style={{ flex: '1.5', padding: '10px', borderRadius: '8px', border: 'none', background: suggested === '승' ? '#16a34a' : '#d97706', color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}
+                          >[{suggested}] 으로 자동 저장</button>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
           )}
