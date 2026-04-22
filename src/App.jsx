@@ -9368,16 +9368,34 @@ h2{font-size:13px;color:#64748b;margin:0 0 20px;font-weight:500;}
                                               const badgeBorder = hasSuppressed ? '#fcd34d' : '#bfdbfe';
                                               return (
                                                 <button
-                                                  onClick={(e) => {
+                                                  onClick={async (e) => {
                                                     e.stopPropagation();
                                                     const siteName = card.siteName || '';
-                                                    const rows = files.map(f => {
+                                                    // 먼저 각 파일의 실제 다운로드 URL 해결 (Firebase Storage SDK)
+                                                    // 기존 Console URL 은 admin 전용이라 일반 사용자 접근 불가 → 토큰 포함 signed URL 로 대체
+                                                    const fileUrls = await Promise.all(files.map(async f => {
+                                                      if (!f.storagePath) return { f, url: null, error: 'no_path' };
+                                                      try {
+                                                        if (!storage) return { f, url: null, error: 'storage_unavailable' };
+                                                        const ref = storage.ref(f.storagePath);
+                                                        const url = await ref.getDownloadURL();
+                                                        return { f, url, error: null };
+                                                      } catch (err) {
+                                                        // 권한 부족 or 파일 없음 — evidence 노드의 signedReadUrl fallback 시도
+                                                        try {
+                                                          const snap = await database.ref(`evidence/${f.fid}/signedReadUrl`).once('value');
+                                                          const fallback = snap.val();
+                                                          if (fallback) return { f, url: fallback, error: null };
+                                                        } catch {}
+                                                        return { f, url: null, error: err?.message || 'load_failed' };
+                                                      }
+                                                    }));
+                                                    const rows = fileUrls.map(({ f, url, error }) => {
                                                       const sizeKB = f.size ? (f.size / 1024).toFixed(1) + ' KB' : '-';
                                                       const seq = f.parsedSeq != null ? `#${f.parsedSeq}` : '';
                                                       const method = f.parsedMethod ? ` (${f.parsedMethod})` : '';
                                                       const score = f.matchScore != null ? `${(f.matchScore * 100).toFixed(0)}%` : '-';
                                                       const matchedAt = f.matchedAt ? new Date(f.matchedAt).toLocaleString('ko-KR') : '-';
-                                                      const storagePath = f.storagePath || '';
                                                       // 중복/재공고/구버전 배지 tags
                                                       const tags = [];
                                                       if (f.isRevision) tags.push('<span class="tag rev">🔄 재공고</span>');
@@ -9386,6 +9404,10 @@ h2{font-size:13px;color:#64748b;margin:0 0 20px;font-weight:500;}
                                                       if (f.sameContentAs && f.sameContentAs.length) tags.push(`<span class="tag dup">🔗 내용중복 ${f.sameContentAs.length}건</span>`);
                                                       if (f.suppressed) tags.push('<span class="tag sup">🔁 과거 PT 지원</span>');
                                                       const rowClass = f.suppressed ? ' class="suppressed"' : '';
+                                                      // 다운로드 링크 — 해결된 URL 있으면 바로 다운로드, 없으면 에러 표시
+                                                      const actionHtml = url
+                                                        ? `<a href="${url.replace(/"/g, '&quot;')}" target="_blank" download="${(f.filename || '').replace(/"/g, '&quot;')}">📥 다운로드</a>`
+                                                        : `<span class="err" title="${(error || 'unknown').replace(/"/g, '&quot;')}">✕ 열기 실패</span>`;
                                                       return `<tr${rowClass}>
   <td class="num">${seq}</td>
   <td class="fname" title="${(f.filename || '').replace(/"/g, '&quot;')}">${f.filename || '-'}${method}<div class="tags">${tags.join(' ')}</div></td>
@@ -9393,7 +9415,7 @@ h2{font-size:13px;color:#64748b;margin:0 0 20px;font-weight:500;}
   <td class="size">${sizeKB}</td>
   <td class="score">${score}</td>
   <td class="matched">${matchedAt}</td>
-  <td class="action"><a href="https://console.firebase.google.com/project/test-168a4/storage/test-168a4.firebasestorage.app/files/${encodeURIComponent(storagePath)}" target="_blank">Firebase에서 열기</a></td>
+  <td class="action">${actionHtml}</td>
 </tr>`;
                                                     }).join('');
                                                     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>공고문 첨부파일 — ${siteName}</title>
@@ -9411,8 +9433,9 @@ td.ext{color:#64748b;font-weight:700;font-size:11px;width:55px;}
 td.size{color:#64748b;font-size:12px;text-align:right;white-space:nowrap;width:80px;}
 td.score{color:#16a34a;font-weight:700;font-size:12px;width:55px;text-align:center;}
 td.matched{color:#64748b;font-size:11px;white-space:nowrap;width:140px;}
-td.action a{display:inline-block;padding:4px 10px;background:#2563eb;color:white;border-radius:5px;text-decoration:none;font-size:11px;font-weight:600;}
-td.action a:hover{background:#1d4ed8;}
+td.action a{display:inline-block;padding:4px 10px;background:#16a34a;color:white;border-radius:5px;text-decoration:none;font-size:11px;font-weight:600;}
+td.action a:hover{background:#15803d;}
+td.action .err{display:inline-block;padding:4px 10px;background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:5px;font-size:11px;font-weight:600;}
 tr:hover td{background:#fafbfc;}
 tr.suppressed td{background:#f8fafc;opacity:0.65;}
 tr.suppressed td.fname{color:#64748b;}
@@ -9432,7 +9455,7 @@ tr.suppressed td.fname{color:#64748b;}
   <thead><tr><th>순번</th><th>파일명</th><th>형식</th><th>크기</th><th>매칭</th><th>연결일시</th><th>열기</th></tr></thead>
   <tbody>${rows}</tbody>
 </table>
-<div class="foot">HWP/HWPX는 한글로 열어야 합니다. PDF는 브라우저에서 바로 보기 가능. Firebase 콘솔 접근 권한이 필요합니다.</div>
+<div class="foot">HWP/HWPX는 한글로 열어야 합니다. PDF는 브라우저에서 바로 보기 가능. 다운로드 링크는 Firebase Storage signed URL (관리자 계정 불필요).</div>
 </body></html>`;
                                                     const w = window.open('', '_blank', 'width=900,height=600,scrollbars=yes');
                                                     if (w) { w.document.write(html); w.document.close(); }
