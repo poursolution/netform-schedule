@@ -13938,6 +13938,67 @@ tr.suppressed td.fname{color:#64748b;}
             // 최종확정 요청 발송 (2라운드 시작)
             //  조건: 모든 담당자 자가확인 완료 + open reviewRequest 0건
             const canRequestFinal = rows.length > 0 && confirmedCount === rows.length && totalOpenReviews === 0;
+
+            // 관리자 일괄 최종확정 토글 (담당자 확인 건너뛰기 — 긴급 발송용)
+            const bulkFinalConfirm = async () => {
+              if (rows.length === 0) return;
+              const notFinal = rows.filter(r => !r._conf?.finalConfirmed);
+              if (notFinal.length === 0) {
+                // 이미 전원 최종확정 — 되돌리기 확인
+                if (!window.confirm(`전원 이미 최종확정 상태입니다.\n\n모든 ${rows.length}명의 최종확정을 해제하시겠습니까? (되돌리기)`)) return;
+                const updates = {};
+                const now = new Date().toISOString();
+                rows.forEach(r => {
+                  updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmed`] = false;
+                  updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmedAt`] = null;
+                  updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalUnconfirmedBy`] = currentUser?.name || 'admin';
+                  updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalUnconfirmedAt`] = now;
+                });
+                try {
+                  await database.ref().update(updates);
+                  alert(`전원 최종확정 해제됨 (${rows.length}명)`);
+                } catch (e) { alert('해제 실패: ' + e.message); }
+                return;
+              }
+              const msg = `⚠ 관리자 직권 일괄 최종확정\n\n담당자 확인 절차를 건너뛰고 ${notFinal.length}명을 관리자가 대신 최종확정 처리합니다.\n\n대상: ${notFinal.map(r => r.assignee).join(', ')}\n\n※ 담당자 개별 [최종 확정] 버튼 대신 사용하는 긴급용.\n   권장 흐름이 아니므로 신중히 진행해주세요.\n\n진행?`;
+              if (!window.confirm(msg)) return;
+              const updates = {};
+              const now = new Date().toISOString();
+              const adminName = currentUser?.name || 'admin';
+              notFinal.forEach(r => {
+                updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmed`] = true;
+                updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmedAt`] = now;
+                updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmedBy`] = `${adminName} (직권)`;
+                updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmMethod`] = 'admin-bulk';
+              });
+              try {
+                await database.ref().update(updates);
+                // admin 채널 알림 (이력 남기기)
+                if (jandiUrl) {
+                  try {
+                    await fetch(jandiUrl, {
+                      method: 'POST', mode: 'no-cors',
+                      headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        body: `⚡ ${monthlySettlementMonth} 일괄 최종확정 — 관리자 직권`,
+                        connectColor: '#dc2626',
+                        connectInfo: [{
+                          title: `${notFinal.length}명 일괄 최종확정 처리`,
+                          description: [
+                            `처리자: ${adminName}`,
+                            `대상: ${notFinal.map(r => r.assignee).join(', ')}`,
+                            `시각: ${now.slice(0, 16).replace('T', ' ')}`,
+                            '',
+                            '담당자 확인 절차를 건너뛴 긴급 처리입니다.',
+                          ].join('\n'),
+                        }],
+                      }),
+                    });
+                  } catch {}
+                }
+                alert(`✅ ${notFinal.length}명 일괄 최종확정 처리 완료`);
+              } catch (e) { alert('처리 실패: ' + e.message); }
+            };
             const requestFinalConfirmation = async () => {
               if (!canRequestFinal) { alert('모든 담당자 자가확인 완료 + 검증요청 0건 상태여야 합니다.'); return; }
               if (!window.confirm(`${rows.length}명 담당자에게 최종확정 요청을 발송합니다.\n\n이후 담당자가 "최종 확정" 누르면 김유림 발송 단계로 넘어갑니다. 진행?`)) return;
@@ -14104,6 +14165,12 @@ tr.suppressed td.fname{color:#64748b;}
                         title={canRequestFinal ? '담당자 최종확정 요청 발송 (2라운드)' : '모든 담당자 자가확인 완료 + 검증요청 0건 상태여야 함'}
                         style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: canRequestFinal ? '#7c3aed' : '#cbd5e1', color: 'white', fontSize: '12px', fontWeight: '700', cursor: canRequestFinal ? 'pointer' : 'not-allowed' }}
                       >📝 최종확정 요청 {finalConfirmedCount > 0 ? `(${finalConfirmedCount}/${rows.length})` : ''}</button>
+                      <button
+                        onClick={bulkFinalConfirm}
+                        disabled={monthlySettlementLoading || rows.length === 0}
+                        title={finalConfirmedCount === rows.length ? '전원 최종확정 해제 (되돌리기)' : '담당자 확인 건너뛰고 관리자가 직권으로 일괄 최종확정 (긴급용)'}
+                        style={{ padding: '6px 12px', borderRadius: '6px', border: finalConfirmedCount === rows.length ? '1px solid #ef4444' : 'none', background: finalConfirmedCount === rows.length ? '#fff1f2' : '#dc2626', color: finalConfirmedCount === rows.length ? '#991b1b' : 'white', fontSize: '12px', fontWeight: '700', cursor: rows.length === 0 ? 'not-allowed' : 'pointer' }}
+                      >{finalConfirmedCount === rows.length && rows.length > 0 ? '↺ 전체 해제' : '⚡ 전체 최종확정'}</button>
                     </div>
                   </div>
 
