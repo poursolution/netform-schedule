@@ -14193,9 +14193,108 @@ tr.suppressed td.fname{color:#64748b;}
             const finalConfirmedCount = rows.filter(r => r._conf?.finalConfirmed === true).length;
             const finalRequestedCount = rows.filter(r => r._conf?.finalRequestedAt).length;
 
+            // 데이터 검증 레이어 — 리포트 신뢰도 계산
+            //   각 담당자 items 중 검증완료 (calc.amount > 0, reason null, status=verified) 비율
+            //   이슈 리스트: 결과 없음 / 미검증 / 취소공고 / 주담 결정 대기 등
+            const reliability = (() => {
+              let verifiedCount = 0;
+              let totalActive = 0;
+              const issues = {
+                noResult: 0,           // 결과 미입력
+                unverified: 0,         // K-APT 미검증 + 증빙 없음
+                mainPending: 0,        // 주담 결과 대기 (지원자인데 주담 없음)
+                cancelled: 0,          // 취소공고
+                excluded: 0,           // 제외
+                duplicate: 0,          // 중복 PT (구버전)
+              };
+              for (const r of rows) {
+                for (const item of (r.items || [])) {
+                  totalActive++;
+                  if (!item.result) { issues.noResult++; continue; }
+                  if (item.reason === 'cancelled_notice') { issues.cancelled++; continue; }
+                  if (['loss','vendor_self_pt','self_sales','draw_support_excluded'].includes(item.reason)) { issues.excluded++; continue; }
+                  if (item.result === '감리') { verifiedCount++; continue; }  // 감리는 검증 불필요
+                  // 해당 PT 의 verification 상태 확인
+                  const pt = ptSchedules.find(p => p.id === item.ptId);
+                  if (!pt) continue;
+                  const hasEvidence = pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0;
+                  const kaptVerified = pt.kaptVerified?.status === 'verified';
+                  const manualVerified = pt.settlement?.[r.assignee]?.manualVerified;
+                  if (kaptVerified || hasEvidence || manualVerified) verifiedCount++;
+                  else issues.unverified++;
+                }
+              }
+              const reliabilityPct = totalActive > 0 ? Math.round(verifiedCount / totalActive * 100) : 100;
+              return { verifiedCount, totalActive, reliabilityPct, issues };
+            })();
+
             // 최종확정 요청 발송 (2라운드 시작)
             //  조건: 모든 담당자 자가확인 완료 + open reviewRequest 0건
             const canRequestFinal = rows.length > 0 && confirmedCount === rows.length && totalOpenReviews === 0;
+            // 분기 마감 상태 (SaaS 운영 가드)
+            const isQuarterClosed = totals?.closed === true;
+            const quarterClosedAt = totals?.closedAt;
+            const quarterClosedBy = totals?.closedBy;
+
+            // 분기 마감/해제 — closed 플래그 + 이력 저장
+            const toggleQuarterClose = async () => {
+              if (isQuarterClosed) {
+                if (!window.confirm(`${monthlySettlementMonth} 분기 마감을 해제합니다.\n\n해제 시 담당자 및 관리자가 다시 수정 가능해집니다. 진행?`)) return;
+                try {
+                  const nowISO = new Date().toISOString();
+                  await database.ref(`quarterlySettlements/${monthlySettlementMonth}/totals`).update({
+                    closed: false, closedAt: null, closedBy: null,
+                    reopenedAt: nowISO, reopenedBy: currentUser?.name || 'admin',
+                  });
+                  alert('분기 마감 해제 완료');
+                  await loadData();
+                } catch (e) { alert('해제 실패: ' + e.message); }
+                return;
+              }
+              // 마감 전 검증
+              const warnings = [];
+              if (rows.length === 0) warnings.push('담당자 0명 — 생성부터 해야 합니다');
+              if (confirmedCount < rows.length) warnings.push(`자가확인 미완: ${rows.length - confirmedCount}명`);
+              if (totalOpenReviews > 0) warnings.push(`처리 안 된 검증요청: ${totalOpenReviews}건`);
+              if (finalConfirmedCount < rows.length) warnings.push(`최종확정 미완: ${rows.length - finalConfirmedCount}명`);
+              const warningMsg = warnings.length > 0
+                ? `⚠ 마감 전 점검 미완:\n  - ${warnings.join('\n  - ')}\n\n마감 시 이후 수정 불가. 그래도 진행?`
+                : `${monthlySettlementMonth} 분기 마감\n\n마감 후 Firebase 데이터 수정은 차단되며 이력만 기록됩니다.\n김유림 발송·급여 반영의 근거 데이터로 고정됩니다.\n\n진행?`;
+              if (!window.confirm(warningMsg)) return;
+              try {
+                const nowISO = new Date().toISOString();
+                await database.ref(`quarterlySettlements/${monthlySettlementMonth}/totals`).update({
+                  closed: true,
+                  closedAt: nowISO,
+                  closedBy: currentUser?.name || 'admin',
+                  closingWarnings: warnings,
+                });
+                // admin 잔디 알림
+                if (jandiUrl) {
+                  try {
+                    await fetch(jandiUrl, {
+                      method: 'POST', mode: 'no-cors',
+                      headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        body: `🔒 ${monthlySettlementMonth} 분기 마감`,
+                        connectColor: '#7c3aed',
+                        connectInfo: [{
+                          title: `마감 처리: ${currentUser?.name || 'admin'}`,
+                          description: [
+                            `담당자 ${rows.length}명 · 총 ${totals?.totalCount || 0}건 · 예상 ${(totals?.totalEstimated || 0).toLocaleString('ko-KR')}원`,
+                            warnings.length > 0 ? `\n⚠ 미완 항목: ${warnings.join(' · ')}` : '',
+                            '',
+                            '이 시점 이후 Firebase 데이터 변경은 차단됩니다.',
+                          ].filter(Boolean).join('\n'),
+                        }],
+                      }),
+                    });
+                  } catch {}
+                }
+                alert('🔒 분기 마감 완료');
+                await loadData();
+              } catch (e) { alert('마감 실패: ' + e.message); }
+            };
 
             // 관리자 일괄 최종확정 토글 (담당자 확인 건너뛰기 — 긴급 발송용)
             const bulkFinalConfirm = async () => {
@@ -14296,6 +14395,7 @@ tr.suppressed td.fname{color:#64748b;}
               alert(`✅ ${rows.length}명에게 최종확정 요청 발송 완료${notifyFailed.length ? `\n(잔디 발송 실패 ${notifyFailed.length}명: ${notifyFailed.join(', ')})` : ''}`);
             };
             const updateRowStatus = async (assignee, newStatus) => {
+              if (isQuarterClosed) { alert('분기 마감 상태 — 수정 불가. [🔓 마감 해제] 후 재시도.'); return; }
               try {
                 await database.ref(`quarterlySettlements/${monthlySettlementMonth}/perAssignee/${assignee}/status`).set(newStatus);
                 setMonthlySettlementData(prev => prev ? ({
@@ -14440,10 +14540,16 @@ tr.suppressed td.fname{color:#64748b;}
                           } catch (e) { alert('실패: ' + e.message); }
                           finally { setMonthlySettlementLoading(false); }
                         }}
-                        disabled={monthlySettlementLoading}
-                        title="모든 PT 에 status · calculatedAmount · excludedReason 일괄 backfill (일회성)"
-                        style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f8fafc', color: '#475569', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                        disabled={monthlySettlementLoading || isQuarterClosed}
+                        title={isQuarterClosed ? '분기 마감됨 — 수정 불가' : '모든 PT 에 status · calculatedAmount · excludedReason 일괄 backfill (일회성)'}
+                        style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f8fafc', color: '#475569', fontSize: '12px', fontWeight: '700', cursor: isQuarterClosed ? 'not-allowed' : 'pointer', opacity: isQuarterClosed ? 0.5 : 1 }}
                       >🔧 Backfill</button>
+                      <button
+                        onClick={toggleQuarterClose}
+                        disabled={monthlySettlementLoading}
+                        title={isQuarterClosed ? '분기 마감 해제 (수정 허용)' : '분기 마감 — 이 시점 이후 Firebase 수정 차단'}
+                        style={{ padding: '6px 12px', borderRadius: '6px', border: isQuarterClosed ? '1px solid #7c3aed' : 'none', background: isQuarterClosed ? '#ede9fe' : '#0f172a', color: isQuarterClosed ? '#5b21b6' : 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                      >{isQuarterClosed ? '🔓 마감 해제' : '🔒 분기 마감'}</button>
                     </div>
                   </div>
 
@@ -14451,8 +14557,13 @@ tr.suppressed td.fname{color:#64748b;}
                   {totals && (
                     <>
                       {/* 분기 메타 — 마감일 / 급여반영월 / 집계기준 */}
-                      <div style={{ padding: '10px 14px', background: 'linear-gradient(135deg, #eff6ff 0%, #f0f9ff 100%)', border: '1px solid #bfdbfe', borderRadius: '8px', marginBottom: '8px', display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '12px', alignItems: 'center' }}>
-                        <span style={{ fontWeight: '800', color: '#1e40af', fontSize: '13px' }}>📅 {totals.quarterKey || monthlySettlementMonth}</span>
+                      <div style={{ padding: '10px 14px', background: isQuarterClosed ? 'linear-gradient(135deg, #ede9fe 0%, #f5f3ff 100%)' : 'linear-gradient(135deg, #eff6ff 0%, #f0f9ff 100%)', border: `1px solid ${isQuarterClosed ? '#c4b5fd' : '#bfdbfe'}`, borderRadius: '8px', marginBottom: '8px', display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '12px', alignItems: 'center' }}>
+                        <span style={{ fontWeight: '800', color: isQuarterClosed ? '#5b21b6' : '#1e40af', fontSize: '13px' }}>📅 {totals.quarterKey || monthlySettlementMonth}</span>
+                        {isQuarterClosed && (
+                          <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#7c3aed', color: 'white', fontSize: '11px', fontWeight: '800' }} title={`마감 시각: ${(quarterClosedAt || '').slice(0,16).replace('T',' ')} · ${quarterClosedBy || ''}`}>
+                            🔒 마감됨
+                          </span>
+                        )}
                         {totals.closingDate && <span><b>마감일:</b> <span style={{ color: '#dc2626', fontWeight: '700' }}>{totals.closingDate}</span> <span style={{ color: '#94a3b8', fontSize: '10px' }}>(다음달 마지막주 월요일)</span></span>}
                         {totals.payrollMonth && <span><b>급여 반영월:</b> <span style={{ color: '#16a34a', fontWeight: '700' }}>{totals.payrollMonth}</span></span>}
                         {totals.reportedTo && <span><b>전달:</b> <span style={{ color: '#7c3aed', fontWeight: '700' }}>{totals.reportedTo}</span></span>}
@@ -14467,6 +14578,12 @@ tr.suppressed td.fname{color:#64748b;}
                         {totalOpenReviews > 0 && (
                           <span><b>담당자 검증요청:</b> <span style={{ color: '#dc2626', fontWeight: '700' }}>{totalOpenReviews}건</span></span>
                         )}
+                        <span
+                          title={`검증완료 ${reliability.verifiedCount} / 활성 ${reliability.totalActive}\n미검증: ${reliability.issues.unverified}\n결과없음: ${reliability.issues.noResult}\n취소공고: ${reliability.issues.cancelled}\n제외: ${reliability.issues.excluded}`}
+                        >
+                          <b>신뢰도:</b> <span style={{ color: reliability.reliabilityPct >= 90 ? '#16a34a' : reliability.reliabilityPct >= 70 ? '#d97706' : '#dc2626', fontWeight: '800' }}>{reliability.reliabilityPct}%</span>
+                          {reliability.issues.unverified > 0 && <span style={{ color: '#dc2626', marginLeft: 4 }}>· 미검증 {reliability.issues.unverified}</span>}
+                        </span>
                         <span style={{ color: '#94a3b8' }}>생성: {(totals.generatedAt || '').slice(0, 16).replace('T', ' ')} · {totals.generatedBy}</span>
                       </div>
                     </>
@@ -16191,61 +16308,73 @@ tr.suppressed td.fname{color:#64748b;}
             };
 
             const VALID_TEAM = ['한준엽','조재연','정정훈','김성민','이필선','조현식','한인규','황윤선'];
-            // 집계 버킷
-            const byAssignee = {};
-            const byWorkType = {};
-            const byOurTech = {};  // POUR vs 다른 공법 결과
-            const lossReasons = {};
-            let totalWin = 0, totalDraw = 0, totalLose = 0, totalSupport = 0;
 
-            VALID_TEAM.forEach(n => {
-              byAssignee[n] = { win: 0, draw: 0, lose: 0, support: 0, amount: 0 };
-            });
-
-            ptSchedules.forEach(pt => {
-              if (pt.selfPT) return;
-              const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
-              for (const a of tokens) {
-                if (!VALID_TEAM.includes(a)) continue;
-                const cd = getConfirmDate(pt, a);
-                if (!inQ(cd)) continue;
-                const r = pt.results?.[a] || (tokens.length === 1 ? pt.result : null);
-                if (!r) continue;
-                const cat = categorize(pt.workType, pt.siteName);
-                if (!byWorkType[cat]) byWorkType[cat] = { win: 0, lose: 0, draw: 0, support: 0 };
-
-                if (r === '승') { byAssignee[a].win++; byWorkType[cat].win++; totalWin++; }
-                else if (r === '무') { byAssignee[a].draw++; byWorkType[cat].draw++; totalDraw++; }
-                else if (r === '패') {
-                  byAssignee[a].lose++; byWorkType[cat].lose++; totalLose++;
-                  // 패배 사유 분류
-                  const reason = pt.resultReasons?.[a]?.reason || '';
-                  const rKey = classifyLossReason(reason);
-                  lossReasons[rKey] = (lossReasons[rKey] || 0) + 1;
+            // 기간별 집계 함수 (현재 분기 + 전 분기 비교용)
+            const aggregateForPeriod = (yy, qq) => {
+              const sM = (qq - 1) * 3 + 1;
+              const eM = qq * 3;
+              const inR = (date) => {
+                if (!date) return false;
+                const m = String(date).match(/^(\d{4})-(\d{2})/);
+                if (!m) return false;
+                return parseInt(m[1]) === yy && parseInt(m[2]) >= sM && parseInt(m[2]) <= eM;
+              };
+              const byA = {}; const byW = {}; const byT = {}; const lossR = {};
+              let w = 0, d = 0, l = 0, sup = 0;
+              VALID_TEAM.forEach(n => { byA[n] = { win: 0, draw: 0, lose: 0, support: 0 }; });
+              ptSchedules.forEach(pt => {
+                if (pt.selfPT) return;
+                const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+                for (const a of tokens) {
+                  if (!VALID_TEAM.includes(a)) continue;
+                  const cd = getConfirmDate(pt, a);
+                  if (!inR(cd)) continue;
+                  const r = pt.results?.[a] || (tokens.length === 1 ? pt.result : null);
+                  if (!r) continue;
+                  const cat = categorize(pt.workType, pt.siteName);
+                  if (!byW[cat]) byW[cat] = { win: 0, lose: 0, draw: 0, support: 0 };
+                  if (r === '승') { byA[a].win++; byW[cat].win++; w++; }
+                  else if (r === '무') { byA[a].draw++; byW[cat].draw++; d++; }
+                  else if (r === '패') { byA[a].lose++; byW[cat].lose++; l++;
+                    const rKey = classifyLossReason(pt.resultReasons?.[a]?.reason || '');
+                    lossR[rKey] = (lossR[rKey] || 0) + 1;
+                  }
+                  else if (r === '지원') { byA[a].support++; byW[cat].support++; sup++; }
+                  if (r === '승') {
+                    const methods = (pt.announcementMethods || '') + '|' + (pt.workType || '');
+                    const tag = /POUR/i.test(methods) ? 'POUR' : /CNC/i.test(methods) ? 'CNC' : '기타';
+                    if (!byT[tag]) byT[tag] = { win: 0, lose: 0 };
+                    byT[tag].win++;
+                  }
+                  if (r === '패') {
+                    const reason = (pt.resultReasons?.[a]?.reason || '') + '|' + (pt.workType || '');
+                    const tag = /POUR/i.test(reason) ? 'POUR' : /CNC/i.test(reason) ? 'CNC' : '기타';
+                    if (!byT[tag]) byT[tag] = { win: 0, lose: 0 };
+                    byT[tag].lose++;
+                  }
                 }
-                else if (r === '지원') { byAssignee[a].support++; byWorkType[cat].support++; totalSupport++; }
+              });
+              return { byAssignee: byA, byWorkType: byW, byOurTech: byT, lossReasons: lossR, totalWin: w, totalDraw: d, totalLose: l, totalSupport: sup };
+            };
 
-                // 공법 사용 추적 (승리 건만)
-                if (r === '승') {
-                  const methods = (pt.announcementMethods || '') + '|' + (pt.workType || '');
-                  const usedPour = /POUR/i.test(methods);
-                  const usedCnc = /CNC/i.test(methods);
-                  const tag = usedPour ? 'POUR' : usedCnc ? 'CNC' : '기타';
-                  if (!byOurTech[tag]) byOurTech[tag] = { win: 0, lose: 0 };
-                  byOurTech[tag].win++;
-                }
-                if (r === '패') {
-                  const reason = (pt.resultReasons?.[a]?.reason || '') + '|' + (pt.workType || '');
-                  // 간단 추정: POUR/CNC 제안했으나 졌으면 경쟁 공법 승리
-                  // (더 정교한 분석은 announcementMethods + competitorMethods 필드 필요)
-                  const usedPour = /POUR/i.test(reason);
-                  const usedCnc = /CNC/i.test(reason);
-                  const tag = usedPour ? 'POUR' : usedCnc ? 'CNC' : '기타';
-                  if (!byOurTech[tag]) byOurTech[tag] = { win: 0, lose: 0 };
-                  byOurTech[tag].lose++;
-                }
-              }
-            });
+            // 현재 분기 집계
+            const cur = aggregateForPeriod(yKey, qN);
+            const { byAssignee, byWorkType, byOurTech, lossReasons } = cur;
+            let totalWin = cur.totalWin, totalDraw = cur.totalDraw, totalLose = cur.totalLose, totalSupport = cur.totalSupport;
+
+            // 전 분기 집계 (트렌드 비교)
+            const prevQ = qN === 1 ? { y: yKey - 1, q: 4 } : { y: yKey, q: qN - 1 };
+            const prev = aggregateForPeriod(prevQ.y, prevQ.q);
+            const prevQKey = `${prevQ.y}-Q${prevQ.q}`;
+            const curTotal = totalWin + totalDraw + totalLose;
+            const prevTotal = prev.totalWin + prev.totalDraw + prev.totalLose;
+            const curRate = curTotal > 0 ? Math.round(totalWin / curTotal * 100) : 0;
+            const prevRate = prevTotal > 0 ? Math.round(prev.totalWin / prevTotal * 100) : 0;
+            const rateDelta = curRate - prevRate;
+            const winDelta = totalWin - prev.totalWin;
+            const loseDelta = totalLose - prev.totalLose;
+
+            // (집계는 aggregateForPeriod 에서 처리 — 위에 있음)
 
             // 공종별 승률 계산 + 정렬
             const workTypeRanked = Object.entries(byWorkType).map(([cat, v]) => {
@@ -16290,17 +16419,46 @@ tr.suppressed td.fname{color:#64748b;}
                     <span style={{ marginLeft: 'auto', fontSize: 11, color: '#64748b' }}>집계 기준: 실적확정일 · 활동자 {assigneeRanked.length}명 · 총 {totalWin + totalDraw + totalLose + totalSupport}건</span>
                   </div>
 
-                  {/* 1. 전체 실적 요약 */}
-                  <div style={{ padding: '12px 14px', background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: 'white', borderRadius: 10, marginBottom: 14, display: 'flex', justifyContent: 'space-around', gap: 10 }}>
-                    <div style={{ textAlign: 'center' }}><div style={{ fontSize: 10, opacity: 0.7 }}>승</div><div style={{ fontSize: 22, fontWeight: 800, color: '#60a5fa' }}>{totalWin}</div></div>
-                    <div style={{ textAlign: 'center' }}><div style={{ fontSize: 10, opacity: 0.7 }}>무</div><div style={{ fontSize: 22, fontWeight: 800, color: '#fbbf24' }}>{totalDraw}</div></div>
-                    <div style={{ textAlign: 'center' }}><div style={{ fontSize: 10, opacity: 0.7 }}>패</div><div style={{ fontSize: 22, fontWeight: 800, color: '#f87171' }}>{totalLose}</div></div>
-                    <div style={{ textAlign: 'center' }}><div style={{ fontSize: 10, opacity: 0.7 }}>지원</div><div style={{ fontSize: 22, fontWeight: 800, color: '#c084fc' }}>{totalSupport}</div></div>
+                  {/* 1. 전체 실적 요약 + 전 분기 대비 */}
+                  <div style={{ padding: '12px 14px', background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: 'white', borderRadius: 10, marginBottom: 14, display: 'flex', justifyContent: 'space-around', gap: 10, alignItems: 'center' }}>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 10, opacity: 0.7 }}>승</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#60a5fa' }}>{totalWin}</div>
+                      {prev.totalWin > 0 && <div style={{ fontSize: 9, color: winDelta >= 0 ? '#34d399' : '#f87171', marginTop: 1 }}>{winDelta >= 0 ? '▲' : '▼'} {Math.abs(winDelta)}</div>}
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 10, opacity: 0.7 }}>무</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#fbbf24' }}>{totalDraw}</div>
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 10, opacity: 0.7 }}>패</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#f87171' }}>{totalLose}</div>
+                      {prev.totalLose > 0 && <div style={{ fontSize: 9, color: loseDelta <= 0 ? '#34d399' : '#f87171', marginTop: 1 }}>{loseDelta >= 0 ? '▲' : '▼'} {Math.abs(loseDelta)}</div>}
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 10, opacity: 0.7 }}>지원</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#c084fc' }}>{totalSupport}</div>
+                    </div>
                     <div style={{ textAlign: 'center', borderLeft: '1px solid rgba(255,255,255,0.2)', paddingLeft: 20 }}>
                       <div style={{ fontSize: 10, opacity: 0.7 }}>승률</div>
-                      <div style={{ fontSize: 22, fontWeight: 800, color: '#34d399' }}>{totalWin + totalLose > 0 ? Math.round(totalWin / (totalWin + totalLose + totalDraw) * 100) : 0}%</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#34d399' }}>{curRate}%</div>
+                      {prevTotal > 0 && (
+                        <div style={{ fontSize: 9, color: rateDelta >= 0 ? '#34d399' : '#f87171', marginTop: 1 }} title={`전분기(${prevQKey}): ${prevRate}%`}>
+                          {rateDelta >= 0 ? '▲' : '▼'} {Math.abs(rateDelta)}%p
+                        </div>
+                      )}
                     </div>
                   </div>
+
+                  {/* 전 분기 대비 요약 배너 */}
+                  {prevTotal > 0 && (
+                    <div style={{ padding: '8px 12px', background: '#f1f5f9', borderRadius: 8, marginBottom: 14, fontSize: 11, color: '#475569', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                      <span><b>전분기 {prevQKey}:</b> 승 {prev.totalWin} · 무 {prev.totalDraw} · 패 {prev.totalLose} · 승률 {prevRate}%</span>
+                      <span style={{ marginLeft: 'auto', color: rateDelta >= 0 ? '#16a34a' : '#dc2626', fontWeight: 700 }}>
+                        승률 {rateDelta >= 0 ? '상승' : '하락'} {Math.abs(rateDelta)}%p · 건수 {curTotal - prevTotal >= 0 ? '+' : ''}{curTotal - prevTotal}
+                      </span>
+                    </div>
+                  )}
 
                   {/* 2. 담당자별 성과 */}
                   <div style={{ marginBottom: 16 }}>
