@@ -1763,6 +1763,14 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       }
 
       if (!candidates) {
+        // [지역 모호성 가드] evidence parsedSiteName 이 짧고 지역 prefix 가 없으면
+        //   같은 brand 다른 지역 단지 false positive 위험 (양우내안애, 한신휴플러스 등).
+        //   이 경우 자동 매칭 임계값을 0.97 로 강화 → 사실상 alias 학습된 것 또는 정확 일치만 통과.
+        //   PT.address 의 시·도 토큰이 evParsed 안에 있으면 해제.
+        const evNormStr = String(evSite).replace(/\s+/g, '');
+        const isShortBrandOnly = evNormStr.length <= 12 &&
+          !/^(서울|부산|인천|대구|대전|광주|울산|세종|제주|경기|강원|충북|충남|전북|전남|경북|경남|수원|성남|용인|고양|부천|안산|남양주|안양|평택|의정부|시흥|파주|김포|광명|군포|하남|이천|안성|구리|양주|오산|화성|의왕|여주|과천|춘천|원주|강릉|청주|충주|제천|천안|공주|아산|논산|당진|서산|홍성|예산|전주|군산|익산|정읍|남원|목포|여수|순천|나주|광양|포항|경주|구미|김천|안동|영주|경산|영천|상주|문경|창원|마산|진주|통영|김해|밀양|거제|양산|사천)/.test(evNormStr);
+
         candidates = ptEntries
           .map(p => {
             const c = composite(evSite, p);
@@ -1778,7 +1786,13 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
             }
             return { ...p, score: adjustedScore, matchedBy };
           })
-          .filter(p => p.score >= minScore)
+          .filter(p => {
+            if (p.score < minScore) return false;
+            // brand-only evidence: PT.address 시·도 토큰이 evParsed 에 있어야 인정
+            //   (실제로는 거의 없을 테니 → 자동 매칭에서 제외, 검수 페이지에서 수동 확인)
+            if (isShortBrandOnly && p.score < 0.97) return false;
+            return true;
+          })
           .sort((a, b) => b.score - a.score);
       }
 
