@@ -200,6 +200,37 @@ app.get('/health', (req, res) => {
   });
 });
 
+// 매칭 검수 정적 페이지 — 인증은 페이지 안에서 처리 (사용자가 토큰 입력)
+app.get('/admin-review', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  res.sendFile(path.join(__dirname, 'admin-review.html'));
+});
+
+// PT 전체 목록 (검수 페이지 직접 검색용) — 매우 가벼운 응답
+// body: {} (빈 body)
+// 반환: { pts: [{id, siteName, address, ptAssignee, date}] }
+app.post('/admin/jandi-list-pts', requireAuth, async (req, res) => {
+  try {
+    await getFirebaseAdmin();
+    const db = admin.database();
+    const snap = await db.ref('pt').once('value');
+    const pts = snap.val() || {};
+    const list = Object.entries(pts)
+      .filter(([, v]) => v && v.siteName)
+      .map(([id, v]) => ({
+        id,
+        siteName: v.siteName,
+        address: v.address || '',
+        ptAssignee: v.ptAssignee || '',
+        date: v.date || '',
+      }));
+    return res.json({ pts: list, count: list.length });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 // 디버그: K-APT 검색 페이지 구조 탐색
 app.get('/debug/kapt-list', requireAuth, async (req, res) => {
   const { aptName, ptDate } = req.query;

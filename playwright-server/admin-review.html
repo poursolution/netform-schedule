@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>매칭 검수 — Jandi Evidence ↔ PT</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 0; background: #f1f5f9; color: #0f172a; }
+  header { background: #0f172a; color: white; padding: 14px 20px; position: sticky; top: 0; z-index: 10; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+  header .sub { font-size: 12px; opacity: 0.7; margin-top: 2px; }
+  .auth-bar { background: #1e293b; color: white; padding: 10px 20px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
+  .auth-bar input { flex: 1; padding: 6px 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: white; font-family: monospace; }
+  .auth-bar button { padding: 6px 12px; border-radius: 6px; border: none; background: #2563eb; color: white; font-weight: 600; cursor: pointer; font-size: 12px; }
+  .auth-bar button:hover { background: #1d4ed8; }
+  .toolbar { background: white; padding: 12px 20px; border-bottom: 1px solid #e2e8f0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .toolbar button { padding: 8px 14px; border-radius: 6px; border: 1px solid #cbd5e1; background: white; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .toolbar button.primary { background: #2563eb; color: white; border-color: #2563eb; }
+  .toolbar button.primary:hover { background: #1d4ed8; }
+  .toolbar .stat { font-size: 13px; color: #475569; margin-left: auto; }
+  .stat strong { color: #0f172a; font-weight: 800; }
+  main { padding: 20px; max-width: 1200px; margin: 0 auto; }
+  .evidence-card { background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+  .evidence-card.skipped { opacity: 0.4; }
+  .evidence-card.linked { border-color: #10b981; background: #ecfdf5; }
+  .ev-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #e2e8f0; }
+  .ev-filename { font-size: 14px; font-weight: 700; color: #0f172a; }
+  .ev-meta { font-size: 11px; color: #64748b; margin-top: 2px; }
+  .ev-actions { display: flex; gap: 6px; }
+  .ev-actions button { padding: 6px 10px; border-radius: 5px; border: 1px solid #cbd5e1; background: white; font-size: 11px; font-weight: 600; cursor: pointer; }
+  .candidates { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 8px; }
+  .cand { display: flex; gap: 10px; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; align-items: center; }
+  .cand-info { flex: 1; min-width: 0; }
+  .cand-name { font-size: 13px; font-weight: 700; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cand-addr { font-size: 11px; color: #64748b; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cand-meta { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+  .cand-score { font-size: 11px; padding: 2px 6px; border-radius: 4px; font-weight: 700; }
+  .cand-score.high { background: #dcfce7; color: #166534; }
+  .cand-score.mid { background: #fef3c7; color: #92400e; }
+  .cand-score.low { background: #fee2e2; color: #991b1b; }
+  .cand button { padding: 6px 12px; border-radius: 5px; border: none; background: #2563eb; color: white; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+  .cand button:hover { background: #1d4ed8; }
+  .cand button:disabled { background: #cbd5e1; cursor: not-allowed; }
+  .no-cand { padding: 12px; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; font-size: 13px; color: #92400e; }
+  .empty { text-align: center; padding: 40px; color: #64748b; font-size: 14px; }
+  .log { position: fixed; bottom: 16px; right: 16px; max-width: 360px; max-height: 200px; overflow-y: auto; background: #0f172a; color: white; border-radius: 8px; padding: 10px; font-size: 11px; font-family: monospace; line-height: 1.5; }
+  .log .ok { color: #4ade80; }
+  .log .err { color: #f87171; }
+  .search-box { padding: 8px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 13px; width: 100%; margin-top: 8px; }
+  .search-results { max-height: 200px; overflow-y: auto; margin-top: 6px; border: 1px solid #e2e8f0; border-radius: 6px; }
+  .search-results .cand { border-radius: 0; border: none; border-bottom: 1px solid #f1f5f9; }
+  .alert { background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; padding: 12px; border-radius: 8px; margin-bottom: 14px; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📎 매칭 검수 — Jandi Evidence ↔ PT</h1>
+  <div class="sub">잔디 공고문(unmatched) 을 사람 손으로 PT 와 연결합니다. 한 건씩 확인 → 클릭 → 즉시 저장.</div>
+</header>
+
+<div class="auth-bar">
+  <span>AUTH_TOKEN:</span>
+  <input id="token" type="password" placeholder="VPS .env 의 AUTH_TOKEN 붙여넣기" />
+  <button id="save-token">저장</button>
+  <button id="clear-token" style="background:#475569;">초기화</button>
+</div>
+
+<div class="toolbar">
+  <button id="reload" class="primary">🔄 unmatched 불러오기</button>
+  <button id="show-skipped">건너뛴 건 보기</button>
+  <span class="stat" id="stat">대기 중...</span>
+</div>
+
+<main id="main">
+  <div class="empty">상단 [🔄 unmatched 불러오기] 클릭 →<br>토큰 저장이 먼저 필요합니다.</div>
+</main>
+
+<div class="log" id="log" style="display:none;"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = localStorage.getItem('admin_review_token') || '';
+let unmatchedList = [];
+let skipped = new Set(JSON.parse(localStorage.getItem('skipped_fids') || '[]'));
+let showSkipped = false;
+
+if (token) $('token').value = token;
+
+$('save-token').onclick = () => {
+  token = $('token').value.trim();
+  localStorage.setItem('admin_review_token', token);
+  log('토큰 저장됨', 'ok');
+};
+$('clear-token').onclick = () => {
+  localStorage.removeItem('admin_review_token');
+  $('token').value = '';
+  token = '';
+  log('토큰 초기화', 'ok');
+};
+
+$('reload').onclick = loadUnmatched;
+$('show-skipped').onclick = () => {
+  showSkipped = !showSkipped;
+  $('show-skipped').textContent = showSkipped ? '건너뛴 건 숨기기' : '건너뛴 건 보기';
+  render();
+};
+
+function log(msg, kind = '') {
+  const el = $('log');
+  el.style.display = 'block';
+  const line = document.createElement('div');
+  line.className = kind;
+  line.textContent = `${new Date().toLocaleTimeString()} ${msg}`;
+  el.insertBefore(line, el.firstChild);
+  while (el.children.length > 30) el.removeChild(el.lastChild);
+}
+
+async function api(path, body) {
+  if (!token) { alert('AUTH_TOKEN 먼저 저장하세요'); throw new Error('no token'); }
+  const resp = await fetch(path, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`HTTP ${resp.status}: ${t.slice(0, 200)}`);
+  }
+  return resp.json();
+}
+
+async function loadUnmatched() {
+  try {
+    $('main').innerHTML = '<div class="empty">불러오는 중... (PT 470개 × evidence 400개 매칭 중, 5~10초 소요)</div>';
+    log('unmatched 조회 시작');
+    const d = await api('/admin/jandi-unmatched-evidence', { topN: 5, minCandidateScore: 0.4 });
+    unmatchedList = d.unmatched || [];
+    log(`unmatched ${unmatchedList.length}건 받음`, 'ok');
+    render();
+  } catch (e) {
+    log('실패: ' + e.message, 'err');
+    $('main').innerHTML = `<div class="alert">불러오기 실패: ${e.message}</div>`;
+  }
+}
+
+function scoreClass(s) {
+  if (s >= 0.85) return 'high';
+  if (s >= 0.7) return 'mid';
+  return 'low';
+}
+
+function render() {
+  const main = $('main');
+  const list = unmatchedList.filter(x => showSkipped || !skipped.has(x.fileId));
+  $('stat').innerHTML = `남음: <strong>${list.length}</strong> / 전체 <strong>${unmatchedList.length}</strong> · 건너뜀 <strong>${skipped.size}</strong>`;
+
+  if (list.length === 0) {
+    main.innerHTML = '<div class="empty">🎉 처리할 evidence 없음 — 모두 매칭/건너뛰기 완료.</div>';
+    return;
+  }
+
+  main.innerHTML = '';
+  for (const ev of list) {
+    const card = document.createElement('div');
+    card.className = 'evidence-card';
+    if (skipped.has(ev.fileId)) card.classList.add('skipped');
+
+    const head = document.createElement('div');
+    head.className = 'ev-head';
+    head.innerHTML = `
+      <div>
+        <div class="ev-filename">${esc(ev.filename || '(no filename)')}</div>
+        <div class="ev-meta">parsedSiteName: <strong>${esc(ev.parsedSiteName || '-')}</strong> · seq ${ev.parsedSeq ?? '-'} · ${esc(ev.ext || '?')} · ${ev.size ? Math.round(ev.size/1024)+'KB' : '?'}</div>
+      </div>
+    `;
+    const actions = document.createElement('div');
+    actions.className = 'ev-actions';
+    const skipBtn = mkBtn('⏭ 건너뛰기', () => { skipped.add(ev.fileId); persistSkipped(); render(); });
+    const noneBtn = mkBtn('🔍 후보 없음 — 직접 검색', () => openSearch(card, ev));
+    actions.appendChild(skipBtn);
+    actions.appendChild(noneBtn);
+    head.appendChild(actions);
+    card.appendChild(head);
+
+    if (!ev.candidates || ev.candidates.length === 0) {
+      const noCand = document.createElement('div');
+      noCand.className = 'no-cand';
+      noCand.textContent = '자동 후보 없음 — 우측 [🔍 직접 검색] 사용';
+      card.appendChild(noCand);
+    } else {
+      const grid = document.createElement('div');
+      grid.className = 'candidates';
+      for (const c of ev.candidates) {
+        grid.appendChild(mkCandidate(ev, c, card));
+      }
+      card.appendChild(grid);
+    }
+    main.appendChild(card);
+  }
+}
+
+function mkCandidate(ev, c, card) {
+  const div = document.createElement('div');
+  div.className = 'cand';
+  const sCls = scoreClass(c.score || 0);
+  div.innerHTML = `
+    <div class="cand-info">
+      <div class="cand-name">${esc(c.siteName || '(이름없음)')}</div>
+      <div class="cand-addr">${esc(c.address || '(주소없음)')}</div>
+      <div class="cand-meta">${esc(c.ptAssignee || '?')} · ${esc(c.date || '?')} · matchedBy=${esc(c.matchedBy || '?')}</div>
+    </div>
+    <span class="cand-score ${sCls}">${(c.score || 0).toFixed(3)}</span>
+  `;
+  const btn = document.createElement('button');
+  btn.textContent = '✓ 이 단지';
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = '저장중...';
+    try {
+      // unmatched-evidence 응답에선 c.ptId, jandi-list-pts 응답에선 c.id 로 옴 → 둘 다 대응
+      const ptId = c.ptId || c.id;
+      await api('/admin/jandi-manual-link', { fileId: ev.fileId, ptId });
+      log(`✓ ${ev.filename} → ${c.siteName}`, 'ok');
+      card.classList.add('linked');
+      // 카드 안의 모든 버튼 비활성
+      card.querySelectorAll('button').forEach(b => b.disabled = true);
+      // 5초 뒤 카드 제거 (목록에서)
+      setTimeout(() => {
+        unmatchedList = unmatchedList.filter(x => x.fileId !== ev.fileId);
+        render();
+      }, 1500);
+    } catch (e) {
+      log('실패: ' + e.message, 'err');
+      btn.disabled = false; btn.textContent = '✓ 이 단지';
+      alert('매칭 실패: ' + e.message);
+    }
+  };
+  div.appendChild(btn);
+  return div;
+}
+
+function openSearch(card, ev) {
+  // 이미 검색 박스 있으면 토글
+  const exist = card.querySelector('.search-box');
+  if (exist) { card.removeChild(exist); const r = card.querySelector('.search-results'); if (r) card.removeChild(r); return; }
+  const box = document.createElement('input');
+  box.className = 'search-box';
+  box.placeholder = 'PT 단지명 일부 입력 (예: 봉선지웰, 광주, 서울 e편한세상...)';
+  const results = document.createElement('div');
+  results.className = 'search-results';
+  card.appendChild(box);
+  card.appendChild(results);
+  let timer = null;
+  box.oninput = () => {
+    clearTimeout(timer);
+    const q = box.value.trim();
+    if (q.length < 2) { results.innerHTML = ''; return; }
+    timer = setTimeout(() => doSearch(q, results, ev, card), 250);
+  };
+  box.focus();
+}
+
+let allPtsCache = null;
+async function ensurePts() {
+  if (allPtsCache) return allPtsCache;
+  // unmatched 호출 응답에는 PT 목록이 없음 → /admin/jandi-pt-match dryRun 으로 PT 풀 받기? 너무 무거움
+  // 대신 /admin/list-pts (있으면) 호출. 없으면 fallback: ev candidates 통합
+  try {
+    const d = await api('/admin/jandi-list-pts', {});
+    allPtsCache = d.pts || [];
+  } catch {
+    // fallback: unmatched 의 모든 candidates 합치기
+    const seen = new Map();
+    for (const ev of unmatchedList) {
+      for (const c of (ev.candidates || [])) {
+        if (!seen.has(c.id)) seen.set(c.id, { id: c.id, siteName: c.siteName, address: c.address, ptAssignee: c.ptAssignee, date: c.date });
+      }
+    }
+    allPtsCache = Array.from(seen.values());
+  }
+  return allPtsCache;
+}
+
+async function doSearch(q, results, ev, card) {
+  results.innerHTML = '<div style="padding:8px;color:#94a3b8;font-size:12px;">검색중...</div>';
+  const pts = await ensurePts();
+  const ql = q.toLowerCase();
+  const matches = pts.filter(p =>
+    (p.siteName || '').toLowerCase().includes(ql) || (p.address || '').toLowerCase().includes(ql)
+  ).slice(0, 30);
+  results.innerHTML = '';
+  if (matches.length === 0) {
+    results.innerHTML = '<div style="padding:8px;color:#94a3b8;font-size:12px;">결과 없음 (PT 풀이 후보+이전 쿼리 합집합으로 제한될 수 있음)</div>';
+    return;
+  }
+  for (const p of matches) {
+    results.appendChild(mkCandidate(ev, { ...p, score: 0, matchedBy: 'manual-search' }, card));
+  }
+}
+
+function mkBtn(text, onclick) {
+  const b = document.createElement('button');
+  b.textContent = text;
+  b.onclick = onclick;
+  return b;
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+}
+
+function persistSkipped() {
+  localStorage.setItem('skipped_fids', JSON.stringify([...skipped]));
+}
+</script>
+</body>
+</html>
