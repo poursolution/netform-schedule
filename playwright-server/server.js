@@ -22,21 +22,19 @@ import 'dotenv/config';
 
 // === Alias 정규화 헬퍼 ===
 // 단지명을 alias DB key 로 쓸 정규화 문자열로 변환.
-//   - 공백, 괄호, 슬래시, 점, 하이픈, 단지/차/호수 표기 제거
-//   - Firebase key 안전성을 위해 dot 도 제거
-//   예: "효천마을신안인스빌1/2단지" → "효천마을신안인스빌"
-//   예: "효천마을 신안인스빌 1·2단지" → "효천마을신안인스빌"
-//   예: "광주봉선지웰" → "광주봉선지웰"
+//   ⚠ 단지/차/동 표기는 보존 (그렇지 않으면 "1차 <-> 2차" 충돌 발생)
+//   - 복합 단지표기 "1/2단지", "1·2단지" 를 "1및2단지" 로 통일
+//   - 파일명 꼬리 날짜 표기 제거
+//   - 공백/괄호/하이픈/점 등 구분 문자 제거
+//   예: "효천마을신안인스빌1/2단지" → "효천마을신안인스빌1및2단지"
+//   예: "효천마을 신안인스빌 1·2단지" → "효천마을신안인스빌1및2단지"
+//   예: "봉선지웰아파트" → "봉선지웰아파트"
 function aliasNormalize(s) {
   if (!s) return '';
   let n = String(s).toLowerCase();
+  n = n.replace(/(\d+)\s*[/·•‧⋅\-]\s*(\d+)\s*단지/g, '$1및$2단지');
+  n = n.replace(/[_\s]*\d{2}\.?\d{2}$/, '');
   n = n.replace(/[\s()()[\]【】.\-_/\\·•‧⋅,，~～]/g, '');
-  // 단지/차/호수 표기 제거 (1단지, 2단지, 1차, 2차, A동, 가동 등)
-  n = n.replace(/\d+(단지|차|동|호|블럭|블록)/g, '');
-  n = n.replace(/[가-하]동/g, '');
-  n = n.replace(/(단지|차|동|호|블럭|블록)\d*/g, '');
-  // 끝부분에 남는 숫자 (한자리·두자리만 — 구분 숫자 흔적)
-  n = n.replace(/\d{1,2}$/, '');
   return n;
 }
 
@@ -1574,11 +1572,21 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
     await getFirebaseAdmin();
     const db = admin.database();
 
-    // 단지명 정규화 — 공백/괄호/숫자단지 제거
-    const norm = (s) => (s || '').toString()
-      .replace(/\s+/g, '')
-      .replace(/[()()[\]【】]/g, '')
-      .toLowerCase();
+    // 단지명 정규화 — 매칭용 안전 normalize.
+    //   ⚠ 단지/차/동 표기는 보존 (제거하면 "한신2차" vs "한신3차" 가 매칭됨).
+    //   - 복합 단지표기 "1/2단지", "1·2단지", "1-2단지" → "1및2단지" 로 정규화 (앞뒤 형태 통일)
+    //   - 파일명 꼬리 "_MM.DD" 같은 날짜 꼬리표 제거
+    //   - 공백/괄호/하이픈/dot 같은 구분 문자 제거 (단, 단지표기 정규화 후)
+    const norm = (s) => {
+      let n = (s || '').toString().toLowerCase();
+      // (1) 복합 단지표기 정규화 (먼저 적용 — 슬래시/점 제거 전)
+      n = n.replace(/(\d+)\s*[/·•‧⋅\-]\s*(\d+)\s*단지/g, '$1및$2단지');
+      // (2) 파일명 꼬리 날짜 (예: _03.15, _0425) 제거
+      n = n.replace(/[_\s]*\d{2}\.?\d{2}$/, '');
+      // (3) 구분 문자 제거 (단지표기 정규화 후이므로 안전)
+      n = n.replace(/[\s()()[\]【】.\-_/\\·•‧⋅,，~～]/g, '');
+      return n;
+    };
 
     // 유사도 — substring + subsequence 조합
     const similarity = (a, b) => {
@@ -1982,7 +1990,13 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
     await getFirebaseAdmin();
     const db = admin.database();
 
-    const norm = (s) => (s || '').toString().replace(/\s+/g, '').replace(/[()()[\]【】]/g, '').toLowerCase();
+    const norm = (s) => {
+      let n = (s || '').toString().toLowerCase();
+      n = n.replace(/(\d+)\s*[/·•‧⋅\-]\s*(\d+)\s*단지/g, '$1및$2단지');
+      n = n.replace(/[_\s]*\d{2}\.?\d{2}$/, '');
+      n = n.replace(/[\s()()[\]【】.\-_/\\·•‧⋅,，~～]/g, '');
+      return n;
+    };
     const similarity = (a, b) => {
       const na = norm(a), nb = norm(b);
       if (!na || !nb) return 0;
