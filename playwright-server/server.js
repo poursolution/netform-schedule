@@ -20,6 +20,26 @@ import crypto from 'crypto';
 import admin from 'firebase-admin';
 import 'dotenv/config';
 
+// === Alias 정규화 헬퍼 ===
+// 단지명을 alias DB key 로 쓸 정규화 문자열로 변환.
+//   - 공백, 괄호, 슬래시, 점, 하이픈, 단지/차/호수 표기 제거
+//   - Firebase key 안전성을 위해 dot 도 제거
+//   예: "효천마을신안인스빌1/2단지" → "효천마을신안인스빌"
+//   예: "효천마을 신안인스빌 1·2단지" → "효천마을신안인스빌"
+//   예: "광주봉선지웰" → "광주봉선지웰"
+function aliasNormalize(s) {
+  if (!s) return '';
+  let n = String(s).toLowerCase();
+  n = n.replace(/[\s()()[\]【】.\-_/\\·•‧⋅,，~～]/g, '');
+  // 단지/차/호수 표기 제거 (1단지, 2단지, 1차, 2차, A동, 가동 등)
+  n = n.replace(/\d+(단지|차|동|호|블럭|블록)/g, '');
+  n = n.replace(/[가-하]동/g, '');
+  n = n.replace(/(단지|차|동|호|블럭|블록)\d*/g, '');
+  // 끝부분에 남는 숫자 (한자리·두자리만 — 구분 숫자 흔적)
+  n = n.replace(/\d{1,2}$/, '');
+  return n;
+}
+
 // === Firebase Admin SDK 초기화 (lazy) ===
 let firebaseApp = null;
 async function getFirebaseAdmin() {
@@ -1675,9 +1695,24 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       .filter(([, v]) => v?.siteName)
       .map(([id, v]) => ({ id, siteName: v.siteName, address: v.address || '', ptAssignee: v.ptAssignee, date: v.date, result: v.results }));
 
-    // 3. 매칭 — composite (name + address) 사용
+    // 2.5. apartmentAlias 로드 → ev parsed name → ptId lookup map 구축
+    //   학습된 alias 가 있으면 자동 매칭으로 score=1.0 부여 (사용자 검증 결과 신뢰)
+    const aliasSnap = await db.ref('apartmentAlias').once('value');
+    const aliasDB = aliasSnap.val() || {};
+    const aliasLookup = new Map();  // normalizedEvParsed -> ptId
+    for (const [normKey, entry] of Object.entries(aliasDB)) {
+      if (!entry || !entry.canonicalPtId) continue;
+      // canonical 자체도 lookup
+      aliasLookup.set(normKey, entry.canonicalPtId);
+      // 등록된 alias variants
+      for (const aliasNorm of Object.keys(entry.aliases || {})) {
+        if (aliasNorm) aliasLookup.set(aliasNorm, entry.canonicalPtId);
+      }
+    }
+
+    // 3. 매칭 — alias 우선 → composite (name + address) fallback
     const updates = {};
-    const results = { evidenceProcessed: 0, matched: 0, multiMatch: 0, unmatched: 0, matches: [] };
+    const results = { evidenceProcessed: 0, matched: 0, matchedByAlias: 0, multiMatch: 0, unmatched: 0, matches: [] };
 
     for (const [fileId, ev] of Object.entries(evidence)) {
       results.evidenceProcessed++;
@@ -1686,13 +1721,27 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       const evSite = ev.parsedSiteName;
       if (!evSite) { results.unmatched++; continue; }
 
-      const candidates = ptEntries
-        .map(p => {
-          const c = composite(evSite, p);
-          return { ...p, score: c.score, matchedBy: c.matchedBy };
-        })
-        .filter(p => p.score >= minScore)
-        .sort((a, b) => b.score - a.score);
+      // [Alias 우선 lookup] 학습된 alias 가 있으면 즉시 매칭
+      const evNorm = aliasNormalize(evSite);
+      const aliasPtId = evNorm ? aliasLookup.get(evNorm) : null;
+      let candidates;
+      if (aliasPtId) {
+        const ptHit = ptEntries.find(p => p.id === aliasPtId);
+        if (ptHit) {
+          candidates = [{ ...ptHit, score: 1.0, matchedBy: 'alias' }];
+          results.matchedByAlias++;
+        }
+      }
+
+      if (!candidates) {
+        candidates = ptEntries
+          .map(p => {
+            const c = composite(evSite, p);
+            return { ...p, score: c.score, matchedBy: c.matchedBy };
+          })
+          .filter(p => p.score >= minScore)
+          .sort((a, b) => b.score - a.score);
+      }
 
       if (candidates.length === 0) {
         results.unmatched++;
@@ -2098,6 +2147,10 @@ app.post('/admin/jandi-manual-link', requireAuth, async (req, res) => {
     const ev = evSnap.val();
     if (!ev) return res.status(404).json({ error: 'evidence not found' });
 
+    // PT 메타 (canonical 이름 저장용)
+    const ptSnap = await db.ref(`pt/${ptId}`).once('value');
+    const pt = ptSnap.val();
+
     const updates = {};
     if (unlink) {
       updates[`pt/${ptId}/evidenceFiles/${fileId}`] = null;
@@ -2117,6 +2170,23 @@ app.post('/admin/jandi-manual-link', requireAuth, async (req, res) => {
       updates[`evidence/${fileId}/matchedPtIds/${ptId}`] = 1.0;
       updates[`evidence/${fileId}/ptMatchStatus`] = 'matched';
       updates[`evidence/${fileId}/matchedAt`] = new Date().toISOString();
+
+      // [Alias 학습] evidence parsedSiteName <-> PT.siteName 쌍을 alias DB 에 저장
+      // 다음 회차 비슷한 evidence 가 들어오면 자동 매칭 lookup 으로 즉시 매칭됨.
+      const evParsed = (ev.parsedSiteName || '').trim();
+      if (evParsed && pt && pt.siteName) {
+        const normKey = aliasNormalize(pt.siteName);
+        if (normKey) {
+          updates[`apartmentAlias/${normKey}/canonicalPtId`] = ptId;
+          updates[`apartmentAlias/${normKey}/canonicalSiteName`] = pt.siteName;
+          updates[`apartmentAlias/${normKey}/aliases/${aliasNormalize(evParsed)}`] = {
+            raw: evParsed,
+            count: admin.database.ServerValue.increment ? admin.database.ServerValue.increment(1) : 1,
+            lastUsedAt: new Date().toISOString(),
+          };
+          updates[`apartmentAlias/${normKey}/updatedAt`] = new Date().toISOString();
+        }
+      }
     }
     await db.ref().update(updates);
     return res.json({ status: 'ok', action: unlink ? 'unlinked' : 'linked', fileId, ptId });
