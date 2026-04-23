@@ -14335,7 +14335,38 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* K-APT 수동 검증 모달 — 사용자가 직접 K-APT 에서 공고 찾아 공고번호 붙여넣기 */}
-          {kaptVerifyModal && (
+          {kaptVerifyModal && (() => {
+            // 공통 스크린샷 처리 함수 — paste / file 둘 다 사용
+            window.__handleKaptScreenshot = async (file) => {
+              const reader = new FileReader();
+              reader.onload = async () => {
+                const dataUrl = reader.result;
+                setKaptVerifyModal(m => ({ ...m, stage: 'verifying', verifyMethod: 'screenshot', result: null }));
+                try {
+                  const workerUrl = (kaptWorkerUrl || '').replace(/\/$/, '');
+                  if (!workerUrl) { alert('K-APT Worker URL 미설정'); setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'worker_not_configured' } })); return; }
+                  const resp = await fetch(`${workerUrl}/verify-screenshot`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      siteName: kaptVerifyModal.siteName,
+                      scheduleId: kaptVerifyModal.scheduleId,
+                      assignee: kaptVerifyModal.manager,
+                      imageBase64: dataUrl,
+                    }),
+                  });
+                  const r = await resp.json();
+                  setKaptVerifyModal(m => ({ ...m, stage: 'result', result: r }));
+                  if (r && r.status === 'verified') {
+                    autoTransitionIfEligible(kaptVerifyModal.scheduleId, kaptVerifyModal.manager, 'auto-kapt-verified');
+                  }
+                } catch (err) {
+                  setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'exception', message: err.message } }));
+                }
+              };
+              reader.readAsDataURL(file);
+            };
+            return (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10100, padding: '20px' }}
               onClick={(e) => { if (e.target === e.currentTarget && kaptVerifyModal.stage !== 'verifying' && kaptVerifyModal.stage !== 'candidates-loading') { setKaptVerifyModal(null); setKaptVerifyBidInput(''); } }}>
               <div style={{ background: 'white', borderRadius: '12px', padding: '24px', width: '560px', maxWidth: '95%', maxHeight: '90vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
@@ -14477,9 +14508,31 @@ tr.suppressed td.fname{color:#64748b;}
                       <div><b>B) 스크린샷:</b> K-APT 에서 단지명+POUR 보이게 캡처 → 업로드 → AI 가 자동 검증</div>
                     </div>
 
-                    {/* 옵션 B — 스크린샷 업로드 */}
-                    <div style={{ padding: '12px 14px', background: '#fefce8', border: '1px solid #fde68a', borderRadius: '8px', marginBottom: '16px' }}>
-                      <div style={{ fontSize: '12px', fontWeight: '700', color: '#854d0e', marginBottom: '8px' }}>📸 스크린샷으로 검증 (AI)</div>
+                    {/* 옵션 B — 스크린샷 업로드 (붙여넣기 우선, 파일 선택 보조) */}
+                    <div
+                      tabIndex={0}
+                      onPaste={async (e) => {
+                        const items = e.clipboardData?.items || [];
+                        for (const it of items) {
+                          if (it.type && it.type.startsWith('image/')) {
+                            e.preventDefault();
+                            const file = it.getAsFile();
+                            if (!file) continue;
+                            if (file.size > 5 * 1024 * 1024) { alert('이미지 5MB 이하로 부탁드립니다.'); return; }
+                            await window.__handleKaptScreenshot(file);
+                            return;
+                          }
+                        }
+                      }}
+                      style={{ padding: '14px 16px', background: '#fefce8', border: '2px dashed #fde047', borderRadius: '10px', marginBottom: '16px', cursor: 'text', outline: 'none' }}
+                      onClick={(e) => e.currentTarget.focus()}
+                    >
+                      <div style={{ fontSize: '13px', fontWeight: '800', color: '#854d0e', marginBottom: '6px' }}>📸 스크린샷으로 검증 (AI)</div>
+                      <div style={{ fontSize: '12px', color: '#854d0e', marginBottom: '10px', padding: '10px', background: 'white', borderRadius: '6px', border: '1px dashed #fde047', textAlign: 'center', lineHeight: '1.6' }}>
+                        ⌨ <b>이 박스를 클릭한 뒤 Ctrl+V</b> 로 캡처 이미지 붙여넣기<br/>
+                        <span style={{ fontSize: '10px', color: '#a16207' }}>(Win+Shift+S 로 영역 캡처 → 클립보드 복사 → 여기에 붙여넣기)</span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#854d0e', marginBottom: '6px' }}>또는 파일 선택:</div>
                       <input
                         type="file"
                         accept="image/*"
@@ -14487,44 +14540,12 @@ tr.suppressed td.fname{color:#64748b;}
                           const file = e.target.files?.[0];
                           if (!file) return;
                           if (file.size > 5 * 1024 * 1024) { alert('이미지 5MB 이하로 부탁드립니다.'); return; }
-                          // base64 변환
-                          const reader = new FileReader();
-                          reader.onload = async () => {
-                            const dataUrl = reader.result;
-                            setKaptVerifyModal(m => ({ ...m, stage: 'verifying', verifyMethod: 'screenshot' }));
-                            try {
-                              const workerUrl = (kaptWorkerUrl || '').replace(/\/$/, '');
-                              if (!workerUrl) {
-                                alert('K-APT Worker URL 미설정 — admin 설정에서 등록 필요');
-                                setKaptVerifyModal(m => ({ ...m, stage: 'input' }));
-                                return;
-                              }
-                              const resp = await fetch(`${workerUrl}/verify-screenshot`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  siteName: kaptVerifyModal.siteName,
-                                  scheduleId: kaptVerifyModal.scheduleId,
-                                  assignee: kaptVerifyModal.manager,
-                                  imageBase64: dataUrl,
-                                }),
-                              });
-                              const r = await resp.json();
-                              setKaptVerifyModal(m => ({ ...m, stage: 'result', result: r }));
-                              if (r && r.status === 'verified') {
-                                autoTransitionIfEligible(kaptVerifyModal.scheduleId, kaptVerifyModal.manager, 'auto-kapt-verified');
-                              }
-                            } catch (err) {
-                              setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'exception', message: err.message } }));
-                            }
-                          };
-                          reader.readAsDataURL(file);
+                          await window.__handleKaptScreenshot(file);
                         }}
                         style={{ fontSize: '12px' }}
                       />
-                      <div style={{ fontSize: '11px', color: '#a16207', marginTop: '6px', lineHeight: '1.5' }}>
-                        ⚠ 단지명 + 우리 공법(POUR/CNC/DO/DETEX/시멘트분말) 둘 다 화면에 보이게 캡처해주세요.<br/>
-                        AI 가 단지명 일치 + 공법 키워드 둘 다 확인되면 자동 verified 처리됩니다.
+                      <div style={{ fontSize: '11px', color: '#a16207', marginTop: '8px', lineHeight: '1.5' }}>
+                        ⚠ 단지명 + 우리 공법(POUR/CNC/DO/DETEX/시멘트분말) 둘 다 화면에 보이게 캡처해주세요.
                       </div>
                     </div>
 
@@ -14760,48 +14781,39 @@ tr.suppressed td.fname{color:#64748b;}
                                   style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid #3282B8', background: 'white', color: '#0F4C75', fontSize: '12px', fontWeight: '700', cursor: 'pointer', textAlign: 'left' }}
                                 >K-APT 공고번호 직접 입력 — 복사/붙여넣기</button>
 
-                                {/* 대안 3: 스크린샷 업로드 (AI Vision) */}
-                                <label style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid #f59e0b', background: '#fffbeb', color: '#854d0e', fontSize: '12px', fontWeight: '700', cursor: 'pointer', textAlign: 'left', display: 'block' }}>
-                                  📸 스크린샷으로 검증 — K-APT 캡처 업로드 (AI 자동 판정)
+                                {/* 대안 3: 스크린샷 (붙여넣기 우선, 파일 보조) */}
+                                <div
+                                  tabIndex={0}
+                                  onPaste={async (e) => {
+                                    const items = e.clipboardData?.items || [];
+                                    for (const it of items) {
+                                      if (it.type && it.type.startsWith('image/')) {
+                                        e.preventDefault();
+                                        const file = it.getAsFile();
+                                        if (!file) continue;
+                                        if (file.size > 5 * 1024 * 1024) { alert('이미지 5MB 이하로 부탁드립니다.'); return; }
+                                        await window.__handleKaptScreenshot(file);
+                                        return;
+                                      }
+                                    }
+                                  }}
+                                  onClick={(e) => e.currentTarget.focus()}
+                                  style={{ padding: '10px 12px', borderRadius: '6px', border: '2px dashed #f59e0b', background: '#fffbeb', cursor: 'text', outline: 'none' }}
+                                >
+                                  <div style={{ fontSize: '12px', fontWeight: '700', color: '#854d0e', marginBottom: '6px' }}>📸 스크린샷으로 검증 — Ctrl+V 붙여넣기</div>
+                                  <div style={{ fontSize: '10px', color: '#a16207', marginBottom: '6px' }}>이 박스 클릭 후 캡처 이미지 붙여넣기 (Win+Shift+S)</div>
                                   <input
                                     type="file"
                                     accept="image/*"
-                                    style={{ display: 'none' }}
                                     onChange={async (e) => {
                                       const file = e.target.files?.[0];
                                       if (!file) return;
                                       if (file.size > 5 * 1024 * 1024) { alert('이미지 5MB 이하로 부탁드립니다.'); return; }
-                                      const reader = new FileReader();
-                                      reader.onload = async () => {
-                                        const dataUrl = reader.result;
-                                        setKaptVerifyModal(m => ({ ...m, stage: 'verifying', verifyMethod: 'screenshot', result: null }));
-                                        try {
-                                          const workerUrl = (kaptWorkerUrl || '').replace(/\/$/, '');
-                                          if (!workerUrl) { alert('K-APT Worker URL 미설정'); setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'worker_not_configured' } })); return; }
-                                          const resp = await fetch(`${workerUrl}/verify-screenshot`, {
-                                            method: 'POST',
-                                            headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({
-                                              siteName: kaptVerifyModal.siteName,
-                                              scheduleId: kaptVerifyModal.scheduleId,
-                                              assignee: kaptVerifyModal.manager,
-                                              imageBase64: dataUrl,
-                                            }),
-                                          });
-                                          const r = await resp.json();
-                                          setKaptVerifyModal(m => ({ ...m, stage: 'result', result: r }));
-                                          if (r && r.status === 'verified') {
-                                            autoTransitionIfEligible(kaptVerifyModal.scheduleId, kaptVerifyModal.manager, 'auto-kapt-verified');
-                                          }
-                                        } catch (err) {
-                                          setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'exception', message: err.message } }));
-                                        }
-                                      };
-                                      reader.readAsDataURL(file);
+                                      await window.__handleKaptScreenshot(file);
                                     }}
+                                    style={{ fontSize: '11px' }}
                                   />
-                                  <div style={{ fontSize: '10px', color: '#a16207', marginTop: '4px', fontWeight: 500 }}>단지명 + POUR/CNC/DO/DETEX/시멘트분말 둘 다 보이게 캡처</div>
-                                </label>
+                                </div>
 
                                 {/* 대안 4: 취소공고 처리 */}
                                 <button
@@ -14880,7 +14892,7 @@ tr.suppressed td.fname{color:#64748b;}
                 })()}
               </div>
             </div>
-          )}
+          ); })()}
 
           {/* 관리자 분기정산 모달 (P7 — 월정산 → 분기정산 전환) */}
           {showMonthlySettlement && currentUser?.isAdmin && (() => {
