@@ -14468,15 +14468,67 @@ tr.suppressed td.fname{color:#64748b;}
                   </>
                 )}
 
-                {/* Stage: input — 공고번호 붙여넣기 */}
+                {/* Stage: input — 공고번호 붙여넣기 또는 스크린샷 업로드 */}
                 {kaptVerifyModal.stage === 'input' && (
                   <>
                     <div style={{ padding: '12px 14px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', fontSize: '12px', color: '#1e40af', marginBottom: '16px', lineHeight: '1.6' }}>
-                      <div style={{ fontWeight: '700', marginBottom: '6px' }}>📋 검증 방법</div>
-                      <div>① K-APT 검색 페이지가 새 탭에 열렸습니다. "{kaptVerifyModal.siteName}" 단지로 검색하세요.</div>
-                      <div>② 해당 공고를 찾은 후 <b>공고번호</b>를 복사 (예: 20260401144113799 또는 kg2b_128097)</div>
-                      <div>③ 아래 칸에 붙여넣고 [자동 판정] 클릭</div>
+                      <div style={{ fontWeight: '700', marginBottom: '6px' }}>📋 검증 방법 (둘 중 하나)</div>
+                      <div><b>A) 공고번호:</b> K-APT 에서 공고번호 복사 → 아래 입력 → [자동 판정]</div>
+                      <div><b>B) 스크린샷:</b> K-APT 에서 단지명+POUR 보이게 캡처 → 업로드 → AI 가 자동 검증</div>
                     </div>
+
+                    {/* 옵션 B — 스크린샷 업로드 */}
+                    <div style={{ padding: '12px 14px', background: '#fefce8', border: '1px solid #fde68a', borderRadius: '8px', marginBottom: '16px' }}>
+                      <div style={{ fontSize: '12px', fontWeight: '700', color: '#854d0e', marginBottom: '8px' }}>📸 스크린샷으로 검증 (AI)</div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          if (file.size > 5 * 1024 * 1024) { alert('이미지 5MB 이하로 부탁드립니다.'); return; }
+                          // base64 변환
+                          const reader = new FileReader();
+                          reader.onload = async () => {
+                            const dataUrl = reader.result;
+                            setKaptVerifyModal(m => ({ ...m, stage: 'verifying', verifyMethod: 'screenshot' }));
+                            try {
+                              const workerUrl = (kaptWorkerUrl || '').replace(/\/$/, '');
+                              if (!workerUrl) {
+                                alert('K-APT Worker URL 미설정 — admin 설정에서 등록 필요');
+                                setKaptVerifyModal(m => ({ ...m, stage: 'input' }));
+                                return;
+                              }
+                              const resp = await fetch(`${workerUrl}/verify-screenshot`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  siteName: kaptVerifyModal.siteName,
+                                  scheduleId: kaptVerifyModal.scheduleId,
+                                  assignee: kaptVerifyModal.manager,
+                                  imageBase64: dataUrl,
+                                }),
+                              });
+                              const r = await resp.json();
+                              setKaptVerifyModal(m => ({ ...m, stage: 'result', result: r }));
+                              if (r && r.status === 'verified') {
+                                autoTransitionIfEligible(kaptVerifyModal.scheduleId, kaptVerifyModal.manager, 'auto-kapt-verified');
+                              }
+                            } catch (err) {
+                              setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'exception', message: err.message } }));
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                        }}
+                        style={{ fontSize: '12px' }}
+                      />
+                      <div style={{ fontSize: '11px', color: '#a16207', marginTop: '6px', lineHeight: '1.5' }}>
+                        ⚠ 단지명 + 우리 공법(POUR/CNC/DO/DETEX/시멘트분말) 둘 다 화면에 보이게 캡처해주세요.<br/>
+                        AI 가 단지명 일치 + 공법 키워드 둘 다 확인되면 자동 verified 처리됩니다.
+                      </div>
+                    </div>
+
+                    <div style={{ fontSize: '12px', fontWeight: '700', color: '#475569', marginTop: '8px', marginBottom: '8px' }}>또는</div>
                     <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px' }}>공고번호 또는 K-APT 상세페이지 URL</label>
                     <input
                       type="text"
