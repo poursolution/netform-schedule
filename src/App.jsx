@@ -11708,18 +11708,7 @@ tr.suppressed td.fname{color:#64748b;}
                 const thisMonthWins = thisMonthPts.filter(s => getMyResult(s) === '승').length;
 
                 // ② UX 재설계 — 이번 분기 실적 요약 (qStart/qEnd 는 위에서 계산됨)
-                // [기준 변경] 분기 귀속 = 정산 처리일 우선 (정산완료 > 확정 > 요청 > 결과입력 > PT날짜)
-                //   사유: 1~3월 PT 를 4월(Q2)에 정산요청하면 Q2 마이페이지에 잡혀야 회계상 자연스러움.
-                //   timestamp 없는 옛날 데이터는 PT 날짜로 fallback (기존 동작 유지).
-                const refDateForQuarter = (s) => {
-                  const stl = s.settlement?.[viewingUser] || {};
-                  const ts = stl.completedAt || stl.finalConfirmedAt || stl.confirmedAt || stl.requestedAt || s.resultCheckedAt;
-                  return (ts ? String(ts).slice(0, 10) : null) || s.date;
-                };
-                const thisQuarterPts = myPtSchedules.filter(s => {
-                  const d = refDateForQuarter(s);
-                  return d && d >= qStart && d <= qEnd;
-                });
+                const thisQuarterPts = myPtSchedules.filter(s => s.date && s.date >= qStart && s.date <= qEnd);
                 const qWins = thisQuarterPts.filter(s => getMyResult(s) === '승').length;
                 const qDraws = thisQuarterPts.filter(s => getMyResult(s) === '무').length;
                 const qLosses = thisQuarterPts.filter(s => getMyResult(s) === '패').length;
