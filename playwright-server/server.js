@@ -1771,6 +1771,26 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
         const isShortBrandOnly = evNormStr.length <= 12 &&
           !/^(서울|부산|인천|대구|대전|광주|울산|세종|제주|경기|강원|충북|충남|전북|전남|경북|경남|수원|성남|용인|고양|부천|안산|남양주|안양|평택|의정부|시흥|파주|김포|광명|군포|하남|이천|안성|구리|양주|오산|화성|의왕|여주|과천|춘천|원주|강릉|청주|충주|제천|천안|공주|아산|논산|당진|서산|홍성|예산|전주|군산|익산|정읍|남원|목포|여수|순천|나주|광양|포항|경주|구미|김천|안동|영주|경산|영천|상주|문경|창원|마산|진주|통영|김해|밀양|거제|양산|사천)/.test(evNormStr);
 
+        // [Address 가드] evidence 에 parsedAddress 가 있으면 시·도 일치 검사
+        //   → PDF 본문에서 추출한 실주소 기반. PT.address 첫 시·도 토큰이 같지 않으면 제외.
+        //   evParsedAddr 가 없으면 기존 로직 그대로 (가드 적용 안 함).
+        const SIDO_PATTERNS = [
+          ['서울','서울특별시'], ['부산','부산광역시'], ['인천','인천광역시'], ['대구','대구광역시'],
+          ['대전','대전광역시'], ['광주','광주광역시'], ['울산','울산광역시'], ['세종','세종특별자치시'],
+          ['제주','제주특별자치도'], ['경기','경기도'], ['강원','강원도','강원특별자치도'],
+          ['충북','충청북도'], ['충남','충청남도'], ['전북','전라북도','전북특별자치도'],
+          ['전남','전라남도'], ['경북','경상북도'], ['경남','경상남도'],
+        ];
+        const sidoOf = (s) => {
+          const t = String(s || '');
+          for (const aliases of SIDO_PATTERNS) {
+            for (const a of aliases) if (t.startsWith(a) || t.includes(' ' + a) || t.includes(a + ' ')) return aliases[0];
+          }
+          return null;
+        };
+        const evParsedAddr = ev.parsedAddress;
+        const evSido = evParsedAddr ? sidoOf(evParsedAddr) : null;
+
         candidates = ptEntries
           .map(p => {
             const c = composite(evSite, p);
@@ -1791,6 +1811,11 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
             // brand-only evidence: PT.address 시·도 토큰이 evParsed 에 있어야 인정
             //   (실제로는 거의 없을 테니 → 자동 매칭에서 제외, 검수 페이지에서 수동 확인)
             if (isShortBrandOnly && p.score < 0.97) return false;
+            // [Address 가드] evidence 본문 주소가 있고 PT.address 도 있으면 시·도 일치 필수
+            if (evSido) {
+              const ptSido = sidoOf(p.address);
+              if (ptSido && ptSido !== evSido) return false;  // 시·도 불일치 → 제외
+            }
             return true;
           })
           .sort((a, b) => b.score - a.score);
@@ -2249,6 +2274,102 @@ app.post('/admin/jandi-manual-link', requireAuth, async (req, res) => {
     }
     await db.ref().update(updates);
     return res.json({ status: 'ok', action: unlink ? 'unlinked' : 'linked', fileId, ptId });
+  } catch (e) {
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
+// === Address 추출 (PDF) ===
+// 사용: POST /admin/jandi-extract-addresses
+// body: { ext?='pdf', limit?=50, dryRun?=false, fileId? }
+// 흐름:
+//   1. evidence 중 ext 일치 + parsedAddress 없는 것 limit 만큼 (또는 fileId 단건)
+//   2. Storage 에서 다운로드 → pdf-parse 로 텍스트 추출
+//   3. 한국 주소 패턴 정규식으로 첫 매칭 추출
+//   4. evidence/{fileId}/parsedAddress 저장
+app.post('/admin/jandi-extract-addresses', requireAuth, async (req, res) => {
+  const { ext = 'pdf', limit = 50, dryRun = false, fileId = null } = req.body || {};
+  const startedAt = Date.now();
+  try {
+    await getFirebaseAdmin();
+    const db = admin.database();
+    const bucket = admin.storage().bucket();
+
+    // 한국 주소 정규식 (시·도 + 시·군·구 + 동/읍/면/로/길 + 번지)
+    //   "전라남도 순천시 원가곡길 75"  / "경기도 화성시 봉담읍 동화길 123"  / "서울 강남구 테헤란로 333"
+    const SIDO = '(서울|서울특별시|부산|부산광역시|인천|인천광역시|대구|대구광역시|대전|대전광역시|광주|광주광역시|울산|울산광역시|세종|세종특별자치시|제주|제주특별자치도|경기|경기도|강원|강원도|강원특별자치도|충북|충청북도|충남|충청남도|전북|전라북도|전북특별자치도|전남|전라남도|경북|경상북도|경남|경상남도)';
+    // 매우 단순한 패턴: 시도 이후 50자 안에서 길/로 또는 번지 확인
+    const ADDR_REGEX = new RegExp(SIDO + '[\\s\\S]{1,80}?(?:[\\d]+(?:[-,~][\\d]+)?(?:번지|호)?|(?:길|로)\\s*[\\d]+(?:[-,~][\\d]+)?)', 'g');
+
+    const evSnap = await db.ref('evidence').once('value');
+    const evidence = evSnap.val() || {};
+
+    let candidates;
+    if (fileId) {
+      const e = evidence[fileId];
+      if (!e) return res.status(404).json({ error: 'evidence not found' });
+      candidates = [{ fid: fileId, ev: e }];
+    } else {
+      candidates = Object.entries(evidence)
+        .filter(([, e]) => (e.ext || '').toLowerCase() === ext.toLowerCase())
+        .filter(([, e]) => !e.parsedAddress)
+        .slice(0, limit)
+        .map(([fid, e]) => ({ fid, ev: e }));
+    }
+
+    const results = { processed: 0, extracted: 0, noAddr: 0, errors: 0, samples: [] };
+    const updates = {};
+
+    for (const { fid, ev } of candidates) {
+      results.processed++;
+      try {
+        const storagePath = ev.storagePath;
+        if (!storagePath) { results.errors++; continue; }
+        const file = bucket.file(storagePath);
+        const [buf] = await file.download();
+        if (!buf || buf.length === 0) { results.errors++; continue; }
+
+        const data = await pdf(buf);
+        const text = (data && data.text) || '';
+        // 모든 매치 모아서 첫 번째 깔끔한 것 선택 (시도 + 시·군·구 포함)
+        const matches = [...text.matchAll(ADDR_REGEX)].map(m => m[0].trim());
+        let chosen = null;
+        for (const m of matches) {
+          // 시·군·구 토큰 포함되면 우선
+          if (/(시|군|구)\s/.test(m) || /(시|군|구)[\s가-힣]/.test(m)) { chosen = m; break; }
+        }
+        if (!chosen && matches.length > 0) chosen = matches[0];
+
+        if (chosen) {
+          // 정리: 공백 통일, 길이 제한
+          const cleaned = chosen.replace(/\s+/g, ' ').slice(0, 100);
+          results.extracted++;
+          if (results.samples.length < 10) {
+            results.samples.push({ fid, filename: ev.filename, address: cleaned });
+          }
+          if (!dryRun) {
+            updates[`evidence/${fid}/parsedAddress`] = cleaned;
+            updates[`evidence/${fid}/parsedAddressAt`] = new Date().toISOString();
+          }
+        } else {
+          results.noAddr++;
+        }
+      } catch (e) {
+        results.errors++;
+        if (results.samples.length < 10) results.samples.push({ fid, error: e.message.slice(0, 100) });
+      }
+    }
+
+    if (!dryRun && Object.keys(updates).length > 0) {
+      await db.ref().update(updates);
+    }
+
+    return res.json({
+      status: 'ok',
+      ext, dryRun, limit,
+      results,
+      durationMs: Date.now() - startedAt,
+    });
   } catch (e) {
     return res.status(500).json({ error: e.message, stack: e.stack });
   }
