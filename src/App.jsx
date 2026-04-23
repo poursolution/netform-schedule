@@ -14448,15 +14448,13 @@ tr.suppressed td.fname{color:#64748b;}
                 const dataUrl = reader.result;
                 setKaptVerifyModal(m => ({ ...m, stage: 'verifying', verifyMethod: 'screenshot', result: null, screenshotFile: file, screenshotDataUrl: dataUrl }));
                 try {
-                  const workerUrl = (kaptWorkerUrl || '').replace(/\/$/, '');
-                  if (!workerUrl) { alert('K-APT Worker URL 미설정'); setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'worker_not_configured' }, screenshotFile: file, screenshotDataUrl: dataUrl })); return; }
-                  const resp = await fetch(`${workerUrl}/verify-screenshot`, {
+                  // VPS Tesseract OCR 호출 (Workers AI 한국어 정확도 한계로 교체)
+                  const vpsUrl = 'http://15.164.84.93:8080';
+                  const resp = await fetch(`${vpsUrl}/ocr-screenshot`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                       siteName: kaptVerifyModal.siteName,
-                      scheduleId: kaptVerifyModal.scheduleId,
-                      assignee: kaptVerifyModal.manager,
                       imageBase64: dataUrl,
                     }),
                   });
@@ -14799,45 +14797,36 @@ tr.suppressed td.fname{color:#64748b;}
                                 // 보안: 본인 PT 본인 통과 차단 — 관리자 검토 큐로
                                 //   관리자가 다른 사람 PT 처리할 때만 즉시 통과 허용
                                 if (!isAdmin || isOwner) {
-                                  // 관리자 검토 요청 흐름
-                                  const file = kaptVerifyModal.screenshotFile;
-                                  if (!file || !storage) { alert('스크린샷 파일 또는 Storage 없음 — 다시 업로드'); return; }
-                                  const ts = Date.now();
-                                  const ext = (file.name?.match(/\.([a-z0-9]+)$/i) || [, 'png'])[1];
-                                  const path = `evidence/screenshot-verify/${kaptVerifyModal.scheduleId}_${ts}.${ext}`;
+                                  const dataUrl = kaptVerifyModal.screenshotDataUrl;
+                                  if (!dataUrl) { alert('스크린샷 없음 — 다시 업로드'); return; }
+                                  const vpsUrl = 'http://15.164.84.93:8080';
                                   try {
-                                    const ref = storage.ref(path);
-                                    const snap = await ref.put(file);
-                                    const url = await snap.ref.getDownloadURL();
-                                    await database.ref(`pt/${kaptVerifyModal.scheduleId}/kaptVerified`).update({
-                                      status: 'pending-admin-review',
-                                      method: 'screenshot-pending-admin',
-                                      screenshotPath: path,
-                                      screenshotUrl: url,
-                                      aiExtractedSite: r.extractedSite || '',
-                                      aiSimilarity: r.similarity || 0,
-                                      aiOurMethodFound: r.ourMethodFound || [],
-                                      requestedAt: new Date().toISOString(),
-                                      requestedBy: meName,
-                                      requestedFor: ptAssignee,
+                                    const resp = await fetch(`${vpsUrl}/screenshot-verify-request`, {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        scheduleId: kaptVerifyModal.scheduleId,
+                                        ptAssignee, requestedBy: meName,
+                                        imageBase64: dataUrl,
+                                        aiResult: { extractedSite: r.extractedSite || '', similarity: r.similarity || 0, ourMethodFound: r.ourMethodFound || [] },
+                                      }),
                                     });
+                                    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
+                                    const j = await resp.json();
                                     setPtSchedules(prev => prev.map(ps => ps.id === kaptVerifyModal.scheduleId ? ({
                                       ...ps,
-                                      kaptVerified: { status: 'pending-admin-review', method: 'screenshot-pending-admin', screenshotUrl: url, requestedBy: meName, requestedAt: new Date().toISOString() },
+                                      kaptVerified: { status: 'pending-admin-review', method: 'screenshot-pending-admin', screenshotUrl: j.screenshotUrl, requestedBy: meName, requestedAt: new Date().toISOString() },
                                     }) : ps));
                                     try {
                                       await sendJandiNotification({
                                         body: `📸 K-APT 스크린샷 검증 요청 (soft_match) — 관리자 확인 필요`,
                                         connectColor: '#3b82f6',
-                                        connectInfo: [{
-                                          title: `${kaptVerifyModal.siteName} (${kaptVerifyModal.date})`,
-                                          description: `요청: ${meName} → 담당: ${ptAssignee}\nAI 추출: ${r.extractedSite || '(실패)'} (유사도 ${r.similarity})\nAI 검출 공법: ${(r.ourMethodFound || []).join(', ') || '(없음)'}\n\n스크린샷: ${url}\n\n관리자가 시스템에서 [승인/거부] 처리 필요.`,
-                                        }],
+                                        connectInfo: [{ title: `${kaptVerifyModal.siteName} (${kaptVerifyModal.date})`, description: `요청: ${meName} → 담당: ${ptAssignee}\nAI 추출: ${r.extractedSite || '(실패)'} (유사도 ${r.similarity})\nAI 공법: ${(r.ourMethodFound || []).join(', ') || '(없음)'}\n\n스크린샷: ${j.screenshotUrl}` }],
                                       });
-                                    } catch (e) { console.warn('잔디 알림 실패:', e); }
+                                    } catch {}
                                     alert('관리자 검토 요청 발송됨 — 승인 후 verified 처리됩니다.');
                                     setKaptVerifyModal(null); setKaptVerifyBidInput('');
-                                  } catch (e) { alert('업로드/저장 실패: ' + e.message); }
+                                  } catch (e) { alert('업로드 실패: ' + e.message); }
                                   return;
                                 }
                                 // 관리자 + 타인 PT → 즉시 통과
@@ -14907,42 +14896,45 @@ tr.suppressed td.fname{color:#64748b;}
                                       const ptAssignee = kaptVerifyModal.manager;
                                       const meName = currentUser?.name;
                                       if (!meName) { alert('로그인 정보 없음'); return; }
-                                      // 본인이 본인 PT 검토 요청 후 자기가 승인 못 하게 — 요청은 가능, 승인 단계에서 차단
-                                      // 스크린샷 Storage 업로드
-                                      const file = kaptVerifyModal.screenshotFile;
-                                      if (!file || !storage) { alert('스크린샷 파일 또는 Storage 없음 — 다시 업로드해주세요'); return; }
-                                      const ts = Date.now();
-                                      const ext = (file.name?.match(/\.([a-z0-9]+)$/i) || [, 'png'])[1];
-                                      const path = `evidence/screenshot-verify/${kaptVerifyModal.scheduleId}_${ts}.${ext}`;
+                                      const dataUrl = kaptVerifyModal.screenshotDataUrl;
+                                      if (!dataUrl) { alert('스크린샷 없음 — 다시 업로드'); return; }
+                                      const workerUrl = (kaptWorkerUrl || '').replace(/\/$/, '');
+                                      // VPS 가 호스트인 경우만 업로드 endpoint 사용 가능 (CORS 고려)
+                                      // VPS URL 추출 — Worker 가 VPS proxy 역할이라 Worker 가 아닌 VPS 직접 호출 필요
+                                      // → 임시: 같은 도메인 가정. CORS 이슈 시 Worker 에 같은 endpoint 추가 필요
+                                      const vpsUrl = 'http://15.164.84.93:8080';
                                       try {
-                                        const ref = storage.ref(path);
-                                        const snap = await ref.put(file);
-                                        const url = await snap.ref.getDownloadURL();
-                                        // DB 에 'pending-admin-review' 상태로 저장 (verified 아님)
-                                        await database.ref(`pt/${kaptVerifyModal.scheduleId}/kaptVerified`).update({
-                                          status: 'pending-admin-review',
-                                          method: 'screenshot-pending-admin',
-                                          screenshotPath: path,
-                                          screenshotUrl: url,
-                                          aiExtractedSite: r.extractedSite || '',
-                                          aiSimilarity: r.similarity || 0,
-                                          aiOurMethodFound: r.ourMethodFound || [],
-                                          requestedAt: new Date().toISOString(),
-                                          requestedBy: meName,
-                                          requestedFor: ptAssignee,
+                                        const resp = await fetch(`${vpsUrl}/screenshot-verify-request`, {
+                                          method: 'POST',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({
+                                            scheduleId: kaptVerifyModal.scheduleId,
+                                            ptAssignee,
+                                            requestedBy: meName,
+                                            imageBase64: dataUrl,
+                                            aiResult: {
+                                              extractedSite: r.extractedSite || '',
+                                              similarity: r.similarity || 0,
+                                              ourMethodFound: r.ourMethodFound || [],
+                                            },
+                                          }),
                                         });
+                                        if (!resp.ok) {
+                                          const t = await resp.text();
+                                          throw new Error(`HTTP ${resp.status}: ${t.slice(0, 200)}`);
+                                        }
+                                        const j = await resp.json();
                                         setPtSchedules(prev => prev.map(ps => ps.id === kaptVerifyModal.scheduleId ? ({
                                           ...ps,
-                                          kaptVerified: { status: 'pending-admin-review', method: 'screenshot-pending-admin', screenshotUrl: url, requestedBy: meName, requestedAt: new Date().toISOString() },
+                                          kaptVerified: { status: 'pending-admin-review', method: 'screenshot-pending-admin', screenshotUrl: j.screenshotUrl, requestedBy: meName, requestedAt: new Date().toISOString() },
                                         }) : ps));
-                                        // 잔디 알림 (admin 채널) — 관리자 검토 큐 알림
                                         try {
                                           await sendJandiNotification({
                                             body: `📸 K-APT 스크린샷 검증 요청 — 관리자 확인 필요`,
                                             connectColor: '#3b82f6',
                                             connectInfo: [{
                                               title: `${kaptVerifyModal.siteName} (${kaptVerifyModal.date})`,
-                                              description: `요청: ${meName} → 담당: ${ptAssignee}\nAI 추출: ${r.extractedSite || '(실패)'} (유사도 ${r.similarity || 0})\nAI 검출 공법: ${(r.ourMethodFound || []).join(', ') || '(없음)'}\n\n스크린샷: ${url}\n\n관리자가 시스템에서 [승인/거부] 처리 필요.`,
+                                              description: `요청: ${meName} → 담당: ${ptAssignee}\nAI 추출: ${r.extractedSite || '(실패)'} (유사도 ${r.similarity || 0})\nAI 검출 공법: ${(r.ourMethodFound || []).join(', ') || '(없음)'}\n\n스크린샷: ${j.screenshotUrl}\n\n관리자가 시스템에서 [승인/거부] 처리 필요.`,
                                             }],
                                           });
                                         } catch (e) { console.warn('잔디 알림 실패:', e); }

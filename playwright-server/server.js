@@ -78,6 +78,25 @@ function parseHwpBuffer(buffer) {
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
+// === CORS — 프론트 (schedules-cip.pages.dev) 에서 직접 호출 허용 ===
+//   /screenshot-verify-request, /ocr-screenshot 같은 인증 없는 endpoint 만 사용
+//   인증 endpoint 는 어차피 토큰 헤더라 CORS preflight 필요
+const ALLOWED_ORIGINS = new Set([
+  'https://schedules-cip.pages.dev',
+  'http://localhost:3000', 'http://localhost:5173',
+]);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Max-Age', '600');
+  }
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  next();
+});
+
 const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || 'change-me-in-production';
 
@@ -2274,6 +2293,186 @@ app.post('/admin/jandi-manual-link', requireAuth, async (req, res) => {
     }
     await db.ref().update(updates);
     return res.json({ status: 'ok', action: unlink ? 'unlinked' : 'linked', fileId, ptId });
+  } catch (e) {
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
+// === OCR 기반 스크린샷 검증 (Tesseract 한글) ===
+// 사용: POST /ocr-screenshot
+// body: { siteName, imageBase64 (data URL) }
+// 흐름:
+//   1. base64 → 임시 PNG 파일
+//   2. tesseract 한글 OCR
+//   3. 추출 텍스트에서 단지명 + 우리 공법 키워드 검사
+//   4. 결과 JSON 반환 (verified / soft_match / needs_review)
+const TESSERACT = process.env.TESSERACT || 'tesseract';
+const OUR_METHOD_KEYWORDS = ['POUR', 'CNC', 'DETEX', '시멘트분말', 'pour', 'cnc', 'detex'];
+// "DO" 는 너무 흔한 영단어라 별도 처리: "DO공법" 또는 "DO 공법" 같은 형태만 검출
+const DO_METHOD_REGEX = /\bDO\s*공법|DO[솔루션\s]/;
+
+function ocrTesseract(imageBuf) {
+  return new Promise((resolve, reject) => {
+    const tmpFile = path.join(os.tmpdir(), `ocrtmp_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.png`);
+    fsp.writeFile(tmpFile, imageBuf).then(() => {
+      execFile(TESSERACT, [tmpFile, '-', '-l', 'kor+eng'], { maxBuffer: 20 * 1024 * 1024, timeout: 30000 }, async (err, stdout, stderr) => {
+        try { await fsp.unlink(tmpFile); } catch {}
+        if (err) reject(new Error('tesseract: ' + (err.message || stderr.slice(0, 200))));
+        else resolve(stdout || '');
+      });
+    }).catch(reject);
+  });
+}
+
+// 단지명 정규화 + 유사도 (Worker 와 동일 규칙)
+function ocrNormName(s) {
+  if (!s) return '';
+  let n = String(s).toLowerCase();
+  n = n.replace(/(\d+)\s*[/·•‧⋅\-]\s*(\d+)\s*단지/g, '$1및$2단지');
+  n = n.replace(/[\s()()[\]【】.\-_/\\·•‧⋅,，~～]/g, '');
+  return n;
+}
+function ocrSimilarity(a, b) {
+  const na = ocrNormName(a), nb = ocrNormName(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 1;
+  if (na.includes(nb) || nb.includes(na)) return Math.min(na.length, nb.length) / Math.max(na.length, nb.length);
+  const longer = na.length >= nb.length ? na : nb;
+  const shorter = na.length >= nb.length ? nb : na;
+  let best = 0;
+  for (let len = shorter.length; len >= 3 && len > best; len--) {
+    for (let i = 0; i + len <= shorter.length; i++) {
+      if (longer.includes(shorter.slice(i, i + len))) { best = len; break; }
+    }
+  }
+  return best / longer.length;
+}
+
+app.post('/ocr-screenshot', async (req, res) => {
+  const { siteName, imageBase64 } = req.body || {};
+  if (!siteName) return res.status(400).json({ status: 'error', reason: 'empty_siteName' });
+  if (!imageBase64) return res.status(400).json({ status: 'error', reason: 'empty_image' });
+
+  try {
+    const m = String(imageBase64).match(/^data:image\/[a-z+]+;base64,(.+)$/i);
+    const b64 = m ? m[1] : imageBase64;
+    const buf = Buffer.from(b64, 'base64');
+    if (buf.length === 0) return res.status(400).json({ status: 'error', reason: 'empty_image_decoded' });
+    if (buf.length > 5 * 1024 * 1024) return res.status(400).json({ status: 'error', reason: 'image_too_large' });
+
+    const text = await ocrTesseract(buf);
+    const textNoSpace = text.replace(/\s+/g, '');
+
+    // 단지명 추출 시도 — "단지명: XXX" 패턴 또는 텍스트 전체에서 siteName 부분 매칭
+    let extractedSite = '';
+    const labelMatch = text.match(/(?:단\s*지\s*명|아\s*파\s*트\s*명|소\s*재\s*지|단지\s*명칭|명칭)\s*[:：]\s*([^\n\r]+)/);
+    if (labelMatch) extractedSite = labelMatch[1].trim().slice(0, 60);
+    // label 못 찾으면 siteName 의 일부가 텍스트에 직접 보이는지로 추출 시도
+    if (!extractedSite) {
+      // siteName 의 normalize 버전이 textNoSpace 에 substring 으로 있는지 확인
+      const ns = ocrNormName(siteName);
+      if (ns && textNoSpace.includes(ns)) extractedSite = siteName;  // 그대로 매칭됨
+    }
+
+    const similarity = extractedSite ? ocrSimilarity(siteName, extractedSite) : ocrSimilarity(siteName, textNoSpace);
+
+    // 우리 공법 키워드 추출 — text 안에서 직접 검색
+    const ourMethodFound = [];
+    for (const kw of OUR_METHOD_KEYWORDS) {
+      if (text.includes(kw) || textNoSpace.includes(kw)) {
+        const upper = kw.toUpperCase();
+        if (!ourMethodFound.includes(upper)) ourMethodFound.push(upper);
+      }
+    }
+    if (DO_METHOD_REGEX.test(text)) ourMethodFound.push('DO');
+    const hasOurMethod = ourMethodFound.length > 0;
+
+    // 판정
+    //   verified: 단지명 유사도 ≥ 0.65 AND 공법 검출
+    //   soft_match: 0.4 ≤ 유사도 < 0.65 AND 공법 검출 (사용자 확인 후 통과)
+    //   needs_review: 그 외
+    let status, reason;
+    const verified = similarity >= 0.65 && hasOurMethod;
+    const softMatch = !verified && similarity >= 0.4 && hasOurMethod;
+    if (verified) { status = 'verified'; reason = null; }
+    else if (softMatch) { status = 'soft_match'; reason = 'low_similarity_confirm_needed'; }
+    else if (!hasOurMethod) { status = 'needs_review'; reason = 'no_our_method'; }
+    else { status = 'needs_review'; reason = 'siteName_mismatch'; }
+
+    return res.json({
+      status, reason,
+      extractedSite,
+      inputSiteName: siteName,
+      hasOurMethod,
+      ourMethodFound,
+      similarity: Number(similarity.toFixed(3)),
+      source: 'screenshot-tesseract',
+      ocrTextSnippet: text.slice(0, 300),
+    });
+  } catch (e) {
+    return res.status(500).json({ status: 'error', reason: 'exception', error: e.message });
+  }
+});
+
+// === K-APT 스크린샷 검증 요청 (관리자 검토 큐 등록) ===
+// 사용: POST /screenshot-verify-request
+// body: { scheduleId, ptAssignee, requestedBy, imageBase64, aiResult? }
+// 흐름:
+//   1. 입력 검증 (PT 존재 + 이미지 5MB 이하 + 이미지 타입)
+//   2. base64 → Storage 업로드 (admin SDK 사용 — rules 우회)
+//   3. RTDB pt/{id}/kaptVerified = pending-admin-review (URL 포함)
+//   4. 잔디 admin 알림은 클라이언트에서 처리 (또는 향후 서버 발송)
+//   5. URL 반환
+// 인증: 토큰 없이 호출 가능 — PT 존재 검증으로 abuse 차단
+//   (악의적 호출도 PT 가 실재해야 가능 + 결과는 관리자 큐에 들어가서 거부됨)
+app.post('/screenshot-verify-request', async (req, res) => {
+  const { scheduleId, ptAssignee, requestedBy, imageBase64, aiResult } = req.body || {};
+  if (!scheduleId || !requestedBy || !imageBase64) {
+    return res.status(400).json({ error: 'scheduleId, requestedBy, imageBase64 required' });
+  }
+  try {
+    await getFirebaseAdmin();
+    const db = admin.database();
+    const bucket = admin.storage().bucket();
+
+    // PT 존재 확인 (abuse 방지)
+    const ptSnap = await db.ref(`pt/${scheduleId}`).once('value');
+    const pt = ptSnap.val();
+    if (!pt) return res.status(404).json({ error: 'pt not found' });
+
+    // base64 → Buffer
+    const m = String(imageBase64).match(/^data:(image\/[a-z0-9+]+);base64,(.+)$/i);
+    if (!m) return res.status(400).json({ error: 'imageBase64 must be a data URL' });
+    const contentType = m[1];
+    const buf = Buffer.from(m[2], 'base64');
+    if (buf.length === 0) return res.status(400).json({ error: 'empty image' });
+    if (buf.length > 5 * 1024 * 1024) return res.status(400).json({ error: 'image too large (>5MB)' });
+
+    const ext = (contentType.split('/')[1] || 'png').replace('+xml', '');
+    const ts = Date.now();
+    const path = `evidence/screenshot-verify/${scheduleId}_${ts}.${ext}`;
+    const file = bucket.file(path);
+    await file.save(buf, { contentType, public: true, metadata: { cacheControl: 'public, max-age=86400' } });
+    // makePublic 으로 public URL 보장
+    try { await file.makePublic(); } catch {}
+    const url = `https://storage.googleapis.com/${bucket.name}/${path}`;
+
+    // RTDB 갱신
+    const now = new Date().toISOString();
+    await db.ref(`pt/${scheduleId}/kaptVerified`).update({
+      status: 'pending-admin-review',
+      method: 'screenshot-pending-admin',
+      screenshotPath: path,
+      screenshotUrl: url,
+      aiExtractedSite: aiResult?.extractedSite || '',
+      aiSimilarity: aiResult?.similarity ?? 0,
+      aiOurMethodFound: aiResult?.ourMethodFound || [],
+      requestedAt: now,
+      requestedBy,
+      requestedFor: ptAssignee || pt.ptAssignee || null,
+    });
+
+    return res.json({ status: 'ok', screenshotUrl: url, screenshotPath: path });
   } catch (e) {
     return res.status(500).json({ error: e.message, stack: e.stack });
   }
