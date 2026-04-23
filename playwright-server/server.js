@@ -1701,7 +1701,7 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
     const pts = ptSnap.val() || {};
     const ptEntries = Object.entries(pts)
       .filter(([, v]) => v?.siteName)
-      .map(([id, v]) => ({ id, siteName: v.siteName, address: v.address || '', ptAssignee: v.ptAssignee, date: v.date, result: v.results }));
+      .map(([id, v]) => ({ id, siteName: v.siteName, address: v.address || '', ptAssignee: v.ptAssignee, date: v.date, result: v.results, workType: v.workType || '' }));
 
     // 2.5. apartmentAlias 로드 → ev parsed name → ptId lookup map 구축
     //   학습된 alias 가 있으면 자동 매칭으로 score=1.0 부여 (사용자 검증 결과 신뢰)
@@ -1718,7 +1718,28 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       }
     }
 
-    // 3. 매칭 — alias 우선 → composite (name + address) fallback
+    // [공법 매칭 보너스] ev.parsedMethod (예: "재도장,에폭시") vs pt.workType (예: "옥상방수")
+    //   둘 다 우리 공법 키워드(POUR/CNC/DO/DETEX/시멘트분말/재도장/에폭시/우레탄/방수/슬라브/싱글/금속기와/아스콘) 추출 →
+    //   공통 토큰 ≥1: ×1.05 (보너스 5%)
+    //   둘 다 비어있음: ×1.0 (영향 없음)
+    //   한쪽만 있고 다른쪽은 비어있음: ×1.0 (영향 없음 — 데이터 부족 패널티 안 줌)
+    //   양쪽 다 있는데 공통 0: ×0.92 (약한 패널티 — 다른 공법 가능성 시사)
+    const METHOD_TOKENS = ['재도장','에폭시','우레탄','방수','슬라브','싱글','금속기와','아스콘','시멘트','파라펫','탄성','써밋','균열','보강','pour','cnc','detex'];
+    const extractMethodTokens = (s) => {
+      if (!s) return [];
+      const lower = String(s).toLowerCase();
+      return METHOD_TOKENS.filter(t => lower.includes(t));
+    };
+    const methodMultiplier = (evMethod, ptWorkType) => {
+      const ev = extractMethodTokens(evMethod);
+      const pt = extractMethodTokens(ptWorkType);
+      if (ev.length === 0 || pt.length === 0) return 1.0;
+      const common = ev.filter(t => pt.includes(t));
+      if (common.length > 0) return 1.05;
+      return 0.92;
+    };
+
+    // 3. 매칭 — alias 우선 → composite (name + address) → method 보정
     const updates = {};
     const results = { evidenceProcessed: 0, matched: 0, matchedByAlias: 0, multiMatch: 0, unmatched: 0, matches: [] };
 
@@ -1745,7 +1766,17 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
         candidates = ptEntries
           .map(p => {
             const c = composite(evSite, p);
-            return { ...p, score: c.score, matchedBy: c.matchedBy };
+            // 공법 보정 적용 (단지명 0.5 미만은 보정 의미 없음 — 너무 약한 매칭)
+            let adjustedScore = c.score;
+            let matchedBy = c.matchedBy;
+            if (c.score >= 0.5) {
+              const mul = methodMultiplier(ev.parsedMethod, p.workType || '');
+              if (mul !== 1.0) {
+                adjustedScore = Math.min(1, c.score * mul);
+                matchedBy = matchedBy + (mul > 1 ? '+method' : '-method');
+              }
+            }
+            return { ...p, score: adjustedScore, matchedBy };
           })
           .filter(p => p.score >= minScore)
           .sort((a, b) => b.score - a.score);
