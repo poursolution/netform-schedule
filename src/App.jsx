@@ -14500,13 +14500,25 @@ tr.suppressed td.fname{color:#64748b;}
                       <button
                         disabled={!kaptVerifyBidInput.trim()}
                         onClick={async () => {
-                          // URL 에서 bidNum 추출
+                          // URL 에서 bidNum 추출 — K-APT 신/구 URL 형식 모두 지원
+                          //   구형: ?bidNum=...  ?bidcode=...
+                          //   신형: ?bidNo=...  ?m=...  (bidNo= 가 비어있는 케이스 대비 m= fallback)
                           let input = kaptVerifyBidInput.trim();
-                          const urlMatch = input.match(/bidNum=([a-z0-9_]+)/i) || input.match(/bidcode=(\d+)/i);
-                          if (urlMatch) input = urlMatch[1].startsWith('kg2b_') || /^\d+$/.test(urlMatch[1]) ? urlMatch[1] : 'kg2b_' + urlMatch[1];
-                          // 유효성 체크 (숫자 17~18자리 또는 kg2b_숫자)
+                          const tryKeys = ['bidNum', 'bidNo', 'bidno', 'm', 'bidcode'];
+                          let extracted = null;
+                          for (const key of tryKeys) {
+                            const re = new RegExp('(?:^|[?&])' + key + '=([a-z0-9_]+)', 'i');
+                            const mm = input.match(re);
+                            if (mm && mm[1]) { extracted = mm[1]; break; }
+                          }
+                          if (extracted) {
+                            input = (extracted.startsWith('kg2b_') || /^\d+$/.test(extracted))
+                              ? extracted
+                              : 'kg2b_' + extracted;
+                          }
+                          // 유효성 체크 (숫자 14~20자리 또는 kg2b_숫자)
                           if (!/^(\d{14,20}|kg2b_\d+)$/.test(input)) {
-                            alert(`공고번호 형식이 맞지 않습니다:\n  "${input}"\n\n17~18자리 숫자 또는 kg2b_XXX 형식이어야 합니다.`);
+                            alert(`공고번호 형식이 맞지 않습니다:\n  "${input}"\n\n14~20자리 숫자 또는 kg2b_XXX 형식이어야 합니다.\n\nURL 통째로 붙여도 ?bidNum= / ?bidNo= / ?m= / ?bidcode= 에서 자동 추출합니다.`);
                             return;
                           }
                           // verifying 상태로 전환 + Worker 호출
