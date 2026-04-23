@@ -201,10 +201,9 @@ app.get('/health', (req, res) => {
 });
 
 // 매칭 검수 정적 페이지 — 인증은 페이지 안에서 처리 (사용자가 토큰 입력)
+// ESM 모듈이라 __dirname 없음 → process.cwd() 사용 (systemd WorkingDirectory=~/kapt-playwright-server)
 app.get('/admin-review', (req, res) => {
-  const fs = require('fs');
-  const path = require('path');
-  res.sendFile(path.join(__dirname, 'admin-review.html'));
+  res.sendFile(path.join(process.cwd(), 'admin-review.html'));
 });
 
 // PT 전체 목록 (검수 페이지 직접 검색용) — 매우 가벼운 응답
