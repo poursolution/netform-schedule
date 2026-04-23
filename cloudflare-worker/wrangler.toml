@@ -24,6 +24,10 @@ crons = ["0 17 * * *", "0 0 * * 1", "0 0,8 * * *"]
 [browser]
 binding = "BROWSER"
 
+# Workers AI — 스크린샷 검증용 (Vision 모델로 단지명 + POUR 키워드 추출)
+[ai]
+binding = "AI"
+
 # CORS 허용 도메인
 [env.production]
 vars = { ALLOWED_ORIGIN = "https://schedules-cip.pages.dev" }

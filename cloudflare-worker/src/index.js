@@ -164,6 +164,122 @@ export default {
       }
     }
 
+    // 스크린샷 검증: POST /verify-screenshot
+    //   body: { siteName, ptId?, scheduleId?, assignee?, imageBase64 (data URL or pure base64) }
+    //   흐름:
+    //     1. Workers AI Vision 모델 (Llama 3.2 11B) 로 이미지에서 텍스트 추출
+    //     2. 추출된 텍스트에서 단지명 + 우리 공법(POUR/CNC/DO/DETEX/시멘트분말) 키워드 검사
+    //     3. 단지명 vs 입력 siteName 유사도 ≥ 0.8 이고 우리 공법 키워드 ≥1 이면 verified
+    //   반환: { status: 'verified'|'needs_review', extractedText, extractedSite, hasOurMethod, similarity, reason }
+    if (url.pathname === '/verify-screenshot' && request.method === 'POST') {
+      try {
+        if (!env.AI) {
+          return jsonResponse({ status: 'error', reason: 'ai_binding_missing' }, env, 500);
+        }
+        const body = await request.json();
+        const siteName = (body.siteName || '').trim();
+        const imgRaw = body.imageBase64 || '';
+        if (!siteName) return jsonResponse({ status: 'error', reason: 'empty_siteName' }, env, 400);
+        if (!imgRaw) return jsonResponse({ status: 'error', reason: 'empty_image' }, env, 400);
+
+        // data URL prefix 제거 → pure base64
+        const b64 = imgRaw.replace(/^data:image\/[a-z]+;base64,/i, '');
+        // base64 → Uint8Array (Workers AI 가 image 를 number[] 로 받음)
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+        const prompt = `You are inspecting a Korean K-APT (공동주택관리정보시스템) screenshot for bid verification.
+Extract and report the following in this exact JSON format (no other text):
+{
+  "apartmentName": "exact apartment name shown (한국어 그대로, '아파트' 포함)",
+  "hasPourMethod": true|false,
+  "hasOurMethod": true|false,
+  "ourMethodFound": ["POUR" or "CNC" or "DO" or "DETEX" or "시멘트분말" — list all visible],
+  "winner": "낙찰업체명 if shown, else null",
+  "rawTextSnippet": "first 200 chars of visible text"
+}
+Look for: apartment name (단지명), POUR/CNC/DO/DETEX/시멘트분말 keywords, winner (낙찰자/사업자) info.`;
+
+        // Llama 3.2 Vision 라이선스 동의 — 첫 호출 시 계정 단위로 'agree' 필요
+        try {
+          await env.AI.run('@cf/meta/llama-3.2-11b-vision-instruct', { prompt: 'agree' });
+        } catch {}
+
+        const aiResp = await env.AI.run('@cf/meta/llama-3.2-11b-vision-instruct', {
+          image: Array.from(bytes),
+          prompt,
+          max_tokens: 512,
+        });
+
+        // Workers AI 응답은 다양한 형태 — 모두 string 으로 정규화
+        let responseText = '';
+        if (typeof aiResp === 'string') responseText = aiResp;
+        else if (aiResp && typeof aiResp.response === 'string') responseText = aiResp.response;
+        else if (aiResp && typeof aiResp.text === 'string') responseText = aiResp.text;
+        else if (aiResp && Array.isArray(aiResp.description)) responseText = aiResp.description.join(' ');
+        else responseText = JSON.stringify(aiResp);
+
+        // JSON 추출 (모델이 ```json ``` 으로 감쌀 수 있음)
+        let parsed = null;
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try { parsed = JSON.parse(jsonMatch[0]); } catch {}
+        }
+
+        if (!parsed) {
+          return jsonResponse({
+            status: 'needs_review',
+            reason: 'ai_response_unparseable',
+            rawResponse: responseText.slice(0, 500),
+          }, env);
+        }
+
+        const extractedSite = String(parsed.apartmentName || '').trim();
+        const hasOurMethod = !!parsed.hasOurMethod || !!parsed.hasPourMethod ||
+          (Array.isArray(parsed.ourMethodFound) && parsed.ourMethodFound.length > 0);
+
+        // 단지명 유사도 계산 (간단 substring + 정규화)
+        const normName = (s) => String(s || '').toLowerCase()
+          .replace(/[\s()()[\]【】.\-_/\\·•‧⋅,，~～]/g, '')
+          .replace(/(\d+)\s*[/·•‧⋅\-]\s*(\d+)\s*단지/g, '$1및$2단지');
+        const a = normName(siteName);
+        const b = normName(extractedSite);
+        let similarity = 0;
+        if (a && b) {
+          if (a === b) similarity = 1;
+          else if (a.includes(b) || b.includes(a)) similarity = Math.min(a.length, b.length) / Math.max(a.length, b.length);
+          else {
+            // 공통 substring
+            const longer = a.length >= b.length ? a : b;
+            const shorter = a.length >= b.length ? b : a;
+            let best = 0;
+            for (let len = shorter.length; len >= 3 && len > best; len--) {
+              for (let i = 0; i + len <= shorter.length; i++) {
+                if (longer.includes(shorter.slice(i, i + len))) { best = len; break; }
+              }
+            }
+            similarity = best / longer.length;
+          }
+        }
+
+        const verified = similarity >= 0.8 && hasOurMethod;
+        return jsonResponse({
+          status: verified ? 'verified' : 'needs_review',
+          reason: verified ? null : (similarity < 0.8 ? 'siteName_mismatch' : 'no_our_method'),
+          extractedSite,
+          hasOurMethod,
+          ourMethodFound: parsed.ourMethodFound || [],
+          winner: parsed.winner || null,
+          similarity: Number(similarity.toFixed(3)),
+          source: 'screenshot',
+          model: '@cf/meta/llama-3.2-11b-vision-instruct',
+        }, env);
+      } catch (e) {
+        return jsonResponse({ status: 'error', reason: 'exception', error: e.message }, env, 500);
+      }
+    }
+
     // 분기 확인 리마인드 수동 실행: POST /run-quarterly-reminder { quarterKey?, force? }
     //   미확인 담당자에게 개인 잔디 재발송
     if (url.pathname === '/run-quarterly-reminder' && request.method === 'POST') {
