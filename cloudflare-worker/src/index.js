@@ -189,17 +189,16 @@ export default {
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 
-        const prompt = `You are inspecting a Korean K-APT (공동주택관리정보시스템) screenshot for bid verification.
-Extract and report the following in this exact JSON format (no other text):
-{
-  "apartmentName": "exact apartment name shown (한국어 그대로, '아파트' 포함)",
-  "hasPourMethod": true|false,
-  "hasOurMethod": true|false,
-  "ourMethodFound": ["POUR" or "CNC" or "DO" or "DETEX" or "시멘트분말" — list all visible],
-  "winner": "낙찰업체명 if shown, else null",
-  "rawTextSnippet": "first 200 chars of visible text"
-}
-Look for: apartment name (단지명), POUR/CNC/DO/DETEX/시멘트분말 keywords, winner (낙찰자/사업자) info.`;
+        // 한국어 OCR 정확도 한계 대비 — 예시 값을 그대로 베끼지 않도록 빈 값/null 로 제시.
+        // 라벨 prefix("단지명:" 등) 도 제거하도록 명시.
+        const prompt = `Korean K-APT (공동주택관리정보시스템) bid screenshot. Output EXACTLY this JSON (no markdown, no extra text):
+{"apartmentName":"","ourMethodFound":[],"winner":null}
+
+Rules:
+- apartmentName: ONLY the apartment name itself (no "단지명:" label, no extra words). Empty string if not visible.
+- ourMethodFound: List ONLY keywords actually visible in the image. Choose from: POUR, CNC, DO, DETEX, 시멘트분말. Empty array if none seen.
+- winner: 낙찰업체명 if visible, else null.
+- Read the actual Korean characters in the image. Do not invent or assume any values.`;
 
         // Llama 3.2 Vision 라이선스 동의 — 첫 호출 시 계정 단위로 'agree' 필요
         try {
@@ -235,7 +234,10 @@ Look for: apartment name (단지명), POUR/CNC/DO/DETEX/시멘트분말 keywords
           }, env);
         }
 
-        const extractedSite = String(parsed.apartmentName || '').trim();
+        // 라벨 prefix 제거 — "단지명: 하안7단지아파트" → "하안7단지아파트"
+        let extractedSite = String(parsed.apartmentName || '').trim();
+        extractedSite = extractedSite.replace(/^(단지\s*명|단지|아파트\s*명|소\s*재\s*지|단지\s*명칭|아파트명|명칭|이름|name)\s*[:：]\s*/i, '').trim();
+        // 끝에 따라오는 " 아파트" 같은 일반 토큰은 유지 (단지명에 자주 포함됨)
         const hasOurMethod = !!parsed.hasOurMethod || !!parsed.hasPourMethod ||
           (Array.isArray(parsed.ourMethodFound) && parsed.ourMethodFound.length > 0);
 

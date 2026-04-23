@@ -14732,15 +14732,45 @@ tr.suppressed td.fname{color:#64748b;}
                           <div style={{ padding: '14px 16px', background: '#fef3c7', border: '1.5px solid #fcd34d', borderRadius: '10px', marginBottom: '14px' }}>
                             <div style={{ fontSize: '13px', fontWeight: '800', color: '#92400e', marginBottom: '6px' }}>자동 판정 불가 — 수동 확인 필요</div>
                             <div style={{ fontSize: '12px', color: '#92400e', lineHeight: '1.6' }}>{friendlyReason}</div>
-                            {/* 스크린샷 검증 결과면 OCR 디버그 정보 추가 */}
+                            {/* 스크린샷 검증 결과면 OCR 디버그 정보 추가 + 사용자 직접 통과 버튼 */}
                             {r.source === 'screenshot' && (
-                              <div style={{ fontSize: '11px', color: '#1e293b', marginTop: '6px', padding: '6px 8px', background: 'white', borderRadius: '6px', lineHeight: '1.6' }}>
-                                {r.extractedSite && <div>• AI 추출 단지명: <b>{r.extractedSite}</b></div>}
-                                {r.inputSiteName && <div>• 시스템 단지명: <b>{r.inputSiteName}</b></div>}
-                                {typeof r.similarity === 'number' && <div>• 유사도: <b>{r.similarity}</b></div>}
-                                {(r.ourMethodFound || []).length > 0 && <div>• 우리 공법: {(r.ourMethodFound || []).join(', ')}</div>}
-                                {r.winner && <div>• 낙찰업체: {r.winner}</div>}
-                              </div>
+                              <>
+                                <div style={{ fontSize: '11px', color: '#1e293b', marginTop: '6px', padding: '6px 8px', background: 'white', borderRadius: '6px', lineHeight: '1.6' }}>
+                                  {r.extractedSite && <div>• AI 추출 단지명: <b>{r.extractedSite}</b></div>}
+                                  {r.inputSiteName && <div>• 시스템 단지명: <b>{r.inputSiteName}</b></div>}
+                                  {typeof r.similarity === 'number' && <div>• 유사도: <b>{r.similarity}</b></div>}
+                                  {(r.ourMethodFound || []).length > 0 && <div>• 우리 공법: {(r.ourMethodFound || []).join(', ')}</div>}
+                                  {r.winner && <div>• 낙찰업체: {r.winner}</div>}
+                                </div>
+                                <div style={{ marginTop: '8px', padding: '10px', background: '#ecfdf5', border: '1px solid #6ee7b7', borderRadius: '6px' }}>
+                                  <div style={{ fontSize: '11px', color: '#065f46', marginBottom: '6px', lineHeight: '1.5' }}>
+                                    💡 AI 가 한국어 단지명을 정확히 못 읽을 수 있습니다.<br/>
+                                    스크린샷 본인이 직접 본 것으로 <b>"{kaptVerifyModal.siteName}"</b> 단지의 우리 공법 입찰 결과가 맞으면 아래 [통과] 누르세요.
+                                  </div>
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        await database.ref(`pt/${kaptVerifyModal.scheduleId}/kaptVerified`).update({
+                                          status: 'verified',
+                                          method: 'screenshot-user-confirmed',
+                                          extractedSite: r.extractedSite || '',
+                                          aiSimilarity: r.similarity || 0,
+                                          confirmedAt: new Date().toISOString(),
+                                          confirmedBy: currentUser?.name || 'manual',
+                                          ourMethodFound: r.ourMethodFound || [],
+                                        });
+                                        setPtSchedules(prev => prev.map(ps => ps.id === kaptVerifyModal.scheduleId ? ({
+                                          ...ps,
+                                          kaptVerified: { status: 'verified', method: 'screenshot-user-confirmed' },
+                                        }) : ps));
+                                        autoTransitionIfEligible(kaptVerifyModal.scheduleId, kaptVerifyModal.manager, 'auto-kapt-verified');
+                                        setKaptVerifyModal(null); setKaptVerifyBidInput('');
+                                      } catch (e) { alert('저장 실패: ' + e.message); }
+                                    }}
+                                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: 'none', background: '#16a34a', color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                                  >✓ 사용자 확인 통과 — 검증 완료 처리</button>
+                                </div>
+                              </>
                             )}
                             {r.message && <div style={{ fontSize: '11px', color: '#a16207', marginTop: '4px' }}>{r.message}</div>}
 
