@@ -11739,6 +11739,33 @@ tr.suppressed td.fname{color:#64748b;}
                   return acc;
                 }, { total: 0, completed: 0, confirmed: 0, requested: 0, review: 0 });
 
+                // [추가] 분기 밖 미처리 정산 — 1~3월 PT 가 4월에 정산요청된 케이스 등이
+                //   Q2 카드에 안 잡히는 문제 보완. 정산 처리(완료/확정) 안 된 것만 합산.
+                const offQuarterPending = myPtSchedules.reduce((acc, s) => {
+                  if (s.selfPT) return acc;
+                  const dateStr = s.date || '';
+                  if (dateStr >= qStart && dateStr <= qEnd) return acc;  // 이번 분기 PT는 위 카드에서 처리
+                  const r = getMyResult(s);
+                  if (!r || r === '패') return acc;
+                  const stl = s.settlement?.[viewingUser] || {};
+                  if (stl.selfSales || stl.completed) return acc;
+                  if (s.kaptVerified?.status === 'cancelled') return acc;
+                  const isSup = /감리/.test((s.workType || '') + '|' + (s.siteName || ''));
+                  const amount = isSup ? 80000 : (r === '승' ? 500000 : 250000);
+                  // 분기 라벨: 같은 해 분기 또는 "이전" 표시
+                  const m = parseInt((dateStr.match(/-(\d{2})-/) || [])[1] || '0', 10);
+                  const yr = parseInt((dateStr.match(/^(\d{4})/) || [])[1] || '0', 10);
+                  const q = m ? Math.ceil(m / 3) : 0;
+                  const key = yr && q ? `${yr}-Q${q}` : '기타';
+                  acc.total += amount;
+                  acc.count++;
+                  acc.byQuarter[key] = (acc.byQuarter[key] || { count: 0, amount: 0 });
+                  acc.byQuarter[key].count++;
+                  acc.byQuarter[key].amount += amount;
+                  if (stl.requested) acc.requested += amount;
+                  return acc;
+                }, { total: 0, requested: 0, count: 0, byQuarter: {} });
+
                 // 전분기 비교
                 const prevQNum = nowQ === 1 ? 4 : nowQ - 1;
                 const prevQY = nowQ === 1 ? nowY - 1 : nowY;
@@ -12013,6 +12040,31 @@ tr.suppressed td.fname{color:#64748b;}
                         </div>
                       )}
                     </div>
+
+                    {/* 📦 분기 밖 미처리 정산 — 1~3월 PT 를 4월에 정산요청한 케이스 등 */}
+                    {offQuarterPending.count > 0 && (
+                      <div style={{ ...cardStyle, marginTop: 12, background: '#1e293b', color: '#f1f5f9', padding: 16, border: '1px solid #334155' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: '#cbd5e1', letterSpacing: '0.05em' }}>📦 다른 분기 · 미처리 정산</div>
+                            <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>이번 분기({nowY}-Q{nowQ}) 외 PT 중 정산완료 안 된 건</div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 22, fontWeight: 800, color: '#fbbf24', lineHeight: 1.1 }}>{offQuarterPending.total.toLocaleString('ko-KR')}원</div>
+                            <div style={{ fontSize: 11, color: '#cbd5e1', marginTop: 2 }}>{offQuarterPending.count}건 · 요청 {offQuarterPending.requested.toLocaleString('ko-KR')}원</div>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                          {Object.entries(offQuarterPending.byQuarter)
+                            .sort((a, b) => b[0].localeCompare(a[0]))
+                            .map(([key, v]) => (
+                              <div key={key} style={{ padding: '4px 10px', background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 14, fontSize: 11, color: '#fde68a' }}>
+                                <b>{key}</b> · {v.count}건 · {v.amount.toLocaleString('ko-KR')}원
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* ⚠ 리스크 / 검토 필요 (Action 앞에 배치 — 문제 먼저 보여주기) */}
                     {riskItems.length > 0 && (
