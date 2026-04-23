@@ -14703,7 +14703,50 @@ tr.suppressed td.fname{color:#64748b;}
                                   style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid #3282B8', background: 'white', color: '#0F4C75', fontSize: '12px', fontWeight: '700', cursor: 'pointer', textAlign: 'left' }}
                                 >K-APT 공고번호 직접 입력 — 복사/붙여넣기</button>
 
-                                {/* 대안 3: 취소공고 처리 */}
+                                {/* 대안 3: 스크린샷 업로드 (AI Vision) */}
+                                <label style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid #f59e0b', background: '#fffbeb', color: '#854d0e', fontSize: '12px', fontWeight: '700', cursor: 'pointer', textAlign: 'left', display: 'block' }}>
+                                  📸 스크린샷으로 검증 — K-APT 캡처 업로드 (AI 자동 판정)
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    style={{ display: 'none' }}
+                                    onChange={async (e) => {
+                                      const file = e.target.files?.[0];
+                                      if (!file) return;
+                                      if (file.size > 5 * 1024 * 1024) { alert('이미지 5MB 이하로 부탁드립니다.'); return; }
+                                      const reader = new FileReader();
+                                      reader.onload = async () => {
+                                        const dataUrl = reader.result;
+                                        setKaptVerifyModal(m => ({ ...m, stage: 'verifying', verifyMethod: 'screenshot', result: null }));
+                                        try {
+                                          const workerUrl = (kaptWorkerUrl || '').replace(/\/$/, '');
+                                          if (!workerUrl) { alert('K-APT Worker URL 미설정'); setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'worker_not_configured' } })); return; }
+                                          const resp = await fetch(`${workerUrl}/verify-screenshot`, {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({
+                                              siteName: kaptVerifyModal.siteName,
+                                              scheduleId: kaptVerifyModal.scheduleId,
+                                              assignee: kaptVerifyModal.manager,
+                                              imageBase64: dataUrl,
+                                            }),
+                                          });
+                                          const r = await resp.json();
+                                          setKaptVerifyModal(m => ({ ...m, stage: 'result', result: r }));
+                                          if (r && r.status === 'verified') {
+                                            autoTransitionIfEligible(kaptVerifyModal.scheduleId, kaptVerifyModal.manager, 'auto-kapt-verified');
+                                          }
+                                        } catch (err) {
+                                          setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'exception', message: err.message } }));
+                                        }
+                                      };
+                                      reader.readAsDataURL(file);
+                                    }}
+                                  />
+                                  <div style={{ fontSize: '10px', color: '#a16207', marginTop: '4px', fontWeight: 500 }}>단지명 + POUR/CNC/DO/DETEX/시멘트분말 둘 다 보이게 캡처</div>
+                                </label>
+
+                                {/* 대안 4: 취소공고 처리 */}
                                 <button
                                   onClick={async () => {
                                     const reason = window.prompt('K-APT 에서 공고가 "취소" 상태로 확인되었나요?\n\n취소 사유를 입력해주세요 (예: 재공고 예정 / 원자재 상승 / 기타):');
