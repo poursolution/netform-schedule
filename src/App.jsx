@@ -14649,21 +14649,78 @@ tr.suppressed td.fname{color:#64748b;}
                           </div>
                         </div>
                       )}
+                      {/* soft_match — 스크린샷 검증에서 단지명 유사도 0.4~0.65 + 우리공법 OK */}
+                      {r.status === 'soft_match' && (
+                        <div style={{ padding: '14px 16px', background: '#fef9c3', border: '1.5px solid #fde047', borderRadius: '10px', marginBottom: '14px' }}>
+                          <div style={{ fontSize: '13px', fontWeight: '800', color: '#854d0e', marginBottom: '8px' }}>🟡 스크린샷 일부 일치 — 사용자 확인 필요</div>
+                          <div style={{ fontSize: '12px', color: '#1e293b', lineHeight: '1.7', background: 'white', padding: '8px 10px', borderRadius: '6px', marginBottom: '8px' }}>
+                            <div>• 시스템 단지명: <b>{r.inputSiteName || kaptVerifyModal.siteName}</b></div>
+                            <div>• AI 추출 단지명: <b>{r.extractedSite || '(추출 실패)'}</b></div>
+                            <div>• 단지명 유사도: <b>{r.similarity}</b> (0.65 미만 — OCR 한글 인식 한계로 누락 가능)</div>
+                            <div>• 우리 공법 검출: <b>{(r.ourMethodFound || []).join(', ') || '있음'}</b> ✓</div>
+                            {r.winner && <div>• 낙찰업체: {r.winner}</div>}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#854d0e', marginBottom: '8px' }}>
+                            ⚠ 이름이 비슷한데 글자가 일부 다릅니다. 같은 단지가 맞으면 [확인] 누르세요.
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await database.ref(`pt/${kaptVerifyModal.scheduleId}/kaptVerified`).update({
+                                    status: 'verified',
+                                    method: 'screenshot-confirmed',
+                                    extractedSite: r.extractedSite || '',
+                                    similarity: r.similarity || 0,
+                                    confirmedAt: new Date().toISOString(),
+                                    confirmedBy: currentUser?.name || 'manual',
+                                    ourMethodFound: r.ourMethodFound || [],
+                                  });
+                                  setPtSchedules(prev => prev.map(ps => ps.id === kaptVerifyModal.scheduleId ? ({
+                                    ...ps,
+                                    kaptVerified: { status: 'verified', method: 'screenshot-confirmed' },
+                                  }) : ps));
+                                  autoTransitionIfEligible(kaptVerifyModal.scheduleId, kaptVerifyModal.manager, 'auto-kapt-verified');
+                                  setKaptVerifyModal(null); setKaptVerifyBidInput('');
+                                } catch (e) { alert('저장 실패: ' + e.message); }
+                              }}
+                              style={{ flex: 1, padding: '10px', borderRadius: '6px', border: 'none', background: '#16a34a', color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}
+                            >✓ 같은 단지 맞음 — 검증 통과 처리</button>
+                            <button
+                              onClick={() => { setKaptVerifyModal(m => ({ ...m, stage: 'input', result: null })); }}
+                              style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}
+                            >다른 단지 — 다시 시도</button>
+                          </div>
+                        </div>
+                      )}
                       {isNeedsReview && (() => {
                         // 사용자 친화 사유 텍스트 매핑
                         const REASON_TEXT = {
                           bid_not_found: '입찰번호로 K-APT 공고를 찾지 못했습니다',
                           name_mismatch: '단지명이 K-APT 공고와 일치하지 않습니다',
+                          siteName_mismatch: '스크린샷에서 추출한 단지명이 시스템 단지명과 일치하지 않습니다',
                           no_candidates: '매칭 가능한 K-APT 후보 공고가 없습니다',
+                          no_our_method: '스크린샷에서 우리 공법(POUR/CNC/DO/DETEX/시멘트분말) 키워드를 찾지 못했습니다',
                           parse_failed: 'K-APT 공고 내용을 분석하지 못했습니다',
                           low_score: '자동 매칭 점수가 임계값보다 낮습니다',
                           date_mismatch: '공고 등록일과 PT일 차이가 큽니다',
+                          ai_response_unparseable: 'AI 응답을 분석하지 못했습니다 (스크린샷 다시 촬영 권장)',
                         };
                         const friendlyReason = REASON_TEXT[r.reason] || r.reason || '알 수 없음';
                         return (
                           <div style={{ padding: '14px 16px', background: '#fef3c7', border: '1.5px solid #fcd34d', borderRadius: '10px', marginBottom: '14px' }}>
                             <div style={{ fontSize: '13px', fontWeight: '800', color: '#92400e', marginBottom: '6px' }}>자동 판정 불가 — 수동 확인 필요</div>
                             <div style={{ fontSize: '12px', color: '#92400e', lineHeight: '1.6' }}>{friendlyReason}</div>
+                            {/* 스크린샷 검증 결과면 OCR 디버그 정보 추가 */}
+                            {r.source === 'screenshot' && (
+                              <div style={{ fontSize: '11px', color: '#1e293b', marginTop: '6px', padding: '6px 8px', background: 'white', borderRadius: '6px', lineHeight: '1.6' }}>
+                                {r.extractedSite && <div>• AI 추출 단지명: <b>{r.extractedSite}</b></div>}
+                                {r.inputSiteName && <div>• 시스템 단지명: <b>{r.inputSiteName}</b></div>}
+                                {typeof r.similarity === 'number' && <div>• 유사도: <b>{r.similarity}</b></div>}
+                                {(r.ourMethodFound || []).length > 0 && <div>• 우리 공법: {(r.ourMethodFound || []).join(', ')}</div>}
+                                {r.winner && <div>• 낙찰업체: {r.winner}</div>}
+                              </div>
+                            )}
                             {r.message && <div style={{ fontSize: '11px', color: '#a16207', marginTop: '4px' }}>{r.message}</div>}
 
                             {/* 대안 1: 후보 다시 찾기 — Firebase 후보 재검색 → candidates stage */}

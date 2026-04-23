@@ -263,11 +263,23 @@ Look for: apartment name (단지명), POUR/CNC/DO/DETEX/시멘트분말 keywords
           }
         }
 
-        const verified = similarity >= 0.8 && hasOurMethod;
+        // 판정 기준 (현실 보정):
+        //   - similarity ≥ 0.65 + hasOurMethod  → verified (AI OCR 한국어 한자 누락 흔함, 0.8 너무 엄격)
+        //   - similarity ≥ 0.4  + hasOurMethod  → soft_match (사용자 확인 후 수동 승인 가능)
+        //   - 그 외 → needs_review
+        const verified = similarity >= 0.65 && hasOurMethod;
+        const softMatch = !verified && similarity >= 0.4 && hasOurMethod;
+        let status, reason;
+        if (verified) { status = 'verified'; reason = null; }
+        else if (softMatch) { status = 'soft_match'; reason = 'low_similarity_confirm_needed'; }
+        else if (!hasOurMethod) { status = 'needs_review'; reason = 'no_our_method'; }
+        else { status = 'needs_review'; reason = 'siteName_mismatch'; }
+
         return jsonResponse({
-          status: verified ? 'verified' : 'needs_review',
-          reason: verified ? null : (similarity < 0.8 ? 'siteName_mismatch' : 'no_our_method'),
+          status,
+          reason,
           extractedSite,
+          inputSiteName: siteName,
           hasOurMethod,
           ourMethodFound: parsed.ourMethodFound || [],
           winner: parsed.winner || null,
