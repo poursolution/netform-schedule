@@ -18652,8 +18652,8 @@ tr.suppressed td.fname{color:#64748b;}
                       </div>
                     )}
 
-                    {/* 미리보기 카드 — PT 실적 중심 (확정일 기준) */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+                    {/* 미리보기 카드 — PT 실적 + 주말출근 (확정일 기준) */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
                       <div style={{ background: '#eff6ff', borderRadius: 8, padding: 14 }}>
                         <div style={{ fontSize: 11, color: '#0F4C75', fontWeight: 600 }}>총 PT 건수</div>
                         <div style={{ fontSize: 22, fontWeight: 700, color: '#0F4C75', marginTop: 4 }}>{totals.ptCount}건</div>
@@ -18673,6 +18673,11 @@ tr.suppressed td.fname{color:#64748b;}
                         <div style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>총 정산금액</div>
                         <div style={{ fontSize: 18, fontWeight: 700, color: '#16a34a', marginTop: 4 }}>{totals.settlementAmount.toLocaleString()}원</div>
                         <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>확정일 기준 집계</div>
+                      </div>
+                      <div style={{ background: '#fffbeb', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#b45309', fontWeight: 600 }}>주말출근 (토/일)</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#b45309', marginTop: 4 }}>{totals.weekendCount || 0}회 → 연차 {(totals.annualLeaveDays || 0).toFixed(1)}일</div>
+                        <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>1.5배 환산 (PT일 기준)</div>
                       </div>
                     </div>
 
@@ -18699,11 +18704,13 @@ tr.suppressed td.fname{color:#64748b;}
                               <th style={{ padding: 8 }}>무</th>
                               <th style={{ padding: 8 }}>지원</th>
                               <th style={{ padding: 8, textAlign: 'right' }}>정산금액</th>
+                              <th style={{ padding: 8 }} title="토/일 PT (결과 무관)">주말</th>
+                              <th style={{ padding: 8 }} title="주말출근 1회 = 연차 1.5일">연차(1.5×)</th>
                             </tr>
                           </thead>
                           <tbody>
                             {report.summary.length === 0 && (
-                              <tr><td colSpan={6} style={{ padding: 16, textAlign: 'center', color: '#94a3b8' }}>해당 분기 데이터 없음</td></tr>
+                              <tr><td colSpan={8} style={{ padding: 16, textAlign: 'center', color: '#94a3b8' }}>해당 분기 데이터 없음</td></tr>
                             )}
                             {report.summary.map(r => (
                               <tr key={r.assignee} style={{ borderTop: '1px solid #f1f5f9' }}>
@@ -18713,6 +18720,8 @@ tr.suppressed td.fname{color:#64748b;}
                                 <td style={{ padding: 8, textAlign: 'center', color: '#2563eb', fontWeight: 600 }}>{r.ptDraw}</td>
                                 <td style={{ padding: 8, textAlign: 'center', color: '#7c3aed', fontWeight: 600 }}>{r.ptSupport}</td>
                                 <td style={{ padding: 8, textAlign: 'right', color: '#0F4C75', fontWeight: 700 }}>{r.settlementAmount.toLocaleString()}원</td>
+                                <td style={{ padding: 8, textAlign: 'center', color: '#475569', fontWeight: 600 }}>{r.weekendCount || 0}</td>
+                                <td style={{ padding: 8, textAlign: 'center', color: '#b45309', fontWeight: 700 }}>{(r.annualLeaveDays || 0).toFixed(1)}</td>
                               </tr>
                             ))}
                           </tbody>

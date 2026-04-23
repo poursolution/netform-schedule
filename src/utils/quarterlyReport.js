@@ -103,6 +103,19 @@ function isSupervision(s) {
   return !!(s && s.workType && /감리/.test(String(s.workType)));
 }
 
+// === 주말출근 판정 (PT 진행일 기준) ===
+//   토(6) / 일(0) 출근 → 연차 1.5일 부여
+//   결과(승/무/지원/패) 무관 — 단지 출근 사실 기준 (다른 출근수당 정산 별도 운용)
+function isWeekendPt(s) {
+  if (!s.date) return false;
+  // YYYY-MM-DD 직접 파싱 (Date() 시간대 이슈 회피)
+  const m = s.date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return false;
+  const d = new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]));
+  const day = d.getDay();
+  return day === 0 || day === 6;
+}
+
 function getSettlementAmount(s, assignee, overrideResult = null) {
   if (s.selfPT) return 0;
   if (isSelfSales(s, assignee)) return 0;
@@ -159,6 +172,12 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
   const SETTLEMENT_RESULTS = new Set(['승', '무', '지원']);
   const ptVerified = [];
   const ptUnverified = [];
+  // 주말출근(토/일) — PT 진행일 기준 분기 귀속, 결과 무관
+  //   PT 결과(승/무/지원/패) 와 정산 fallback 체인 무관 — 단순 출근일 집계.
+  //   범위: PT 진행일(s.date)이 분기 안에 있으면 카운트.
+  //   조건: SETTLEMENT_ASSIGNEES 7명 중, ptAssignee 토큰에 들어 있는 사람만.
+  //         취소공고 제외, 자체PT 제외 (실제 출근 의미 약함), dateType !== 'confirmed' 제외.
+  const weekendItems = [];
 
   // 디버그 카운터
   let debugStats = {
@@ -172,12 +191,29 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
     missingResultConfirmDate: 0,
     includedVerified: 0,
     includedUnverified: 0,
+    weekendItems: 0,
   };
 
   ptSchedules.forEach(s => {
     if (!s.date) { debugStats.skippedNoDate++; return; }
     if (s.dateType && s.dateType !== 'confirmed') { debugStats.skippedNonConfirmed++; return; }
     if (s.kaptVerified?.status === 'cancelled') { debugStats.skippedCancelled++; return; }
+
+    // 주말출근 별도 집계 — PT 진행일 기준 (결과 무관)
+    if (!s.selfPT && isWeekendPt(s) && inRange(s.date, range)) {
+      const wAssignees = parseAssignees(s.ptAssignee);
+      wAssignees.forEach(wa => {
+        if (!SETTLEMENT_ASSIGNEES_SET.has(wa)) return;
+        weekendItems.push({
+          date: s.date,
+          dayOfWeek: ['일','월','화','수','목','금','토'][new Date(parseInt(s.date.slice(0,4)), parseInt(s.date.slice(5,7))-1, parseInt(s.date.slice(8,10))).getDay()],
+          siteName: s.siteName || '',
+          assignee: wa,
+          result: getPtResult(s, wa) || '미입력',
+        });
+        debugStats.weekendItems++;
+      });
+    }
 
     const assignees = parseAssignees(s.ptAssignee);
     assignees.forEach(a => {
@@ -249,9 +285,18 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
     byAssignee[a].ptItems.sort((x, y) => x.confirmDate.localeCompare(y.confirmDate));
   });
 
-  // 담당자 요약 (7명 전원)
+  // 주말출근 담당자별 카운트
+  const weekendByAssignee = {};
+  SETTLEMENT_ASSIGNEES.forEach(a => { weekendByAssignee[a] = []; });
+  weekendItems.forEach(w => {
+    if (weekendByAssignee[w.assignee]) weekendByAssignee[w.assignee].push(w);
+  });
+
+  // 담당자 요약 (7명 전원) — 주말출근 + 연차 환산일수 포함
+  //   연차 1.5배: 주말 1회 출근 = 연차 1.5일 부여
   const summary = SETTLEMENT_ASSIGNEES.map(assignee => {
     const ptList = byAssignee[assignee].ptItems;
+    const wList = weekendByAssignee[assignee] || [];
     return {
       assignee,
       ptCount: ptList.length,
@@ -259,6 +304,8 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
       ptDraw: ptList.filter(r => r.result === '무').length,
       ptSupport: ptList.filter(r => r.result === '지원').length,
       settlementAmount: ptList.reduce((s, r) => s + r.amount, 0),
+      weekendCount: wList.length,
+      annualLeaveDays: wList.length * 1.5,
     };
   });
 
@@ -268,11 +315,14 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
     ptDraw: summary.reduce((s, r) => s + r.ptDraw, 0),
     ptSupport: summary.reduce((s, r) => s + r.ptSupport, 0),
     settlementAmount: summary.reduce((s, r) => s + r.settlementAmount, 0),
+    weekendCount: summary.reduce((s, r) => s + r.weekendCount, 0),
+    annualLeaveDays: summary.reduce((s, r) => s + r.annualLeaveDays, 0),
   };
 
   return {
     range, summary, byAssignee,
     ptVerified, ptUnverified, totals,
+    weekendItems, weekendByAssignee,
     year, quarter, debugStats,
   };
 }
@@ -291,10 +341,12 @@ export function generateExcelBlob(report) {
   // ----- Sheet1: 표지 + 담당자별 요약 -----
   const summaryRows = summary.map(r => [
     r.assignee, r.ptCount, r.ptWin, r.ptDraw, r.ptSupport, r.settlementAmount,
+    r.weekendCount, r.annualLeaveDays,
   ]);
   const totalRow = [
     '합계',
     totals.ptCount, totals.ptWin, totals.ptDraw, totals.ptSupport, totals.settlementAmount,
+    totals.weekendCount, totals.annualLeaveDays,
   ];
 
   const sheet1Data = [
@@ -307,9 +359,10 @@ export function generateExcelBlob(report) {
     ['총 PT 건수 (승/무/지원)', totals.ptCount + '건'],
     ['결과 분포', `승 ${totals.ptWin} / 무 ${totals.ptDraw} / 지원 ${totals.ptSupport}`],
     ['총 정산금액', totals.settlementAmount.toLocaleString() + '원'],
+    ['주말출근 (토/일)', `${totals.weekendCount}회 → 연차 ${totals.annualLeaveDays}일 (1.5배 환산)`],
     [],
     ['【 담당자별 실적 】'],
-    ['담당자', 'PT건수', '승', '무', '지원', '정산금액(원)'],
+    ['담당자', 'PT건수', '승', '무', '지원', '정산금액(원)', '주말출근(회)', '연차환산(일·1.5배)'],
     ...summaryRows,
     totalRow,
     [],
@@ -327,16 +380,37 @@ export function generateExcelBlob(report) {
   ];
   const ws1 = XLSX.utils.aoa_to_sheet(sheet1Data);
   ws1['!cols'] = [
-    { wch: 12 }, { wch: 10 }, { wch: 6 }, { wch: 6 }, { wch: 8 }, { wch: 16 },
+    { wch: 12 }, { wch: 10 }, { wch: 6 }, { wch: 6 }, { wch: 8 }, { wch: 16 }, { wch: 12 }, { wch: 14 },
   ];
+  // 제목/소제목 행: 8 컬럼 전부 머지
   ws1['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
-    { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
-    { s: { r: 2, c: 0 }, e: { r: 2, c: 5 } },
-    { s: { r: 4, c: 0 }, e: { r: 4, c: 5 } },
-    { s: { r: 10, c: 0 }, e: { r: 10, c: 5 } },
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: 7 } },
+    { s: { r: 4, c: 0 }, e: { r: 4, c: 7 } },
+    { s: { r: 11, c: 0 }, e: { r: 11, c: 7 } },
   ];
   XLSX.utils.book_append_sheet(wb, ws1, '표지·요약');
+
+  // ----- Sheet1.5: 주말출근 상세 (별도 시트) -----
+  if (report.weekendItems && report.weekendItems.length > 0) {
+    const wkRows = [...report.weekendItems]
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+      .map(w => [w.date, w.dayOfWeek, w.assignee, w.siteName, w.result]);
+    const wkSheet = XLSX.utils.aoa_to_sheet([
+      [`${year}년 ${range.label} 주말출근 상세 (연차 1.5배 환산)`],
+      [`총 ${totals.weekendCount}회 → 연차 ${totals.annualLeaveDays}일 부여`],
+      [],
+      ['날짜', '요일', '담당자', '현장', '결과'],
+      ...wkRows,
+    ]);
+    wkSheet['!cols'] = [{ wch: 12 }, { wch: 6 }, { wch: 10 }, { wch: 30 }, { wch: 8 }];
+    wkSheet['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } },
+    ];
+    XLSX.utils.book_append_sheet(wb, wkSheet, '주말출근');
+  }
 
   // ----- Sheet2: PT 상세 리스트 (담당자별 그룹) -----
   const ptData = [
@@ -346,7 +420,7 @@ export function generateExcelBlob(report) {
     ['【 담당자별 합계 】'],
     ['담당자', 'PT 건수', '승', '무', '지원', '정산금액(원)'],
     ...summary.map(r => [r.assignee, r.ptCount, r.ptWin, r.ptDraw, r.ptSupport, r.settlementAmount]),
-    totalRow,
+    ['합계', totals.ptCount, totals.ptWin, totals.ptDraw, totals.ptSupport, totals.settlementAmount],
     [],
     ['【 담당자별 상세 】'],
   ];
@@ -435,6 +509,8 @@ export function buildReportHTML(report) {
       <td style="padding:10px 14px;text-align:center;color:#2563eb;font-weight:700;">${r.ptDraw}</td>
       <td style="padding:10px 14px;text-align:center;color:#7c3aed;font-weight:700;">${r.ptSupport}</td>
       <td style="padding:10px 14px;text-align:right;color:#0F4C75;font-weight:700;">${r.settlementAmount.toLocaleString()}원</td>
+      <td style="padding:10px 14px;text-align:center;color:#475569;font-weight:700;">${r.weekendCount || 0}회</td>
+      <td style="padding:10px 14px;text-align:center;color:#b45309;font-weight:700;">${(r.annualLeaveDays || 0).toFixed(1)}일</td>
     </tr>
   `).join('');
 
@@ -499,6 +575,8 @@ export function buildReportHTML(report) {
           <th style="padding:10px 14px;text-align:center;font-weight:600;font-size:12px;">무</th>
           <th style="padding:10px 14px;text-align:center;font-weight:600;font-size:12px;">지원</th>
           <th style="padding:10px 14px;text-align:right;font-weight:600;font-size:12px;">정산금액</th>
+          <th style="padding:10px 14px;text-align:center;font-weight:600;font-size:12px;">주말출근</th>
+          <th style="padding:10px 14px;text-align:center;font-weight:600;font-size:12px;">연차환산<br/><span style="font-size:10px;color:#94a3b8;font-weight:500;">(1.5배)</span></th>
         </tr>
       </thead>
       <tbody>${summaryRowsHtml}</tbody>
@@ -510,6 +588,8 @@ export function buildReportHTML(report) {
           <td style="padding:10px 14px;text-align:center;font-weight:700;color:#2563eb;">${totals.ptDraw}</td>
           <td style="padding:10px 14px;text-align:center;font-weight:700;color:#7c3aed;">${totals.ptSupport}</td>
           <td style="padding:10px 14px;text-align:right;font-weight:700;color:#0F4C75;">${totals.settlementAmount.toLocaleString()}원</td>
+          <td style="padding:10px 14px;text-align:center;font-weight:700;color:#475569;">${totals.weekendCount || 0}회</td>
+          <td style="padding:10px 14px;text-align:center;font-weight:700;color:#b45309;">${(totals.annualLeaveDays || 0).toFixed(1)}일</td>
         </tr>
       </tfoot>
     </table>
