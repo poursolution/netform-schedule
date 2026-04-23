@@ -2279,14 +2279,32 @@ app.post('/admin/jandi-manual-link', requireAuth, async (req, res) => {
   }
 });
 
-// === Address 추출 (PDF) ===
+// === Address 추출 (PDF + HWP) ===
 // 사용: POST /admin/jandi-extract-addresses
-// body: { ext?='pdf', limit?=50, dryRun?=false, fileId? }
+// body: { ext?='pdf'|'hwp', limit?=50, dryRun?=false, fileId? }
 // 흐름:
 //   1. evidence 중 ext 일치 + parsedAddress 없는 것 limit 만큼 (또는 fileId 단건)
-//   2. Storage 에서 다운로드 → pdf-parse 로 텍스트 추출
+//   2. Storage 에서 다운로드:
+//      - pdf: pdf-parse 로 텍스트 추출
+//      - hwp: 임시 파일로 저장 → hwp5txt 실행 → stdout 텍스트
 //   3. 한국 주소 패턴 정규식으로 첫 매칭 추출
 //   4. evidence/{fileId}/parsedAddress 저장
+const HWP5TXT = process.env.HWP5TXT || '/home/ubuntu/.local/bin/hwp5txt';
+const TMP_DIR = process.env.HWP_TMP_DIR || '/tmp';
+
+function extractTextFromHwp(buf, fid) {
+  return new Promise((resolve, reject) => {
+    const tmpFile = path.join(TMP_DIR, `evhwp_${fid}_${Date.now()}.hwp`);
+    fsp.writeFile(tmpFile, buf).then(() => {
+      execFile(HWP5TXT, [tmpFile], { maxBuffer: 20 * 1024 * 1024, timeout: 30000 }, async (err, stdout, stderr) => {
+        try { await fsp.unlink(tmpFile); } catch {}
+        if (err) reject(new Error('hwp5txt: ' + (err.message || stderr.slice(0, 100))));
+        else resolve(stdout || '');
+      });
+    }).catch(reject);
+  });
+}
+
 app.post('/admin/jandi-extract-addresses', requireAuth, async (req, res) => {
   const { ext = 'pdf', limit = 50, dryRun = false, fileId = null } = req.body || {};
   const startedAt = Date.now();
@@ -2329,8 +2347,19 @@ app.post('/admin/jandi-extract-addresses', requireAuth, async (req, res) => {
         const [buf] = await file.download();
         if (!buf || buf.length === 0) { results.errors++; continue; }
 
-        const data = await pdf(buf);
-        const text = (data && data.text) || '';
+        // 확장자별 텍스트 추출
+        const fileExt = (ev.ext || '').toLowerCase();
+        let text = '';
+        if (fileExt === 'pdf') {
+          const data = await pdf(buf);
+          text = (data && data.text) || '';
+        } else if (fileExt === 'hwp') {
+          text = await extractTextFromHwp(buf, fid);
+        } else {
+          // hwpx 등 — 추후 지원, 지금은 에러 처리
+          results.errors++;
+          continue;
+        }
         // 모든 매치 모아서 첫 번째 깔끔한 것 선택 (시도 + 시·군·구 포함)
         const matches = [...text.matchAll(ADDR_REGEX)].map(m => m[0].trim());
         let chosen = null;
