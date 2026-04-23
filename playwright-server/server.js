@@ -1974,6 +1974,8 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
     const variantsOf = (s) => {
       const original = (s || '').trim();
       const out = [{ text: original, strippedTokens: [] }];
+      if (!original) return out;
+      // (a) 공백 분리
       let cur = original;
       const stripped = [];
       for (let step = 0; step < 2; step++) {
@@ -1986,6 +1988,17 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
           if (!out.find(v => v.text === cur)) out.push({ text: cur, strippedTokens: [...stripped] });
         } else break;
       }
+      // (b) 공백 없이 붙은 지역 prefix 제거 — "광주봉선지웰" → "봉선지웰"
+      const sortedRegions = [...REGIONS].sort((a, b) => b.length - a.length);
+      for (const region of sortedRegions) {
+        if (original.startsWith(region) && original.length > region.length + 1) {
+          const stripped2 = original.slice(region.length);
+          if (!out.find(v => v.text === stripped2)) {
+            out.push({ text: stripped2, strippedTokens: [region] });
+          }
+          break;
+        }
+      }
       return out;
     };
     const regionInPt = (token, pt) => {
@@ -1997,14 +2010,17 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
     };
     const composite = (parsedSite, pt) => {
       const addr = pt.address || '';
-      const variants = variantsOf(parsedSite);
+      const evVariants = variantsOf(parsedSite);
+      const ptVariants = variantsOf(pt.siteName);
       let bestName = 0, bestAddr = 0;
-      for (const v of variants) {
+      for (const v of evVariants) {
         const regionOk = v.strippedTokens.every(tok => regionInPt(tok, pt));
         if (!regionOk) continue;
-        const ns = similarity(v.text, pt.siteName);
+        for (const pv of ptVariants) {
+          const ns = similarity(v.text, pv.text);
+          if (ns > bestName) bestName = ns;
+        }
         const as = addr ? similarity(v.text, addr) : 0;
-        if (ns > bestName) bestName = ns;
         if (as > bestAddr) bestAddr = as;
       }
       if (bestName >= 0.95) return { score: bestName, matchedBy: 'name' };
