@@ -1578,8 +1578,6 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
     const variantsOf = (s) => {
       const original = (s || '').trim();
       const out = [{ text: original, strippedTokens: [] }];
-      if (!original) return out;
-      // (a) 공백 분리 — "광주 봉선지웰", "서울 강남구 ..." 케이스
       let cur = original;
       const stripped = [];
       for (let step = 0; step < 2; step++) {
@@ -1591,18 +1589,6 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
           stripped.push(first);
           if (!out.find(v => v.text === cur)) out.push({ text: cur, strippedTokens: [...stripped] });
         } else break;
-      }
-      // (b) 공백 없이 붙은 지역 prefix 제거 — "광주봉선지웰" → "봉선지웰"
-      //     긴 지역명 우선 매칭 (예: "남양주" 가 "남" 보다 먼저)
-      const sortedRegions = [...REGIONS].sort((a, b) => b.length - a.length);
-      for (const region of sortedRegions) {
-        if (original.startsWith(region) && original.length > region.length + 1) {
-          const stripped2 = original.slice(region.length);
-          if (!out.find(v => v.text === stripped2)) {
-            out.push({ text: stripped2, strippedTokens: [region] });
-          }
-          break;  // 첫 매칭만
-        }
       }
       return out;
     };
@@ -1617,22 +1603,17 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
     };
 
     // 복합 매칭 — 변형별로 스코어 계산, 단 지역 stripped 된 variant는 해당 지역이 PT에도 있어야 인정
-    // [개선] PT.siteName 에도 variants 적용 → "광주봉선지웰" 의 "봉선지웰" 변형도 비교 대상
     const composite = (parsedSite, pt) => {
       const addr = pt.address || '';
-      const evVariants = variantsOf(parsedSite);
-      const ptVariants = variantsOf(pt.siteName);
+      const variants = variantsOf(parsedSite);
       let bestName = 0, bestAddr = 0, bestVariant = null;
-      for (const v of evVariants) {
+      for (const v of variants) {
         // 지역 stripped 된 variant는 제거한 지역이 PT 에 있어야 함 (오탐 방지)
         const regionOk = v.strippedTokens.every(tok => regionInPt(tok, pt));
         if (!regionOk) continue;
-        // ev variant × pt variant cross 비교 — 양쪽 다 지역 prefix 변형 허용
-        for (const pv of ptVariants) {
-          const ns = similarity(v.text, pv.text);
-          if (ns > bestName) { bestName = ns; bestVariant = v; }
-        }
+        const ns = similarity(v.text, pt.siteName);
         const as = addr ? similarity(v.text, addr) : 0;
+        if (ns > bestName) { bestName = ns; bestVariant = v; }
         if (as > bestAddr) bestAddr = as;
       }
       if (bestName >= 0.95) return { score: bestName, matchedBy: 'name' };
