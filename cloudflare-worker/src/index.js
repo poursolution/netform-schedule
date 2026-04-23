@@ -1396,17 +1396,15 @@ function getQuarterKeyByConfirmDate(confirmDate) {
   return `${y}-Q${Math.ceil(mo / 3)}`;
 }
 
-// 분기 종료 다음달 마지막주 월요일
+// 분기 종료 다음달 30일 (마감일)
+//   Q1 → 4/30, Q2 → 7/30, Q3 → 10/30, Q4 → 익년 1/30
 function getQuarterClosingDate(quarterKey) {
   const p = parseQuarterKey(quarterKey);
   if (!p) return null;
   let cY = p.year;
   let cM = p.endMonth + 1;
   if (cM > 12) { cM = 1; cY += 1; }
-  // cY-cM 의 마지막 월요일 계산
-  const d = new Date(Date.UTC(cY, cM, 0));  // 해당 월 마지막 날 (UTC)
-  while (d.getUTCDay() !== 1) d.setUTCDate(d.getUTCDate() - 1);
-  return d;
+  return new Date(Date.UTC(cY, cM - 1, 30));
 }
 
 function getPayrollMonthByQuarterKey(quarterKey) {
@@ -1642,10 +1640,10 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
 function getQuarterDeadlineDate(quarterKey) {
   const p = parseQuarterKey(quarterKey);
   if (!p) return null;
-  // 분기 종료 익월 24일 — 예: Q1 → 4/24, Q2 → 7/24
+  // 분기 종료 익월 30일 — Q1 → 4/30, Q2 → 7/30, Q3 → 10/30, Q4 → 익년 1/30
   const nextMonth = p.endMonth + 1 > 12 ? 1 : p.endMonth + 1;
   const y = p.endMonth + 1 > 12 ? p.year + 1 : p.year;
-  return new Date(Date.UTC(y, nextMonth - 1, 24));
+  return new Date(Date.UTC(y, nextMonth - 1, 30));
 }
 
 async function sendQuarterlyConfirmationReminders(env, opts = {}) {

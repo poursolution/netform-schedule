@@ -2794,10 +2794,41 @@ const SETTLEMENT_BADGE_STYLE = {
               bidNo: updatedSchedule.bidNo,
               ptDate: updatedSchedule.date,
               by: currentUser?.name,
-            }).then((r) => {
-              // 검증 성공 시 자동 정산대상 전환 (Q1·Q2 공통 — 비동기 콜백이라 이 시점엔 unverified 해제)
+            }).then(async (r) => {
+              // 검증 성공 시 자동 정산대상 전환
               if (r && r.status === 'verified') {
                 autoTransitionIfEligible(scheduleId, targetAssignee, 'auto-kapt-verified');
+                return;
+              }
+              // [신규] 검증 실패(needs_review) → 담당자 개인 잔디 알림
+              //   "공고 못 찾음 → 본인이 K-APT 직접 확인 + 스크린샷 검증 필요"
+              const isNeedsReview = r && (r.status === 'needs_review' || r.status === 'error');
+              if (isNeedsReview) {
+                const reasonText = ({
+                  bid_not_found: '공고번호로 K-APT 공고를 찾지 못함',
+                  name_mismatch: '단지명이 K-APT 공고와 불일치',
+                  no_candidates: '유사 K-APT 후보 공고 없음',
+                  parse_failed: 'K-APT 공고 본문 분석 실패',
+                  worker_not_configured: 'K-APT 검증 워커 미설정',
+                  worker_failed: 'K-APT 검증 워커 호출 실패',
+                }[r.reason] || r.reason || '알 수 없음');
+                const hook = jandiUserWebhooks?.[targetAssignee];
+                if (hook?.url && hook.enabled !== false) {
+                  try {
+                    await fetch(hook.url, {
+                      method: 'POST', mode: 'no-cors',
+                      headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        body: `⚠ K-APT 자동 공고검색 실패 — 본인 확인 필요`,
+                        connectColor: '#f59e0b',
+                        connectInfo: [{
+                          title: `${updatedSchedule.siteName} (${updatedSchedule.date})`,
+                          description: `결과: ${result} / 사유: ${reasonText}\n\n조치 방법:\n1) 실적 화면에서 [K-APT 검증] 버튼 클릭\n2) K-APT 사이트에서 직접 공고 찾고 공고번호 붙여넣기\n   또는\n3) K-APT 화면 캡처 → Ctrl+V 붙여넣기 → AI 검증 → 관리자 검토 요청\n\n조치 안 하면 분기정산 미검증으로 보고서에서 제외됩니다.`,
+                        }],
+                      }),
+                    });
+                  } catch {}
+                }
               }
             }).catch(() => {});
           }
@@ -15560,7 +15591,7 @@ tr.suppressed td.fname{color:#64748b;}
                             🔒 마감됨
                           </span>
                         )}
-                        {totals.closingDate && <span><b>마감일:</b> <span style={{ color: '#dc2626', fontWeight: '700' }}>{totals.closingDate}</span> <span style={{ color: '#94a3b8', fontSize: '10px' }}>(다음달 마지막주 월요일)</span></span>}
+                        {totals.closingDate && <span><b>마감일:</b> <span style={{ color: '#dc2626', fontWeight: '700' }}>{totals.closingDate}</span> <span style={{ color: '#94a3b8', fontSize: '10px' }}>(분기 다음달 30일)</span></span>}
                         {totals.payrollMonth && <span><b>급여 반영월:</b> <span style={{ color: '#16a34a', fontWeight: '700' }}>{totals.payrollMonth}</span></span>}
                         {totals.reportedTo && <span><b>전달:</b> <span style={{ color: '#7c3aed', fontWeight: '700' }}>{totals.reportedTo}</span></span>}
                         {totals.aggregationBasis && <span style={{ color: '#94a3b8', fontSize: '10px' }}>· 집계기준: {totals.aggregationBasis === 'resultConfirmDate' ? '실적확정일' : 'PT일자'}</span>}
@@ -18913,10 +18944,10 @@ tr.suppressed td.fname{color:#64748b;}
                         <label style={{ fontSize: 12, fontWeight: 600, color: '#475569', display: 'block', marginBottom: 6 }}>분기</label>
                         <select value={quarterReportQuarter} onChange={e => setQuarterReportQuarter(parseInt(e.target.value))}
                           style={{ width: '100%', padding: 8, border: '1px solid #cbd5e1', borderRadius: 6, fontSize: 14 }}>
-                          <option value={1}>1분기 (1~3월) — 마감 {quarterReportYear}-04-25</option>
-                          <option value={2}>2분기 (4~6월) — 마감 {quarterReportYear}-07-25</option>
-                          <option value={3}>3분기 (7~9월) — 마감 {quarterReportYear}-10-25</option>
-                          <option value={4}>4분기 (10~12월) — 마감 {quarterReportYear + 1}-01-25</option>
+                          <option value={1}>1분기 (1~3월) — 마감 {quarterReportYear}-04-30</option>
+                          <option value={2}>2분기 (4~6월) — 마감 {quarterReportYear}-07-30</option>
+                          <option value={3}>3분기 (7~9월) — 마감 {quarterReportYear}-10-30</option>
+                          <option value={4}>4분기 (10~12월) — 마감 {quarterReportYear + 1}-01-30</option>
                         </select>
                       </div>
                     </div>

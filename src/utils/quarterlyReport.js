@@ -28,23 +28,17 @@ export function getQuarterRange(year, quarter) {
   return { start: `${y}-01-01`, end: `${y}-12-31`, label: '연간' };
 }
 
-// === 해당 월의 마지막 주 월요일 (1=월요일) ===
-function getLastMondayOfMonth(year, month) {
-  const d = new Date(year, month, 0);
-  while (d.getDay() !== 1) d.setDate(d.getDate() - 1);
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-// === 분기 발송 시점 (분기 끝난 다음달 마지막 주 월요일 14:00) ===
+// === 분기 발송 시점 (분기 끝난 다음달 30일 고정) ===
+//   1분기 → 4월 30일
+//   2분기 → 7월 30일
+//   3분기 → 10월 30일
+//   4분기 → 다음 연도 1월 30일
 export function getQuarterDeadline(year, quarter) {
   const y = parseInt(year);
-  if (quarter === 1) return getLastMondayOfMonth(y, 4);
-  if (quarter === 2) return getLastMondayOfMonth(y, 7);
-  if (quarter === 3) return getLastMondayOfMonth(y, 10);
-  if (quarter === 4) return getLastMondayOfMonth(y + 1, 1);
+  if (quarter === 1) return `${y}-04-30`;
+  if (quarter === 2) return `${y}-07-30`;
+  if (quarter === 3) return `${y}-10-30`;
+  if (quarter === 4) return `${y + 1}-01-30`;
   return null;
 }
 
