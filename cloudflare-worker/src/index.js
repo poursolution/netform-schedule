@@ -938,9 +938,29 @@ async function queryFirebaseByAptNameFallback(env, siteName, ptDate) {
   if (!resp.ok) return [];
   const data = await resp.json();
   if (!data) return [];
+  // [강화] 단지명 변형 후보 추가 시도:
+  //   - target 그대로
+  //   - "1및2단지" / "1단지" / 단지표기 제거 등 변형 (효천마을신안인스빌1/2단지 → "효천마을신안인스빌")
+  //   - 양방향 substring match 폭 넓힘
+  const variants = new Set([target]);
+  // 단지표기 제거
+  variants.add(target.replace(/\d+(단지|차|동|호|블럭|블록)/g, ''));
+  variants.add(target.replace(/(단지|차|동|호|블럭|블록)\d*/g, ''));
+  // 1및2단지 같은 우리 정규화 결과 → 1, 2 단지 분리
+  const m = target.match(/^(.+?)(\d+)및(\d+)단지(.*)$/);
+  if (m) {
+    variants.add(m[1] + m[2] + '단지' + m[4]);
+    variants.add(m[1] + m[3] + '단지' + m[4]);
+    variants.add(m[1] + m[4]);
+  }
   const arr = Object.values(data).filter(b => {
     const n = b.bidKaptnameNormalized || normalizeKoreanName(b.bidKaptname || '');
-    return n.includes(target) || target.includes(n);
+    if (!n) return false;
+    for (const v of variants) {
+      if (!v) continue;
+      if (n.includes(v) || v.includes(n)) return true;
+    }
+    return false;
   });
   return arr.sort((a, b) => (b.bidRegdate || '').localeCompare(a.bidRegdate || '')).slice(0, 20);
 }
