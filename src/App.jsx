@@ -691,6 +691,8 @@ const SETTLEMENT_BADGE_STYLE = {
 
       // 예외 신청 승인 큐 (admin)
       const [showExceptionQueueModal, setShowExceptionQueueModal] = useState(false);
+      // 스크린샷 검증 대기 큐 (관리자가 사용자 요청 [승인/거부] 처리)
+      const [showScreenshotReviewQueue, setShowScreenshotReviewQueue] = useState(false);
       const [exceptionReviewNote, setExceptionReviewNote] = useState({}); // { scheduleId_assignee: '검토사유' }
 
       // 공법 선택 모달
@@ -5992,6 +5994,15 @@ const SETTLEMENT_BADGE_STYLE = {
                               onMouseLeave={(e) => e.currentTarget.style.background = 'white'}>
                               예외 {pendingExceptions > 0 && <span style={badgeStyle}>{pendingExceptions}</span>}
                               <div style={menuCaption}>영업적 승리·공고 없음 승인</div>
+                            </button>
+                            <button onClick={() => { setAdminMenu(null); setShowScreenshotReviewQueue(true); }} style={menuItem}
+                              onMouseEnter={(e) => e.currentTarget.style.background = theme.surfaceMuted}
+                              onMouseLeave={(e) => e.currentTarget.style.background = 'white'}>
+                              📸 스크린샷 검증 큐 {(() => {
+                                const n = (ptSchedules || []).filter(p => p?.kaptVerified?.status === 'pending-admin-review').length;
+                                return n > 0 ? <span style={badgeStyle}>{n}</span> : null;
+                              })()}
+                              <div style={menuCaption}>담당자 K-APT 스크린샷 승인/거부</div>
                             </button>
                             <button onClick={() => { setAdminMenu(null); setShowActivityLog(true); }} style={{ ...menuItem, borderBottom: 'none' }}
                               onMouseEnter={(e) => e.currentTarget.style.background = theme.surfaceMuted}
@@ -14334,17 +14345,111 @@ tr.suppressed td.fname{color:#64748b;}
             </div>
           )}
 
+          {/* 📸 스크린샷 검증 대기 큐 (admin) — pending-admin-review 상태 PT 들 승인/거부 */}
+          {showScreenshotReviewQueue && currentUser?.isAdmin && (() => {
+            const pending = (ptSchedules || [])
+              .filter(p => p?.kaptVerified?.status === 'pending-admin-review')
+              .sort((a, b) => (a.kaptVerified?.requestedAt || '').localeCompare(b.kaptVerified?.requestedAt || ''));
+            return (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+                onClick={(e) => { if (e.target === e.currentTarget) setShowScreenshotReviewQueue(false); }}>
+                <div style={{ background: 'white', borderRadius: 12, padding: 20, width: 720, maxWidth: '95%', maxHeight: '90vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', letterSpacing: '0.05em' }}>관리자 큐</div>
+                      <h2 style={{ fontSize: 18, fontWeight: 700, margin: '4px 0 0', color: '#1e293b' }}>📸 스크린샷 검증 대기 ({pending.length}건)</h2>
+                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>담당자가 올린 K-APT 스크린샷을 직접 확인 후 승인/거부</div>
+                    </div>
+                    <button onClick={() => setShowScreenshotReviewQueue(false)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#94a3b8' }}>×</button>
+                  </div>
+                  {pending.length === 0 && (
+                    <div style={{ padding: 32, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>대기 중인 검토 요청 없음</div>
+                  )}
+                  {pending.map(p => {
+                    const kv = p.kaptVerified || {};
+                    return (
+                      <div key={p.id} style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 14, marginBottom: 12, background: '#f8fafc' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{p.siteName}</div>
+                            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{p.date} · 담당: {p.ptAssignee} · 요청자: <b>{kv.requestedBy}</b> · {kv.requestedAt?.slice(0, 16).replace('T', ' ')}</div>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 11, color: '#1e293b', padding: 8, background: 'white', borderRadius: 6, marginBottom: 10, lineHeight: 1.6 }}>
+                          • AI 추출: <b>{kv.aiExtractedSite || '(실패)'}</b> · 유사도 <b>{kv.aiSimilarity}</b><br/>
+                          • AI 검출 공법: {(kv.aiOurMethodFound || []).join(', ') || '(없음)'}
+                        </div>
+                        {kv.screenshotUrl && (
+                          <div style={{ marginBottom: 10 }}>
+                            <a href={kv.screenshotUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', fontSize: 11, color: '#2563eb', marginBottom: 6 }}>🖼 스크린샷 새창 열기</a>
+                            <img src={kv.screenshotUrl} alt="검증 스크린샷" style={{ maxWidth: '100%', maxHeight: 320, borderRadius: 6, border: '1px solid #cbd5e1', display: 'block' }} />
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button
+                            onClick={async () => {
+                              const meName = currentUser?.name;
+                              if (meName === p.ptAssignee) {
+                                if (!window.confirm('본인 PT 입니다. 정말 본인이 직접 승인하시겠습니까? (감사 추적에 기록됨)')) return;
+                              }
+                              try {
+                                await database.ref(`pt/${p.id}/kaptVerified`).update({
+                                  status: 'verified',
+                                  method: 'screenshot-admin-approved',
+                                  reviewedAt: new Date().toISOString(),
+                                  reviewedBy: meName,
+                                  selfApprovedFlag: meName === p.ptAssignee,
+                                });
+                                setPtSchedules(prev => prev.map(ps => ps.id === p.id ? ({
+                                  ...ps,
+                                  kaptVerified: { ...kv, status: 'verified', method: 'screenshot-admin-approved' },
+                                }) : ps));
+                                autoTransitionIfEligible(p.id, p.ptAssignee, 'auto-kapt-verified');
+                              } catch (e) { alert('실패: ' + e.message); }
+                            }}
+                            style={{ flex: 1, padding: 9, borderRadius: 6, border: 'none', background: '#16a34a', color: 'white', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                          >✓ 승인 — verified 처리</button>
+                          <button
+                            onClick={async () => {
+                              const note = window.prompt('거부 사유 (담당자에게 전달됨):');
+                              if (note === null) return;
+                              try {
+                                await database.ref(`pt/${p.id}/kaptVerified`).update({
+                                  status: 'rejected',
+                                  method: 'screenshot-admin-rejected',
+                                  reviewedAt: new Date().toISOString(),
+                                  reviewedBy: currentUser?.name,
+                                  rejectionNote: note || '사유 미입력',
+                                });
+                                setPtSchedules(prev => prev.map(ps => ps.id === p.id ? ({
+                                  ...ps,
+                                  kaptVerified: { ...kv, status: 'rejected', method: 'screenshot-admin-rejected', rejectionNote: note },
+                                }) : ps));
+                              } catch (e) { alert('실패: ' + e.message); }
+                            }}
+                            style={{ flex: 1, padding: 9, borderRadius: 6, border: '1px solid #fca5a5', background: 'white', color: '#b91c1c', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                          >✗ 거부 — 사유 첨부</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* K-APT 수동 검증 모달 — 사용자가 직접 K-APT 에서 공고 찾아 공고번호 붙여넣기 */}
           {kaptVerifyModal && (() => {
             // 공통 스크린샷 처리 함수 — paste / file 둘 다 사용
+            //   file 객체를 modal state 에 보관 → 나중에 [관리자 검토 요청] 시 Storage 업로드용
             window.__handleKaptScreenshot = async (file) => {
               const reader = new FileReader();
               reader.onload = async () => {
                 const dataUrl = reader.result;
-                setKaptVerifyModal(m => ({ ...m, stage: 'verifying', verifyMethod: 'screenshot', result: null }));
+                setKaptVerifyModal(m => ({ ...m, stage: 'verifying', verifyMethod: 'screenshot', result: null, screenshotFile: file, screenshotDataUrl: dataUrl }));
                 try {
                   const workerUrl = (kaptWorkerUrl || '').replace(/\/$/, '');
-                  if (!workerUrl) { alert('K-APT Worker URL 미설정'); setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'worker_not_configured' } })); return; }
+                  if (!workerUrl) { alert('K-APT Worker URL 미설정'); setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'worker_not_configured' }, screenshotFile: file, screenshotDataUrl: dataUrl })); return; }
                   const resp = await fetch(`${workerUrl}/verify-screenshot`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -14356,12 +14461,12 @@ tr.suppressed td.fname{color:#64748b;}
                     }),
                   });
                   const r = await resp.json();
-                  setKaptVerifyModal(m => ({ ...m, stage: 'result', result: r }));
+                  setKaptVerifyModal(m => ({ ...m, stage: 'result', result: r, screenshotFile: file, screenshotDataUrl: dataUrl }));
                   if (r && r.status === 'verified') {
                     autoTransitionIfEligible(kaptVerifyModal.scheduleId, kaptVerifyModal.manager, 'auto-kapt-verified');
                   }
                 } catch (err) {
-                  setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'exception', message: err.message } }));
+                  setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'exception', message: err.message }, screenshotFile: file, screenshotDataUrl: dataUrl }));
                 }
               };
               reader.readAsDataURL(file);
@@ -14687,26 +14792,75 @@ tr.suppressed td.fname{color:#64748b;}
                           <div style={{ display: 'flex', gap: '8px' }}>
                             <button
                               onClick={async () => {
+                                const ptAssignee = kaptVerifyModal.manager;
+                                const meName = currentUser?.name;
+                                const isAdmin = !!currentUser?.isAdmin;
+                                const isOwner = meName === ptAssignee;
+                                // 보안: 본인 PT 본인 통과 차단 — 관리자 검토 큐로
+                                //   관리자가 다른 사람 PT 처리할 때만 즉시 통과 허용
+                                if (!isAdmin || isOwner) {
+                                  // 관리자 검토 요청 흐름
+                                  const file = kaptVerifyModal.screenshotFile;
+                                  if (!file || !storage) { alert('스크린샷 파일 또는 Storage 없음 — 다시 업로드'); return; }
+                                  const ts = Date.now();
+                                  const ext = (file.name?.match(/\.([a-z0-9]+)$/i) || [, 'png'])[1];
+                                  const path = `evidence/screenshot-verify/${kaptVerifyModal.scheduleId}_${ts}.${ext}`;
+                                  try {
+                                    const ref = storage.ref(path);
+                                    const snap = await ref.put(file);
+                                    const url = await snap.ref.getDownloadURL();
+                                    await database.ref(`pt/${kaptVerifyModal.scheduleId}/kaptVerified`).update({
+                                      status: 'pending-admin-review',
+                                      method: 'screenshot-pending-admin',
+                                      screenshotPath: path,
+                                      screenshotUrl: url,
+                                      aiExtractedSite: r.extractedSite || '',
+                                      aiSimilarity: r.similarity || 0,
+                                      aiOurMethodFound: r.ourMethodFound || [],
+                                      requestedAt: new Date().toISOString(),
+                                      requestedBy: meName,
+                                      requestedFor: ptAssignee,
+                                    });
+                                    setPtSchedules(prev => prev.map(ps => ps.id === kaptVerifyModal.scheduleId ? ({
+                                      ...ps,
+                                      kaptVerified: { status: 'pending-admin-review', method: 'screenshot-pending-admin', screenshotUrl: url, requestedBy: meName, requestedAt: new Date().toISOString() },
+                                    }) : ps));
+                                    try {
+                                      await sendJandiNotification({
+                                        body: `📸 K-APT 스크린샷 검증 요청 (soft_match) — 관리자 확인 필요`,
+                                        connectColor: '#3b82f6',
+                                        connectInfo: [{
+                                          title: `${kaptVerifyModal.siteName} (${kaptVerifyModal.date})`,
+                                          description: `요청: ${meName} → 담당: ${ptAssignee}\nAI 추출: ${r.extractedSite || '(실패)'} (유사도 ${r.similarity})\nAI 검출 공법: ${(r.ourMethodFound || []).join(', ') || '(없음)'}\n\n스크린샷: ${url}\n\n관리자가 시스템에서 [승인/거부] 처리 필요.`,
+                                        }],
+                                      });
+                                    } catch (e) { console.warn('잔디 알림 실패:', e); }
+                                    alert('관리자 검토 요청 발송됨 — 승인 후 verified 처리됩니다.');
+                                    setKaptVerifyModal(null); setKaptVerifyBidInput('');
+                                  } catch (e) { alert('업로드/저장 실패: ' + e.message); }
+                                  return;
+                                }
+                                // 관리자 + 타인 PT → 즉시 통과
                                 try {
                                   await database.ref(`pt/${kaptVerifyModal.scheduleId}/kaptVerified`).update({
                                     status: 'verified',
-                                    method: 'screenshot-confirmed',
+                                    method: 'screenshot-admin-confirmed',
                                     extractedSite: r.extractedSite || '',
                                     similarity: r.similarity || 0,
                                     confirmedAt: new Date().toISOString(),
-                                    confirmedBy: currentUser?.name || 'manual',
+                                    confirmedBy: meName,
                                     ourMethodFound: r.ourMethodFound || [],
                                   });
                                   setPtSchedules(prev => prev.map(ps => ps.id === kaptVerifyModal.scheduleId ? ({
                                     ...ps,
-                                    kaptVerified: { status: 'verified', method: 'screenshot-confirmed' },
+                                    kaptVerified: { status: 'verified', method: 'screenshot-admin-confirmed' },
                                   }) : ps));
                                   autoTransitionIfEligible(kaptVerifyModal.scheduleId, kaptVerifyModal.manager, 'auto-kapt-verified');
                                   setKaptVerifyModal(null); setKaptVerifyBidInput('');
                                 } catch (e) { alert('저장 실패: ' + e.message); }
                               }}
-                              style={{ flex: 1, padding: '10px', borderRadius: '6px', border: 'none', background: '#16a34a', color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}
-                            >✓ 같은 단지 맞음 — 검증 통과 처리</button>
+                              style={{ flex: 1, padding: '10px', borderRadius: '6px', border: 'none', background: currentUser?.isAdmin && currentUser?.name !== kaptVerifyModal.manager ? '#16a34a' : '#2563eb', color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}
+                            >{currentUser?.isAdmin && currentUser?.name !== kaptVerifyModal.manager ? '✓ 같은 단지 맞음 — 즉시 검증 통과' : '📩 관리자 검토 요청 (스크린샷 첨부)'}</button>
                             <button
                               onClick={() => { setKaptVerifyModal(m => ({ ...m, stage: 'input', result: null })); }}
                               style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}
@@ -14742,33 +14896,62 @@ tr.suppressed td.fname{color:#64748b;}
                                   {(r.ourMethodFound || []).length > 0 && <div>• 우리 공법: {(r.ourMethodFound || []).join(', ')}</div>}
                                   {r.winner && <div>• 낙찰업체: {r.winner}</div>}
                                 </div>
-                                <div style={{ marginTop: '8px', padding: '10px', background: '#ecfdf5', border: '1px solid #6ee7b7', borderRadius: '6px' }}>
-                                  <div style={{ fontSize: '11px', color: '#065f46', marginBottom: '6px', lineHeight: '1.5' }}>
+                                <div style={{ marginTop: '8px', padding: '10px', background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: '6px' }}>
+                                  <div style={{ fontSize: '11px', color: '#1e3a8a', marginBottom: '6px', lineHeight: '1.5' }}>
                                     💡 AI 가 한국어 단지명을 정확히 못 읽을 수 있습니다.<br/>
-                                    스크린샷 본인이 직접 본 것으로 <b>"{kaptVerifyModal.siteName}"</b> 단지의 우리 공법 입찰 결과가 맞으면 아래 [통과] 누르세요.
+                                    스크린샷이 <b>"{kaptVerifyModal.siteName}"</b> 단지의 우리 공법 입찰 결과가 맞으면 [관리자 검토 요청] 누르세요.<br/>
+                                    <b style={{ color: '#dc2626' }}>본인 통과는 차단됩니다 — 관리자 승인 시 verified 처리.</b>
                                   </div>
                                   <button
                                     onClick={async () => {
+                                      const ptAssignee = kaptVerifyModal.manager;
+                                      const meName = currentUser?.name;
+                                      if (!meName) { alert('로그인 정보 없음'); return; }
+                                      // 본인이 본인 PT 검토 요청 후 자기가 승인 못 하게 — 요청은 가능, 승인 단계에서 차단
+                                      // 스크린샷 Storage 업로드
+                                      const file = kaptVerifyModal.screenshotFile;
+                                      if (!file || !storage) { alert('스크린샷 파일 또는 Storage 없음 — 다시 업로드해주세요'); return; }
+                                      const ts = Date.now();
+                                      const ext = (file.name?.match(/\.([a-z0-9]+)$/i) || [, 'png'])[1];
+                                      const path = `evidence/screenshot-verify/${kaptVerifyModal.scheduleId}_${ts}.${ext}`;
                                       try {
+                                        const ref = storage.ref(path);
+                                        const snap = await ref.put(file);
+                                        const url = await snap.ref.getDownloadURL();
+                                        // DB 에 'pending-admin-review' 상태로 저장 (verified 아님)
                                         await database.ref(`pt/${kaptVerifyModal.scheduleId}/kaptVerified`).update({
-                                          status: 'verified',
-                                          method: 'screenshot-user-confirmed',
-                                          extractedSite: r.extractedSite || '',
+                                          status: 'pending-admin-review',
+                                          method: 'screenshot-pending-admin',
+                                          screenshotPath: path,
+                                          screenshotUrl: url,
+                                          aiExtractedSite: r.extractedSite || '',
                                           aiSimilarity: r.similarity || 0,
-                                          confirmedAt: new Date().toISOString(),
-                                          confirmedBy: currentUser?.name || 'manual',
-                                          ourMethodFound: r.ourMethodFound || [],
+                                          aiOurMethodFound: r.ourMethodFound || [],
+                                          requestedAt: new Date().toISOString(),
+                                          requestedBy: meName,
+                                          requestedFor: ptAssignee,
                                         });
                                         setPtSchedules(prev => prev.map(ps => ps.id === kaptVerifyModal.scheduleId ? ({
                                           ...ps,
-                                          kaptVerified: { status: 'verified', method: 'screenshot-user-confirmed' },
+                                          kaptVerified: { status: 'pending-admin-review', method: 'screenshot-pending-admin', screenshotUrl: url, requestedBy: meName, requestedAt: new Date().toISOString() },
                                         }) : ps));
-                                        autoTransitionIfEligible(kaptVerifyModal.scheduleId, kaptVerifyModal.manager, 'auto-kapt-verified');
+                                        // 잔디 알림 (admin 채널) — 관리자 검토 큐 알림
+                                        try {
+                                          await sendJandiNotification({
+                                            body: `📸 K-APT 스크린샷 검증 요청 — 관리자 확인 필요`,
+                                            connectColor: '#3b82f6',
+                                            connectInfo: [{
+                                              title: `${kaptVerifyModal.siteName} (${kaptVerifyModal.date})`,
+                                              description: `요청: ${meName} → 담당: ${ptAssignee}\nAI 추출: ${r.extractedSite || '(실패)'} (유사도 ${r.similarity || 0})\nAI 검출 공법: ${(r.ourMethodFound || []).join(', ') || '(없음)'}\n\n스크린샷: ${url}\n\n관리자가 시스템에서 [승인/거부] 처리 필요.`,
+                                            }],
+                                          });
+                                        } catch (e) { console.warn('잔디 알림 실패:', e); }
+                                        alert('관리자 검토 요청 발송됨\n\n관리자가 스크린샷 확인 후 승인하면 verified 처리됩니다.');
                                         setKaptVerifyModal(null); setKaptVerifyBidInput('');
-                                      } catch (e) { alert('저장 실패: ' + e.message); }
+                                      } catch (e) { alert('업로드/저장 실패: ' + e.message); }
                                     }}
-                                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: 'none', background: '#16a34a', color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
-                                  >✓ 사용자 확인 통과 — 검증 완료 처리</button>
+                                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: 'none', background: '#2563eb', color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                                  >📩 관리자 검토 요청 — 스크린샷 + AI 결과 첨부 발송</button>
                                 </div>
                               </>
                             )}
