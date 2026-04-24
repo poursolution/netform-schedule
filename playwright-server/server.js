@@ -2310,12 +2310,21 @@ const TESSERACT = process.env.TESSERACT || 'tesseract';
 const OUR_METHOD_KEYWORDS = ['POUR', 'CNC', 'DETEX', '시멘트분말', 'pour', 'cnc', 'detex'];
 // "DO" 는 너무 흔한 영단어라 별도 처리: "DO공법" 또는 "DO 공법" 같은 형태만 검출
 const DO_METHOD_REGEX = /\bDO\s*공법|DO[솔루션\s]/;
+// 우리 특허 — POUR 공법 핵심 특허 (사용자 명시: 1935719)
+//   OCR 에서 하이픈/공백 사라질 수 있으니 숫자 부분만 매칭
+const OUR_PATENT_NUMBERS_PARTIAL = ['1935719', '2398304', '1700652', '2091977', '2535699', '2119347'];
+// 우리 특허명 (부분 매칭 — 핵심 키워드 조합)
+const OUR_PATENT_NAME_REGEX = /콘크리트\s*구조물.{0,5}(크랙|균열).{0,5}보수.{0,30}보수층.{0,30}보수방법|콘크리트\s*구조물.{0,5}(크랙|균열).{0,5}(보수|복원).{0,30}(보수방법|복원방법)/;
 
-function ocrTesseract(imageBuf, psm = 3) {
+// 한글+영문 동시 OCR + 영문 단독 OCR 결과 합침.
+//   - 한글+영문 모드는 한글 정확도 높지만 영문(POUR 등) 인식 떨어짐
+//   - 영문 단독 모드는 영문 정확도 매우 높음 (POUR 같은 우리 공법 키워드 검출 핵심)
+//   → 두 결과 concat 해서 키워드 검색용 텍스트 생성
+function ocrTesseract(imageBuf, lang, psm) {
   return new Promise((resolve, reject) => {
     const tmpFile = path.join(os.tmpdir(), `ocrtmp_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.png`);
     fsp.writeFile(tmpFile, imageBuf).then(() => {
-      execFile(TESSERACT, [tmpFile, '-', '-l', 'kor+eng', '--psm', String(psm)], { maxBuffer: 20 * 1024 * 1024, timeout: 30000 }, async (err, stdout, stderr) => {
+      execFile(TESSERACT, [tmpFile, '-', '-l', lang, '--psm', String(psm)], { maxBuffer: 20 * 1024 * 1024, timeout: 30000 }, async (err, stdout, stderr) => {
         try { await fsp.unlink(tmpFile); } catch {}
         if (err) reject(new Error('tesseract: ' + (err.message || stderr.slice(0, 200))));
         else resolve(stdout || '');
@@ -2324,20 +2333,16 @@ function ocrTesseract(imageBuf, psm = 3) {
   });
 }
 
-// 다중 PSM 시도 — 가장 길게 추출된 결과 사용
 async function ocrTesseractMulti(imageBuf) {
-  const psms = [3, 6, 4]; // 자동 / 단일블록 / 단일컬럼
-  const results = [];
-  for (const psm of psms) {
-    try {
-      const t = await ocrTesseract(imageBuf, psm);
-      if (t && t.trim().length > 0) results.push({ psm, text: t });
-    } catch {}
-  }
-  if (results.length === 0) return '';
-  // 가장 긴 결과 선택
-  results.sort((a, b) => b.text.length - a.text.length);
-  return results[0].text;
+  // (a) kor+eng PSM 6 — 한글 본문 추출
+  // (b) eng PSM 6 — 영문 키워드 (POUR 등) 추출
+  const tasks = [
+    ocrTesseract(imageBuf, 'kor+eng', 6).catch(() => ''),
+    ocrTesseract(imageBuf, 'eng', 6).catch(() => ''),
+  ];
+  const [korText, engText] = await Promise.all(tasks);
+  // 합쳐서 반환 — 키워드 검색은 합본에서 하면 됨
+  return (korText || '') + '\n\n=== ENG ===\n' + (engText || '');
 }
 
 // 단지명 정규화 + 유사도 (Worker 와 동일 규칙)
@@ -2395,7 +2400,15 @@ app.post('/ocr-screenshot', async (req, res) => {
     // 단지명 추출 시도 — "단지명: XXX" 패턴 또는 텍스트 전체에서 siteName 부분 매칭
     let extractedSite = '';
     const labelMatch = text.match(/(?:단\s*지\s*명|아\s*파\s*트\s*명|소\s*재\s*지|단지\s*명칭|명칭)\s*[:：]\s*([^\n\r]+)/);
-    if (labelMatch) extractedSite = labelMatch[1].trim().slice(0, 60);
+    if (labelMatch) {
+      let raw = labelMatch[1].trim().slice(0, 60);
+      // 괄호 안 내용 제거 — "김포양촌 자연앤데시앙아파트(234-82-60077)" → "김포양촌 자연앤데시앙아파트"
+      //   사업자등록번호, 사업장 주소 부가 정보 등 OCR 노이즈 제거
+      raw = raw.replace(/[\(（].*?[\)）]/g, '').trim();
+      // 끝의 사업자번호 패턴 (123-45-67890) 제거
+      raw = raw.replace(/\s*\d{3}[-\s]?\d{2}[-\s]?\d{5}\s*$/, '').trim();
+      extractedSite = raw;
+    }
     // label 못 찾으면 siteName 의 일부가 텍스트에 직접 보이는지로 추출 시도
     if (!extractedSite) {
       // siteName 의 normalize 버전이 textNoSpace 에 substring 으로 있는지 확인
@@ -2405,9 +2418,12 @@ app.post('/ocr-screenshot', async (req, res) => {
 
     const similarity = extractedSite ? ocrSimilarity(siteName, extractedSite) : ocrSimilarity(siteName, textNoSpace);
 
-    // 우리 공법 키워드 추출 — exact 매칭 + OCR 오인식 fuzzy 패턴 둘 다 시도
+    // 우리 공법 검증 — 3가지 신호 중 하나라도 발견되면 통과
+    //   1. 공법명 (POUR/CNC/DO/DETEX/시멘트분말)
+    //   2. 우리 특허번호 (1935719, 2398304, 1700652 등)
+    //   3. 우리 특허명 ("콘크리트 구조물의 크랙 보수를 위한 보수층 및 그 보수방법")
     const ourMethodFound = [];
-    // (1) exact 매칭
+    // (1) exact 키워드
     for (const kw of OUR_METHOD_KEYWORDS) {
       if (text.includes(kw) || textNoSpace.includes(kw)) {
         const upper = kw.toUpperCase();
@@ -2415,11 +2431,23 @@ app.post('/ocr-screenshot', async (req, res) => {
       }
     }
     if (DO_METHOD_REGEX.test(text)) ourMethodFound.push('DO');
-    // (2) fuzzy 매칭 — POUR 등 OCR 오인식된 형태
+    // (2) fuzzy 매칭 — POUR 등 OCR 오인식
     for (const { name, regex } of OCR_KEYWORD_PATTERNS) {
       if (regex.test(text) || regex.test(textNoSpace)) {
         if (!ourMethodFound.includes(name)) ourMethodFound.push(name);
       }
+    }
+    // (3) 특허번호 — OCR 텍스트의 숫자만 추출해서 부분 매칭
+    const digitsOnly = text.replace(/[^0-9]/g, '');
+    for (const pn of OUR_PATENT_NUMBERS_PARTIAL) {
+      if (digitsOnly.includes(pn)) {
+        const tag = '특허제' + pn;
+        if (!ourMethodFound.includes(tag)) ourMethodFound.push(tag);
+      }
+    }
+    // (4) 특허명 매칭
+    if (OUR_PATENT_NAME_REGEX.test(text)) {
+      ourMethodFound.push('특허명일치');
     }
     const hasOurMethod = ourMethodFound.length > 0;
 
