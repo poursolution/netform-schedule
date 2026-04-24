@@ -2252,6 +2252,8 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
         ext: ev.ext,
         size: ev.size,
         storagePath: ev.storagePath,
+        ptMatchStatus: ev.ptMatchStatus || null,
+        nearMissScore: ev.nearMissScore == null ? null : Number(ev.nearMissScore),
         candidates: candidates.map(c => ({
           ptId: c.id,
           siteName: c.siteName,
@@ -2264,6 +2266,16 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
         })),
       });
     }
+
+    // needs_review (near-miss) 우선 — 높은 nearMissScore 먼저, 그다음 후보 score 높은 순
+    unmatched.sort((a, b) => {
+      const aNR = a.ptMatchStatus === 'needs_review' ? 1 : 0;
+      const bNR = b.ptMatchStatus === 'needs_review' ? 1 : 0;
+      if (aNR !== bNR) return bNR - aNR;
+      const aS = a.nearMissScore ?? (a.candidates[0]?.score || 0);
+      const bS = b.nearMissScore ?? (b.candidates[0]?.score || 0);
+      return bS - aS;
+    });
 
     const withCandidates = unmatched.filter(u => u.candidates.length > 0);
     const noCandidates = unmatched.filter(u => u.candidates.length === 0);
