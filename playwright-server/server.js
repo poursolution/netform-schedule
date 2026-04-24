@@ -1495,6 +1495,30 @@ app.post('/admin/jandi-channel-sync', requireAuth, async (req, res) => {
   }
 });
 
+// === settlement.status stale 치유 helper ===
+// evidence 가 뒤늦게 붙어서 검증 조건은 만족하는데
+// 과거 'needs_review' 로 박힌 status가 자동 전환 안 되는 문제 방지.
+//
+// 입력: pt 객체, updates 객체 (mutate), ptId
+// 동작: pt.settlement 각 담당자 중 status='needs_review' && requested=true 인 것을
+//       'requested' 로 올리고 excludedReason 을 clear, healedAt/healedReason 기록.
+// 반환: 치유된 담당자 이름 배열 (없으면 [])
+function healStaleSettlement(pt, updates, ptId, reason = 'evidence-attached') {
+  if (!pt?.settlement) return [];
+  const healed = [];
+  const nowISO = new Date().toISOString();
+  for (const [assignee, s] of Object.entries(pt.settlement)) {
+    if (s?.status === 'needs_review' && s?.requested === true) {
+      updates[`pt/${ptId}/settlement/${assignee}/status`] = 'requested';
+      updates[`pt/${ptId}/settlement/${assignee}/excludedReason`] = null;
+      updates[`pt/${ptId}/settlement/${assignee}/healedAt`] = nowISO;
+      updates[`pt/${ptId}/settlement/${assignee}/healedReason`] = reason;
+      healed.push(assignee);
+    }
+  }
+  return healed;
+}
+
 // 파일명 파서 (server 내부용 — src/utils/jandiFileParser.js 와 동일 로직)
 const JANDI_METHOD_PREFIXES = [
   'POUR공법', 'CNC공법', 'DO공법', 'DETEX공법',
@@ -1918,6 +1942,13 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
         updates[`evidence/${fileId}/matchedPtIds`] = matchedIdsObj;
         updates[`evidence/${fileId}/ptMatchStatus`] = 'matched';
         updates[`evidence/${fileId}/matchedAt`] = new Date().toISOString();
+        // [Stale 치유] 이 PT 의 needs_review 정산건 자동 전환
+        for (const c of toLink) {
+          const healed = healStaleSettlement(pts[c.id], updates, c.id, 'auto-match');
+          if (healed.length > 0) {
+            results.healed = (results.healed || 0) + healed.length;
+          }
+        }
       }
 
       results.matches.push({
@@ -1945,6 +1976,7 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
         multiMatch: results.multiMatch,
         nearMiss: results.nearMiss || 0,
         unmatched: results.unmatched,
+        healedSettlements: results.healed || 0,
       },
       updateKeys: dryRun ? undefined : Object.keys(updates).length,
       sampleMatches: results.matches.slice(0, 15),
@@ -2346,8 +2378,13 @@ app.post('/admin/jandi-manual-link', requireAuth, async (req, res) => {
         }
       }
     }
+    // [Stale 치유] evidence 가 붙었으면 needs_review 상태 자동 전환
+    const healedAssignees = unlink ? [] : healStaleSettlement(pt, updates, ptId, 'manual-link');
     await db.ref().update(updates);
-    return res.json({ status: 'ok', action: unlink ? 'unlinked' : 'linked', fileId, ptId });
+    return res.json({
+      status: 'ok', action: unlink ? 'unlinked' : 'linked', fileId, ptId,
+      healedAssignees: healedAssignees.length > 0 ? healedAssignees : undefined,
+    });
   } catch (e) {
     return res.status(500).json({ error: e.message, stack: e.stack });
   }
