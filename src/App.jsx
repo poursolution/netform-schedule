@@ -9902,20 +9902,43 @@ const SETTLEMENT_BADGE_STYLE = {
                                               </span>
                                             )}
                                             {!isSelfPT && !isSuperseded && currentResult && currentResult !== '패' && (() => {
-                                              // 분기 마감일 윈도우 기반 분류 (운영 룰: Q1=4/30, Q2=7/30, Q3=10/30, Q4=익년1/30)
-                                              //   1/1~1/30  → 전년 Q4
-                                              //   1/31~4/30 → Q1   (예: 4월에 처리한 1~3월 PT 는 Q1)
-                                              //   5/1~7/30  → Q2
-                                              //   7/31~10/30→ Q3
-                                              //   10/31~12/31→ Q4
-                                              const toQuarter = (iso) => {
-                                                if (!iso) return '';
+                                              // 가이드 룰:
+                                              //   1) "해당 분기에 진행한 PT는 해당 분기 수당" — PT 진행일 분기가 우선
+                                              //   2) "이전 분기 미확인" — PT 진행 분기 마감(다음달30일) 지나서 입력하면 입력 분기로 밀림
+                                              //
+                                              //   예: 4월 15일 PT, 4월 24일 입력 → Q2 진행 + Q2 마감(7/30) 전 → Q2 수당
+                                              //   예: 1월 PT, 4월 24일 입력 → Q1 진행 + Q1 마감(4/30) 전 → Q1 수당
+                                              //   예: 1월 PT, 5월 5일 입력 → Q1 진행 + Q1 마감 지남 → 입력일 분기 (Q2)
+                                              //
+                                              //   진행 분기:        PT 날짜 (1~3월=Q1, 4~6월=Q2, 7~9월=Q3, 10~12월=Q4)
+                                              //   분기 마감일:       Q1=4/30, Q2=7/30, Q3=10/30, Q4=익년 1/30
+                                              const toQuarter = (confirmIso) => {
+                                                if (!confirmIso) return '';
                                                 try {
-                                                  const d = new Date(iso);
-                                                  if (isNaN(d.getTime())) return '';
-                                                  const y = d.getFullYear();
-                                                  const m = d.getMonth() + 1;
-                                                  const day = d.getDate();
+                                                  // PT 진행일은 외부 변수 s.date 사용
+                                                  const ptDate = s?.date;  // YYYY-MM-DD
+                                                  const c = new Date(confirmIso);
+                                                  if (isNaN(c.getTime())) return '';
+                                                  // PT 진행일 → 진행 분기
+                                                  let ptYear, ptQ;
+                                                  if (ptDate && /^\d{4}-\d{2}-\d{2}$/.test(ptDate)) {
+                                                    ptYear = parseInt(ptDate.slice(0, 4), 10);
+                                                    const ptM = parseInt(ptDate.slice(5, 7), 10);
+                                                    ptQ = Math.ceil(ptM / 3);
+                                                  }
+                                                  // 분기 마감일 (다음달 30일) — Q1=4/30, Q2=7/30, Q3=10/30, Q4=익년 1/30
+                                                  if (ptYear && ptQ) {
+                                                    const deadlineMonth = ptQ * 3 + 1;  // Q1→4, Q2→7, Q3→10, Q4→13
+                                                    const deadlineYear = deadlineMonth > 12 ? ptYear + 1 : ptYear;
+                                                    const deadlineDate = new Date(deadlineYear, (deadlineMonth > 12 ? 1 : deadlineMonth) - 1, 30, 23, 59, 59);
+                                                    if (c <= deadlineDate) {
+                                                      return `${ptYear}-Q${ptQ}`;  // 진행 분기 마감 안 → 진행 분기 수당
+                                                    }
+                                                  }
+                                                  // 마감 지났거나 PT 날짜 없음 → 입력일 분기 윈도우
+                                                  const y = c.getFullYear();
+                                                  const m = c.getMonth() + 1;
+                                                  const day = c.getDate();
                                                   if (m === 1 && day <= 30) return `${y - 1}-Q4`;
                                                   if ((m >= 1 && m < 4) || (m === 4 && day <= 30)) return `${y}-Q1`;
                                                   if ((m > 4 && m < 7) || (m === 4 && day > 30) || (m === 7 && day <= 30)) return `${y}-Q2`;

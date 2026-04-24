@@ -42,12 +42,11 @@ export function getQuarterDeadline(year, quarter) {
   return null;
 }
 
-// === 정산 분기 윈도우 (가이드: 입력 분기 = 수당 분기) ===
-//   Q1 = 1/31 ~ 4/30  (전 분기 마감 다음날 ~ 해당 분기 마감일)
+// === 정산 분기 윈도우 (가이드: 입력 분기 = 수당 분기) — "이전 분기 미확인" 케이스에만 사용 ===
+//   Q1 = 1/31 ~ 4/30
 //   Q2 = 5/1 ~ 7/30
 //   Q3 = 7/31 ~ 10/30
 //   Q4 = 10/31 ~ 익년 1/30
-//   confirmDate (정산 처리일) 가 이 윈도우에 들어가면 그 분기 수당
 export function getSettlementWindow(year, quarter) {
   const y = parseInt(year);
   if (quarter === 1) return { start: `${y}-01-31`, end: `${y}-04-30`, label: '1분기 정산창' };
@@ -55,6 +54,41 @@ export function getSettlementWindow(year, quarter) {
   if (quarter === 3) return { start: `${y}-07-31`, end: `${y}-10-30`, label: '3분기 정산창' };
   if (quarter === 4) return { start: `${y}-10-31`, end: `${y + 1}-01-30`, label: '4분기 정산창' };
   return null;
+}
+
+// === PT 한 건의 수당 귀속 분기 ===
+//   가이드 룰:
+//     1) PT 진행 분기 마감일(다음달 30일) 안에 입력 → PT 진행 분기 수당
+//     2) 마감 지나서 입력 → 입력 분기 (settlement window) 수당
+//   예: 4/15 PT, 4/24 입력 → Q2 진행 + Q2 마감(7/30) 전 → Q2 수당
+//   예: 1월 PT, 4/24 입력 → Q1 진행 + Q1 마감(4/30) 전 → Q1 수당
+//   예: 1월 PT, 5/5 입력 → Q1 진행 + Q1 마감 지남 → 입력일이 Q2 윈도우 → Q2 수당
+export function getSettlementQuarterForPt(ptDate, confirmDate) {
+  if (!ptDate) return null;
+  const m = String(ptDate).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const ptY = parseInt(m[1], 10);
+  const ptM = parseInt(m[2], 10);
+  const ptQ = Math.ceil(ptM / 3);
+  // 진행 분기 마감일 — Q1=4/30, Q2=7/30, Q3=10/30, Q4=익년1/30
+  const dlMonth = ptQ * 3 + 1;
+  const dlYear = dlMonth > 12 ? ptY + 1 : ptY;
+  const dlMonthAdj = dlMonth > 12 ? 1 : dlMonth;
+  const deadlineStr = `${dlYear}-${String(dlMonthAdj).padStart(2, '0')}-30`;
+  const cd = String(confirmDate || '').slice(0, 10);
+  if (!cd) return { year: ptY, quarter: ptQ };
+  if (cd <= deadlineStr) {
+    return { year: ptY, quarter: ptQ };
+  }
+  // 마감 지남 → 입력일 분기 윈도우
+  const cy = parseInt(cd.slice(0, 4), 10);
+  const cm = parseInt(cd.slice(5, 7), 10);
+  const cday = parseInt(cd.slice(8, 10), 10);
+  if (cm === 1 && cday <= 30) return { year: cy - 1, quarter: 4 };
+  if ((cm >= 1 && cm < 4) || (cm === 4 && cday <= 30)) return { year: cy, quarter: 1 };
+  if ((cm > 4 && cm < 7) || (cm === 4 && cday > 30) || (cm === 7 && cday <= 30)) return { year: cy, quarter: 2 };
+  if ((cm > 7 && cm < 10) || (cm === 7 && cday > 30) || (cm === 10 && cday <= 30)) return { year: cy, quarter: 3 };
+  return { year: cy, quarter: 4 };
 }
 
 // === 헬퍼 ===
@@ -245,8 +279,12 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
         : 'ptDate';
       if (confirmSource === 'ptDate') debugStats.missingResultConfirmDate++;
 
-      // 가이드 룰: 정산 처리일(confirmDate) 이 분기 정산창(예 Q1 = 1/31~4/30) 안에 있으면 그 분기 수당
-      if (!inRange(confirmDate, settleWindow)) { debugStats.skippedOutOfQuarter++; return; }
+      // 가이드 룰: 진행 분기 마감 안 입력 → 진행 분기 / 마감 지남 → 입력일 분기
+      const sq = getSettlementQuarterForPt(s.date, confirmDate);
+      if (!sq || sq.year !== parseInt(year) || sq.quarter !== parseInt(quarter)) {
+        debugStats.skippedOutOfQuarter++;
+        return;
+      }
 
       const verified = isPtVerified(s, a);
       const row = {
