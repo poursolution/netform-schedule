@@ -14918,6 +14918,13 @@ tr.suppressed td.fname{color:#64748b;}
                                   {(r.ourMethodFound || []).length > 0 && <div>• 우리 공법: {(r.ourMethodFound || []).join(', ')}</div>}
                                   {r.winner && <div>• 낙찰업체: {r.winner}</div>}
                                 </div>
+                                {/* OCR 추출 텍스트 — 디버그용 (POUR 등 키워드 못 찾았을 때 원본 확인) */}
+                                {r.ocrTextSnippet && (
+                                  <details style={{ marginTop: 6, padding: '6px 8px', background: '#fafafa', borderRadius: 6, border: '1px solid #e2e8f0' }}>
+                                    <summary style={{ fontSize: 10, color: '#64748b', cursor: 'pointer', fontWeight: 600 }}>📝 OCR 추출 텍스트 보기 ({r.ocrTextSnippet.length}자)</summary>
+                                    <pre style={{ fontSize: 10, color: '#475569', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflow: 'auto', margin: '6px 0 0', fontFamily: 'monospace' }}>{r.ocrTextSnippet}</pre>
+                                  </details>
+                                )}
                                 <div style={{ marginTop: '8px', padding: '10px', background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: '6px' }}>
                                   <div style={{ fontSize: '11px', color: '#1e3a8a', marginBottom: '6px', lineHeight: '1.5' }}>
                                     💡 AI 가 한국어 단지명을 정확히 못 읽을 수 있습니다.<br/>

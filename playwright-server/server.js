@@ -2311,17 +2311,33 @@ const OUR_METHOD_KEYWORDS = ['POUR', 'CNC', 'DETEX', '시멘트분말', 'pour', 
 // "DO" 는 너무 흔한 영단어라 별도 처리: "DO공법" 또는 "DO 공법" 같은 형태만 검출
 const DO_METHOD_REGEX = /\bDO\s*공법|DO[솔루션\s]/;
 
-function ocrTesseract(imageBuf) {
+function ocrTesseract(imageBuf, psm = 3) {
   return new Promise((resolve, reject) => {
     const tmpFile = path.join(os.tmpdir(), `ocrtmp_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.png`);
     fsp.writeFile(tmpFile, imageBuf).then(() => {
-      execFile(TESSERACT, [tmpFile, '-', '-l', 'kor+eng'], { maxBuffer: 20 * 1024 * 1024, timeout: 30000 }, async (err, stdout, stderr) => {
+      execFile(TESSERACT, [tmpFile, '-', '-l', 'kor+eng', '--psm', String(psm)], { maxBuffer: 20 * 1024 * 1024, timeout: 30000 }, async (err, stdout, stderr) => {
         try { await fsp.unlink(tmpFile); } catch {}
         if (err) reject(new Error('tesseract: ' + (err.message || stderr.slice(0, 200))));
         else resolve(stdout || '');
       });
     }).catch(reject);
   });
+}
+
+// 다중 PSM 시도 — 가장 길게 추출된 결과 사용
+async function ocrTesseractMulti(imageBuf) {
+  const psms = [3, 6, 4]; // 자동 / 단일블록 / 단일컬럼
+  const results = [];
+  for (const psm of psms) {
+    try {
+      const t = await ocrTesseract(imageBuf, psm);
+      if (t && t.trim().length > 0) results.push({ psm, text: t });
+    } catch {}
+  }
+  if (results.length === 0) return '';
+  // 가장 긴 결과 선택
+  results.sort((a, b) => b.text.length - a.text.length);
+  return results[0].text;
 }
 
 // 단지명 정규화 + 유사도 (Worker 와 동일 규칙)
@@ -2332,6 +2348,19 @@ function ocrNormName(s) {
   n = n.replace(/[\s()()[\]【】.\-_/\\·•‧⋅,，~～]/g, '');
   return n;
 }
+
+// POUR 같은 영문 키워드의 OCR 오인식 흔한 변형
+//   P → P, F (간혹)
+//   O → O, 0, ○, Ｏ, 〇, Q
+//   U → U, V (간혹), Ⓤ
+//   R → R, P (간혹), Я
+const OCR_KEYWORD_PATTERNS = [
+  { name: 'POUR', regex: /[PF][O0○Ｏ〇Q][UV][RPЯ]/i },
+  { name: 'CNC', regex: /[CＣ][NМ][CＣ]/i },
+  { name: 'DETEX', regex: /[DＤ][EＥ][TＴ][EＥ][XＸ]/i },
+  { name: 'DO', regex: /\b[DＤ][O0○Ｏ〇Q]\s*공법|[DＤ][O0○Ｏ〇Q][솔루션\s]/i },
+  { name: '시멘트분말', regex: /시\s*멘\s*트\s*분\s*말|시멘트\s*분말/i },
+];
 function ocrSimilarity(a, b) {
   const na = ocrNormName(a), nb = ocrNormName(b);
   if (!na || !nb) return 0;
@@ -2360,7 +2389,7 @@ app.post('/ocr-screenshot', async (req, res) => {
     if (buf.length === 0) return res.status(400).json({ status: 'error', reason: 'empty_image_decoded' });
     if (buf.length > 5 * 1024 * 1024) return res.status(400).json({ status: 'error', reason: 'image_too_large' });
 
-    const text = await ocrTesseract(buf);
+    const text = await ocrTesseractMulti(buf);
     const textNoSpace = text.replace(/\s+/g, '');
 
     // 단지명 추출 시도 — "단지명: XXX" 패턴 또는 텍스트 전체에서 siteName 부분 매칭
@@ -2376,8 +2405,9 @@ app.post('/ocr-screenshot', async (req, res) => {
 
     const similarity = extractedSite ? ocrSimilarity(siteName, extractedSite) : ocrSimilarity(siteName, textNoSpace);
 
-    // 우리 공법 키워드 추출 — text 안에서 직접 검색
+    // 우리 공법 키워드 추출 — exact 매칭 + OCR 오인식 fuzzy 패턴 둘 다 시도
     const ourMethodFound = [];
+    // (1) exact 매칭
     for (const kw of OUR_METHOD_KEYWORDS) {
       if (text.includes(kw) || textNoSpace.includes(kw)) {
         const upper = kw.toUpperCase();
@@ -2385,6 +2415,12 @@ app.post('/ocr-screenshot', async (req, res) => {
       }
     }
     if (DO_METHOD_REGEX.test(text)) ourMethodFound.push('DO');
+    // (2) fuzzy 매칭 — POUR 등 OCR 오인식된 형태
+    for (const { name, regex } of OCR_KEYWORD_PATTERNS) {
+      if (regex.test(text) || regex.test(textNoSpace)) {
+        if (!ourMethodFound.includes(name)) ourMethodFound.push(name);
+      }
+    }
     const hasOurMethod = ourMethodFound.length > 0;
 
     // 판정
@@ -2407,7 +2443,7 @@ app.post('/ocr-screenshot', async (req, res) => {
       ourMethodFound,
       similarity: Number(similarity.toFixed(3)),
       source: 'screenshot-tesseract',
-      ocrTextSnippet: text.slice(0, 300),
+      ocrTextSnippet: text.slice(0, 1500),
     });
   } catch (e) {
     return res.status(500).json({ status: 'error', reason: 'exception', error: e.message });
