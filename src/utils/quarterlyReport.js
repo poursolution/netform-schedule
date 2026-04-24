@@ -42,6 +42,21 @@ export function getQuarterDeadline(year, quarter) {
   return null;
 }
 
+// === 정산 분기 윈도우 (가이드: 입력 분기 = 수당 분기) ===
+//   Q1 = 1/31 ~ 4/30  (전 분기 마감 다음날 ~ 해당 분기 마감일)
+//   Q2 = 5/1 ~ 7/30
+//   Q3 = 7/31 ~ 10/30
+//   Q4 = 10/31 ~ 익년 1/30
+//   confirmDate (정산 처리일) 가 이 윈도우에 들어가면 그 분기 수당
+export function getSettlementWindow(year, quarter) {
+  const y = parseInt(year);
+  if (quarter === 1) return { start: `${y}-01-31`, end: `${y}-04-30`, label: '1분기 정산창' };
+  if (quarter === 2) return { start: `${y}-05-01`, end: `${y}-07-30`, label: '2분기 정산창' };
+  if (quarter === 3) return { start: `${y}-07-31`, end: `${y}-10-30`, label: '3분기 정산창' };
+  if (quarter === 4) return { start: `${y}-10-31`, end: `${y + 1}-01-30`, label: '4분기 정산창' };
+  return null;
+}
+
 // === 헬퍼 ===
 function inRange(dateStr, range) {
   if (!dateStr) return false;
@@ -160,7 +175,8 @@ function extractConfirmDate(s, assignee) {
 // 기준: resultConfirmDate (결과 입력 시점) 기준 분기 귀속
 // 제외: 패·미입력 / 자체PT / 본인영업 / 취소공고
 export function aggregateQuarterlyReport(allData, year, quarter) {
-  const range = getQuarterRange(year, quarter);
+  const range = getQuarterRange(year, quarter);  // PT 진행일 범위 (1/1~3/31) — 주말출근에 사용
+  const settleWindow = getSettlementWindow(year, quarter);  // 정산 처리 윈도우 (1/31~4/30) — confirmDate 기준
   const { ptSchedules = [] } = allData;
 
   const SETTLEMENT_RESULTS = new Set(['승', '무', '지원']);
@@ -194,10 +210,12 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
     if (s.kaptVerified?.status === 'cancelled') { debugStats.skippedCancelled++; return; }
 
     // 주말출근 별도 집계 — PT 진행일 기준 (결과 무관)
+    //   가이드 룰: 본인영업 현장(selfPT 또는 selfSales) 근무 제외
     if (!s.selfPT && isWeekendPt(s) && inRange(s.date, range)) {
       const wAssignees = parseAssignees(s.ptAssignee);
       wAssignees.forEach(wa => {
         if (!SETTLEMENT_ASSIGNEES_SET.has(wa)) return;
+        if (isSelfSales(s, wa)) return;  // 본인영업 제외 (가이드)
         weekendItems.push({
           date: s.date,
           dayOfWeek: ['일','월','화','수','목','금','토'][new Date(parseInt(s.date.slice(0,4)), parseInt(s.date.slice(5,7))-1, parseInt(s.date.slice(8,10))).getDay()],
@@ -227,7 +245,8 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
         : 'ptDate';
       if (confirmSource === 'ptDate') debugStats.missingResultConfirmDate++;
 
-      if (!inRange(confirmDate, range)) { debugStats.skippedOutOfQuarter++; return; }
+      // 가이드 룰: 정산 처리일(confirmDate) 이 분기 정산창(예 Q1 = 1/31~4/30) 안에 있으면 그 분기 수당
+      if (!inRange(confirmDate, settleWindow)) { debugStats.skippedOutOfQuarter++; return; }
 
       const verified = isPtVerified(s, a);
       const row = {
