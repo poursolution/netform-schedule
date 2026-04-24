@@ -14479,9 +14479,10 @@ tr.suppressed td.fname{color:#64748b;}
                 const dataUrl = reader.result;
                 setKaptVerifyModal(m => ({ ...m, stage: 'verifying', verifyMethod: 'screenshot', result: null, screenshotFile: file, screenshotDataUrl: dataUrl }));
                 try {
-                  // VPS Tesseract OCR 호출 (Workers AI 한국어 정확도 한계로 교체)
-                  const vpsUrl = 'http://15.164.84.93:8080';
-                  const resp = await fetch(`${vpsUrl}/ocr-screenshot`, {
+                  // Worker 가 VPS 로 프록시 (HTTPS → HTTP Mixed Content 회피)
+                  const apiBase = (kaptWorkerUrl || '').replace(/\/$/, '');
+                  if (!apiBase) { alert('K-APT Worker URL 미설정 — admin 설정 확인'); setKaptVerifyModal(m => ({ ...m, stage: 'result', result: { status: 'error', reason: 'worker_not_configured' }, screenshotFile: file, screenshotDataUrl: dataUrl })); return; }
+                  const resp = await fetch(`${apiBase}/ocr-screenshot`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -14830,9 +14831,10 @@ tr.suppressed td.fname{color:#64748b;}
                                 if (!isAdmin || isOwner) {
                                   const dataUrl = kaptVerifyModal.screenshotDataUrl;
                                   if (!dataUrl) { alert('스크린샷 없음 — 다시 업로드'); return; }
-                                  const vpsUrl = 'http://15.164.84.93:8080';
+                                  const apiBase = (kaptWorkerUrl || '').replace(/\/$/, '');
+                                  if (!apiBase) { alert('K-APT Worker URL 미설정'); return; }
                                   try {
-                                    const resp = await fetch(`${vpsUrl}/screenshot-verify-request`, {
+                                    const resp = await fetch(`${apiBase}/screenshot-verify-request`, {
                                       method: 'POST',
                                       headers: { 'Content-Type': 'application/json' },
                                       body: JSON.stringify({
@@ -14929,13 +14931,10 @@ tr.suppressed td.fname{color:#64748b;}
                                       if (!meName) { alert('로그인 정보 없음'); return; }
                                       const dataUrl = kaptVerifyModal.screenshotDataUrl;
                                       if (!dataUrl) { alert('스크린샷 없음 — 다시 업로드'); return; }
-                                      const workerUrl = (kaptWorkerUrl || '').replace(/\/$/, '');
-                                      // VPS 가 호스트인 경우만 업로드 endpoint 사용 가능 (CORS 고려)
-                                      // VPS URL 추출 — Worker 가 VPS proxy 역할이라 Worker 가 아닌 VPS 직접 호출 필요
-                                      // → 임시: 같은 도메인 가정. CORS 이슈 시 Worker 에 같은 endpoint 추가 필요
-                                      const vpsUrl = 'http://15.164.84.93:8080';
+                                      const apiBase = (kaptWorkerUrl || '').replace(/\/$/, '');
+                                      if (!apiBase) { alert('K-APT Worker URL 미설정'); return; }
                                       try {
-                                        const resp = await fetch(`${vpsUrl}/screenshot-verify-request`, {
+                                        const resp = await fetch(`${apiBase}/screenshot-verify-request`, {
                                           method: 'POST',
                                           headers: { 'Content-Type': 'application/json' },
                                           body: JSON.stringify({

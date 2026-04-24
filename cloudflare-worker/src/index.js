@@ -164,6 +164,34 @@ export default {
       }
     }
 
+    // === VPS 프록시 — HTTPS 페이지에서 HTTP VPS 호출 시 Mixed Content 차단 회피 ===
+    //   /ocr-screenshot           → VPS Tesseract OCR
+    //   /screenshot-verify-request → VPS Storage 업로드 + 관리자 큐 등록
+    //   토큰 없는 endpoint 라 Worker 에서 그대로 forward (Auth 헤더 안 붙임)
+    if ((url.pathname === '/ocr-screenshot' || url.pathname === '/screenshot-verify-request') && request.method === 'POST') {
+      if (!env.VPS_URL) {
+        return jsonResponse({ status: 'error', reason: 'vps_not_configured' }, env, 500);
+      }
+      try {
+        const body = await request.text();
+        const vpsResp = await fetch(`${env.VPS_URL.replace(/\/$/, '')}${url.pathname}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+        });
+        const responseText = await vpsResp.text();
+        return new Response(responseText, {
+          status: vpsResp.status,
+          headers: {
+            'Content-Type': vpsResp.headers.get('content-type') || 'application/json',
+            'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN || '*',
+          },
+        });
+      } catch (e) {
+        return jsonResponse({ status: 'error', reason: 'vps_proxy_failed', error: e.message }, env, 502);
+      }
+    }
+
     // 스크린샷 검증: POST /verify-screenshot
     //   body: { siteName, ptId?, scheduleId?, assignee?, imageBase64 (data URL or pure base64) }
     //   흐름:
