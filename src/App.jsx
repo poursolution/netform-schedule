@@ -676,6 +676,8 @@ const SETTLEMENT_BADGE_STYLE = {
       const [jandiUserWebhooks, setJandiUserWebhooks] = useState({});
       const [jandiEnabled, setJandiEnabled] = useState(true);
       const [showJandiModal, setShowJandiModal] = useState(false);
+      // 크로스체크 "찌르기" 상태: { [cardId_assignee]: 'busy'|'ok'|'fail' }
+      const [pokingAdmin, setPokingAdmin] = useState({});
 
       // K-APT 자동 검증 (Cloudflare Worker)
       const [kaptWorkerUrl, setKaptWorkerUrl] = useState('');
@@ -10448,7 +10450,58 @@ tr.suppressed td.fname{color:#64748b;}
                                                 <div style={{ padding: '8px 12px', background: '#fefce8', borderRadius: '6px', fontSize: '12px', color: '#854d0e', border: '1px solid #fef08a', lineHeight: '1.5' }}>
                                                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' }}>
                                                     <span style={{ fontSize: '10px', fontWeight: '700', color: '#a16207' }}>관리자 크로스체크{cardAssignees.length > 1 ? ` (${aName})` : ''}</span>
-                                                    {currentUser?.isAdmin && <span onClick={() => setEditingAdminNotes(prev => ({ ...prev, [noteKey]: rd.adminNote }))} style={{ fontSize: '10px', color: '#d97706', cursor: 'pointer', fontWeight: '600' }}>수정</span>}
+                                                    <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                      {(() => {
+                                                        // 찌르기 버튼 — 담당자 개인 잔디 webhook 으로 크로스체크 메모 전송
+                                                        //   관리자/담당자 본인 모두 노출 (메모 작성자가 당사자에게 재촉 가능)
+                                                        const pokeKey = noteKey;
+                                                        const pokeState = pokingAdmin[pokeKey];
+                                                        const userHook = jandiUserWebhooks?.[aName];
+                                                        const canPoke = !!(userHook?.url && userHook.enabled !== false);
+                                                        const label = pokeState === 'busy' ? '전송 중...' : pokeState === 'ok' ? '✅ 보냄' : pokeState === 'fail' ? '❌ 실패' : '📣 찌르기';
+                                                        return (
+                                                          <span
+                                                            onClick={async () => {
+                                                              if (!canPoke) { alert(`${aName}님 개인 잔디 웹훅이 설정되지 않음.\n관리자 설정 → 잔디 → 담당자 웹훅 에 등록 필요.`); return; }
+                                                              if (pokeState === 'busy') return;
+                                                              setPokingAdmin(prev => ({ ...prev, [pokeKey]: 'busy' }));
+                                                              try {
+                                                                await fetch(userHook.url, {
+                                                                  method: 'POST',
+                                                                  mode: 'no-cors',
+                                                                  headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                                                                  body: JSON.stringify({
+                                                                    body: '📣 크로스체크 확인 요청',
+                                                                    connectColor: '#f59e0b',
+                                                                    connectInfo: [{
+                                                                      title: `${card.rawData?.siteName || '단지명 미입력'} — ${aName}`,
+                                                                      description: [
+                                                                        `PT일자: ${card.rawData?.date || '-'}`,
+                                                                        `결과: ${aResult || '-'}`,
+                                                                        '',
+                                                                        `📝 관리자 메모:`,
+                                                                        rd.adminNote,
+                                                                        '',
+                                                                        `→ 시스템에서 확인 후 관련 자료 업로드/회신 부탁드립니다.`,
+                                                                      ].join('\n'),
+                                                                    }],
+                                                                  }),
+                                                                });
+                                                                setPokingAdmin(prev => ({ ...prev, [pokeKey]: 'ok' }));
+                                                                setTimeout(() => setPokingAdmin(prev => { const c = { ...prev }; delete c[pokeKey]; return c; }), 3000);
+                                                              } catch (e) {
+                                                                console.warn('[poke] failed', e);
+                                                                setPokingAdmin(prev => ({ ...prev, [pokeKey]: 'fail' }));
+                                                                setTimeout(() => setPokingAdmin(prev => { const c = { ...prev }; delete c[pokeKey]; return c; }), 3000);
+                                                              }
+                                                            }}
+                                                            title={canPoke ? `${aName}님 개인 잔디로 크로스체크 메모 전송` : `${aName}님 웹훅 미등록`}
+                                                            style={{ fontSize: '10px', color: canPoke ? '#d97706' : '#94a3b8', cursor: canPoke && pokeState !== 'busy' ? 'pointer' : 'not-allowed', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: pokeState === 'ok' ? '#dcfce7' : pokeState === 'fail' ? '#fee2e2' : 'transparent', border: `1px solid ${canPoke ? '#fcd34d' : '#e2e8f0'}` }}
+                                                          >{label}</span>
+                                                        );
+                                                      })()}
+                                                      {currentUser?.isAdmin && <span onClick={() => setEditingAdminNotes(prev => ({ ...prev, [noteKey]: rd.adminNote }))} style={{ fontSize: '10px', color: '#d97706', cursor: 'pointer', fontWeight: '600' }}>수정</span>}
+                                                    </span>
                                                   </div>
                                                   {rd.adminNote}
                                                 </div>
