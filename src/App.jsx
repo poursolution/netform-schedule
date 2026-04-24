@@ -647,6 +647,10 @@ const SETTLEMENT_BADGE_STYLE = {
       const [showUATModal, setShowUATModal] = useState(false);
       const [uatResults, setUatResults] = useState(null);
       const [uatRunning, setUatRunning] = useState(false);
+      // UAT 찌르기 히스토리 — RTDB 'uatPokes/{key}' 에 영구 기록
+      //   key: {scenarioId}_{ptId}_{assignee}  (문제 텍스트는 변할 수 있으니 식별자에서 제외)
+      //   value: { at, by, scenarioId, scenarioName, ptId, siteName, assignee, problem }
+      const [uatPokeHistory, setUatPokeHistory] = useState({});
 
       // 상단 관리자 버튼 드롭다운 (성격별 묶음)
       //   null | 'audit' (감사·이슈) | 'system' (시스템 설정)
@@ -1511,6 +1515,12 @@ const SETTLEMENT_BADGE_STYLE = {
         qcRef.on('value', (snapshot) => {
           const data = snapshot.val();
           setQuarterConfirmations(data || {});
+        });
+
+        // UAT 찌르기 히스토리 구독 — 재검사해도 같은 건이면 "이미 찌름" 표시
+        const uatPokesRef = database.ref('uatPokes');
+        uatPokesRef.on('value', (snapshot) => {
+          setUatPokeHistory(snapshot.val() || {});
         });
 
         // 잔디 웹훅 설정 로드 (admin 공통 채널 + 담당자별 개인 webhook)
@@ -17697,27 +17707,57 @@ tr.suppressed td.fname{color:#64748b;}
                               <div style={{ marginTop: 8, padding: 8, background: 'white', borderRadius: 6, border: '1px dashed #fecaca', maxHeight: 220, overflowY: 'auto' }}>
                                 {s.failed.map((f, i) => {
                                   const assignee = f.assignee || f.name || '';
-                                  const pokeKey = `uat_${s.id}_${f.id || i}_${assignee}`;
-                                  const pokeState = pokingAdmin[pokeKey];
+                                  const ptIdPart = f.id || f.qk || f.siteName || `idx${i}`;
+                                  // 안정적 key — scenarioId + ptId + assignee (문제 텍스트 제외: 금액 변동으로 바뀔 수 있음)
+                                  //   Firebase path 에 사용되므로 특수문자 제거.
+                                  const pokeKey = `${s.id}_${String(ptIdPart).replace(/[.$#/[\]]/g, '_')}_${assignee}`;
+                                  const liveState = pokingAdmin[pokeKey];
+                                  const history = uatPokeHistory[pokeKey];
                                   const userHook = jandiUserWebhooks?.[assignee];
                                   const canPoke = !!(assignee && userHook?.url && userHook.enabled !== false);
-                                  const label = pokeState === 'busy' ? '전송중' : pokeState === 'ok' ? '✅' : pokeState === 'fail' ? '❌' : '📣 찌르기';
+
+                                  // 경과 시간 계산 (이미 찌른 건)
+                                  let elapsed = '';
+                                  if (history?.at) {
+                                    const diffMs = Date.now() - new Date(history.at).getTime();
+                                    const days = Math.floor(diffMs / 86400000);
+                                    const hours = Math.floor(diffMs / 3600000);
+                                    const mins = Math.floor(diffMs / 60000);
+                                    if (days >= 1) elapsed = `${days}일 전`;
+                                    else if (hours >= 1) elapsed = `${hours}시간 전`;
+                                    else if (mins >= 1) elapsed = `${mins}분 전`;
+                                    else elapsed = '방금';
+                                  }
+
+                                  // 라벨: live state 우선 → history 있으면 "✅ N전 찌름" → 기본
+                                  const label = liveState === 'busy' ? '전송중'
+                                    : liveState === 'ok' ? '✅ 보냄'
+                                    : liveState === 'fail' ? '❌ 실패'
+                                    : history ? `✅ ${elapsed} 찌름 (재전송)`
+                                    : '📣 찌르기';
+
                                   return (
-                                    <div key={i} style={{ fontSize: 10, color: '#7c2d12', padding: '6px 0', borderBottom: '1px dashed #fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                    <div key={pokeKey} style={{ fontSize: 10, color: '#7c2d12', padding: '6px 0', borderBottom: '1px dashed #fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                                       <div style={{ flex: 1, minWidth: 0 }}>
                                         <b>{f.siteName || f.qk || '-'}</b> · {assignee} — {f.problem}
+                                        {history && (
+                                          <div style={{ fontSize: 9, color: '#94a3b8', marginTop: 2 }}>
+                                            마지막 찌름: {history.at?.slice(0, 16).replace('T', ' ')} · by {history.by || '-'}
+                                          </div>
+                                        )}
                                       </div>
                                       <span
                                         onClick={async () => {
                                           if (!canPoke) { alert(`${assignee || '담당자'}님 개인 잔디 웹훅이 설정되지 않음.\n관리자 설정 → 잔디 → 담당자 웹훅 에 등록 필요.`); return; }
-                                          if (pokeState === 'busy') return;
+                                          if (liveState === 'busy') return;
+                                          if (history && !window.confirm(`이미 ${elapsed} 찌른 건입니다.\n${history.at?.slice(0, 16).replace('T', ' ')}\n\n재전송하시겠습니까?`)) return;
                                           setPokingAdmin(prev => ({ ...prev, [pokeKey]: 'busy' }));
                                           try {
                                             await fetch(userHook.url, {
                                               method: 'POST', mode: 'no-cors',
                                               headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
                                               body: JSON.stringify({
-                                                body: '⚠ 자동 검사 문제 발견 — 확인 요청',
+                                                body: history ? '⚠ 자동 검사 문제 재확인 요청' : '⚠ 자동 검사 문제 발견 — 확인 요청',
                                                 connectColor: '#dc2626',
                                                 connectInfo: [{
                                                   title: `${f.siteName || f.qk || '(단지명 없음)'} — ${assignee}`,
@@ -17726,12 +17766,26 @@ tr.suppressed td.fname{color:#64748b;}
                                                     `문제: ${f.problem}`,
                                                     '',
                                                     `정상 동작: ${s.expected}`,
+                                                    history ? `\n(이전 찌름: ${history.at?.slice(0, 16).replace('T', ' ')})` : '',
                                                     '',
                                                     '→ 시스템 확인 후 조치 부탁드립니다.',
-                                                  ].join('\n'),
+                                                  ].filter(Boolean).join('\n'),
                                                 }],
                                               }),
                                             });
+                                            // Firebase 기록 — 재렌더 시 "이미 찌름" 배지 표시
+                                            if (firebaseEnabled && database) {
+                                              await database.ref(`uatPokes/${pokeKey}`).set({
+                                                at: new Date().toISOString(),
+                                                by: currentUser?.name || 'admin',
+                                                scenarioId: s.id,
+                                                scenarioName: s.name,
+                                                ptId: f.id || null,
+                                                siteName: f.siteName || f.qk || null,
+                                                assignee,
+                                                problem: f.problem,
+                                              });
+                                            }
                                             setPokingAdmin(prev => ({ ...prev, [pokeKey]: 'ok' }));
                                             setTimeout(() => setPokingAdmin(prev => { const c = { ...prev }; delete c[pokeKey]; return c; }), 3000);
                                           } catch (e) {
@@ -17739,16 +17793,16 @@ tr.suppressed td.fname{color:#64748b;}
                                             setTimeout(() => setPokingAdmin(prev => { const c = { ...prev }; delete c[pokeKey]; return c; }), 3000);
                                           }
                                         }}
-                                        title={canPoke ? `${assignee}님에게 문제 내용 잔디 전송` : assignee ? `${assignee}님 웹훅 미등록` : '담당자 없음'}
+                                        title={canPoke ? (history ? `${assignee}님에게 재전송 (마지막: ${elapsed})` : `${assignee}님에게 문제 내용 잔디 전송`) : assignee ? `${assignee}님 웹훅 미등록` : '담당자 없음'}
                                         style={{
                                           fontSize: '11px',
-                                          color: pokeState === 'ok' ? '#15803d' : pokeState === 'fail' ? '#b91c1c' : canPoke ? 'white' : '#94a3b8',
-                                          cursor: canPoke && pokeState !== 'busy' ? 'pointer' : 'not-allowed',
+                                          color: liveState === 'ok' ? '#15803d' : liveState === 'fail' ? '#b91c1c' : history ? '#15803d' : canPoke ? 'white' : '#94a3b8',
+                                          cursor: canPoke && liveState !== 'busy' ? 'pointer' : 'not-allowed',
                                           fontWeight: '700',
                                           padding: '4px 10px',
                                           borderRadius: '6px',
-                                          background: pokeState === 'ok' ? '#dcfce7' : pokeState === 'fail' ? '#fee2e2' : canPoke ? '#dc2626' : '#f1f5f9',
-                                          border: `1px solid ${pokeState === 'ok' ? '#86efac' : pokeState === 'fail' ? '#fca5a5' : canPoke ? '#b91c1c' : '#e2e8f0'}`,
+                                          background: liveState === 'ok' ? '#dcfce7' : liveState === 'fail' ? '#fee2e2' : history ? '#dcfce7' : canPoke ? '#dc2626' : '#f1f5f9',
+                                          border: `1px solid ${liveState === 'ok' || history ? '#86efac' : liveState === 'fail' ? '#fca5a5' : canPoke ? '#b91c1c' : '#e2e8f0'}`,
                                           whiteSpace: 'nowrap',
                                           userSelect: 'none',
                                           flexShrink: 0,
