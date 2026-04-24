@@ -17694,12 +17694,69 @@ tr.suppressed td.fname{color:#64748b;}
                               )}
                             </div>
                             {!s.pass && s.failed.length > 0 && (
-                              <div style={{ marginTop: 8, padding: 8, background: 'white', borderRadius: 6, border: '1px dashed #fecaca', maxHeight: 180, overflowY: 'auto' }}>
-                                {s.failed.map((f, i) => (
-                                  <div key={i} style={{ fontSize: 10, color: '#7c2d12', padding: '3px 0', borderBottom: '1px dashed #fef2f2' }}>
-                                    <b>{f.siteName || f.qk || '-'}</b> · {f.assignee || f.name || ''} — {f.problem}
-                                  </div>
-                                ))}
+                              <div style={{ marginTop: 8, padding: 8, background: 'white', borderRadius: 6, border: '1px dashed #fecaca', maxHeight: 220, overflowY: 'auto' }}>
+                                {s.failed.map((f, i) => {
+                                  const assignee = f.assignee || f.name || '';
+                                  const pokeKey = `uat_${s.id}_${f.id || i}_${assignee}`;
+                                  const pokeState = pokingAdmin[pokeKey];
+                                  const userHook = jandiUserWebhooks?.[assignee];
+                                  const canPoke = !!(assignee && userHook?.url && userHook.enabled !== false);
+                                  const label = pokeState === 'busy' ? '전송중' : pokeState === 'ok' ? '✅' : pokeState === 'fail' ? '❌' : '📣 찌르기';
+                                  return (
+                                    <div key={i} style={{ fontSize: 10, color: '#7c2d12', padding: '6px 0', borderBottom: '1px dashed #fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <b>{f.siteName || f.qk || '-'}</b> · {assignee} — {f.problem}
+                                      </div>
+                                      <span
+                                        onClick={async () => {
+                                          if (!canPoke) { alert(`${assignee || '담당자'}님 개인 잔디 웹훅이 설정되지 않음.\n관리자 설정 → 잔디 → 담당자 웹훅 에 등록 필요.`); return; }
+                                          if (pokeState === 'busy') return;
+                                          setPokingAdmin(prev => ({ ...prev, [pokeKey]: 'busy' }));
+                                          try {
+                                            await fetch(userHook.url, {
+                                              method: 'POST', mode: 'no-cors',
+                                              headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                                              body: JSON.stringify({
+                                                body: '⚠ 자동 검사 문제 발견 — 확인 요청',
+                                                connectColor: '#dc2626',
+                                                connectInfo: [{
+                                                  title: `${f.siteName || f.qk || '(단지명 없음)'} — ${assignee}`,
+                                                  description: [
+                                                    `검사 상황 ${s.id}. ${s.name}`,
+                                                    `문제: ${f.problem}`,
+                                                    '',
+                                                    `정상 동작: ${s.expected}`,
+                                                    '',
+                                                    '→ 시스템 확인 후 조치 부탁드립니다.',
+                                                  ].join('\n'),
+                                                }],
+                                              }),
+                                            });
+                                            setPokingAdmin(prev => ({ ...prev, [pokeKey]: 'ok' }));
+                                            setTimeout(() => setPokingAdmin(prev => { const c = { ...prev }; delete c[pokeKey]; return c; }), 3000);
+                                          } catch (e) {
+                                            setPokingAdmin(prev => ({ ...prev, [pokeKey]: 'fail' }));
+                                            setTimeout(() => setPokingAdmin(prev => { const c = { ...prev }; delete c[pokeKey]; return c; }), 3000);
+                                          }
+                                        }}
+                                        title={canPoke ? `${assignee}님에게 문제 내용 잔디 전송` : assignee ? `${assignee}님 웹훅 미등록` : '담당자 없음'}
+                                        style={{
+                                          fontSize: '11px',
+                                          color: pokeState === 'ok' ? '#15803d' : pokeState === 'fail' ? '#b91c1c' : canPoke ? 'white' : '#94a3b8',
+                                          cursor: canPoke && pokeState !== 'busy' ? 'pointer' : 'not-allowed',
+                                          fontWeight: '700',
+                                          padding: '4px 10px',
+                                          borderRadius: '6px',
+                                          background: pokeState === 'ok' ? '#dcfce7' : pokeState === 'fail' ? '#fee2e2' : canPoke ? '#dc2626' : '#f1f5f9',
+                                          border: `1px solid ${pokeState === 'ok' ? '#86efac' : pokeState === 'fail' ? '#fca5a5' : canPoke ? '#b91c1c' : '#e2e8f0'}`,
+                                          whiteSpace: 'nowrap',
+                                          userSelect: 'none',
+                                          flexShrink: 0,
+                                        }}
+                                      >{label}</span>
+                                    </div>
+                                  );
+                                })}
                                 {s.totalFailed > s.failed.length && <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>... 외 {s.totalFailed - s.failed.length}건</div>}
                               </div>
                             )}
