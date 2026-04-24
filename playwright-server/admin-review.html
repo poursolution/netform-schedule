@@ -116,17 +116,38 @@ function log(msg, kind = '') {
 }
 
 async function api(path, body) {
-  if (!token) { alert('AUTH_TOKEN 먼저 저장하세요'); throw new Error('no token'); }
-  const resp = await fetch(path, {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
+  if (!token) { alert('AUTH_TOKEN 먼저 저장하세요'); throw new Error('no_token'); }
+  let resp;
+  try {
+    resp = await fetch(path, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+  } catch (netErr) {
+    // 서버 다운·CORS·네트워크 단절
+    throw new Error('__NETWORK__');
+  }
+  if (resp.status === 401) throw new Error('__UNAUTH__');
+  if (resp.status === 404) throw new Error('__NOT_FOUND__');
+  if (resp.status === 502 || resp.status === 503 || resp.status === 504) throw new Error('__SERVER_DOWN__');
   if (!resp.ok) {
     const t = await resp.text();
     throw new Error(`HTTP ${resp.status}: ${t.slice(0, 200)}`);
   }
   return resp.json();
+}
+
+// API 에러 → 사용자 친화적 한글 메시지
+function friendlyErr(e) {
+  switch (e.message) {
+    case '__UNAUTH__':    return '🔑 토큰 만료 또는 무효 — 상단 [AUTH_TOKEN 저장] 을 다시 눌러주세요.';
+    case '__NOT_FOUND__': return '이미 삭제된 evidence 또는 PT — [🔄 unmatched 불러오기] 눌러 새로고침하세요.';
+    case '__NETWORK__':   return '🌐 네트워크 오류 — 서버 연결 실패. 잠시 후 재시도.';
+    case '__SERVER_DOWN__': return '⚙️ 서버 재기동 중 — 30초 후 재시도.';
+    case 'no_token':      return 'AUTH_TOKEN 먼저 저장하세요';
+    default:              return '매칭 실패: ' + (e.message || 'unknown');
+  }
 }
 
 async function loadUnmatched() {
@@ -138,8 +159,9 @@ async function loadUnmatched() {
     log(`unmatched ${unmatchedList.length}건 받음`, 'ok');
     render();
   } catch (e) {
-    log('실패: ' + e.message, 'err');
-    $('main').innerHTML = `<div class="alert">불러오기 실패: ${e.message}</div>`;
+    const msg = friendlyErr(e);
+    log(msg, 'err');
+    $('main').innerHTML = `<div class="alert">불러오기 실패: ${esc(msg)}</div>`;
   }
 }
 
@@ -229,9 +251,10 @@ function mkCandidate(ev, c, card) {
         render();
       }, 1500);
     } catch (e) {
-      log('실패: ' + e.message, 'err');
+      const msg = friendlyErr(e);
+      log(msg, 'err');
       btn.disabled = false; btn.textContent = '✓ 이 단지';
-      alert('매칭 실패: ' + e.message);
+      alert(msg);
     }
   };
   div.appendChild(btn);

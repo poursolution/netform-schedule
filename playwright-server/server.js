@@ -1810,7 +1810,20 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
         const evParsedAddr = ev.parsedAddress;
         const evSido = evParsedAddr ? sidoOf(evParsedAddr) : null;
 
-        candidates = ptEntries
+        // [brand-only 완화] unit(1차/2단지) 일치 or 시·도 일치 시 임계값 0.85 허용.
+        //   원래 0.97 고정이라 실무상 거의 모든 brand-only 파일명이 차단됐음.
+        const evUnitMatch = String(evSite).match(/(\d+)\s*(차|단지|동)/);
+        const relaxBrandOnly = (pt) => {
+          if (!isShortBrandOnly) return false;
+          if (evUnitMatch) {
+            const ptUnitMatch = String(pt.siteName || '').match(/(\d+)\s*(차|단지|동)/);
+            if (ptUnitMatch && ptUnitMatch[1] === evUnitMatch[1]) return true;
+          }
+          if (evSido && sidoOf(pt.address) === evSido) return true;
+          return false;
+        };
+
+        const scored = ptEntries
           .map(p => {
             const c = composite(evSite, p);
             // 공법 보정 적용 (단지명 0.5 미만은 보정 의미 없음 — 너무 약한 매칭)
@@ -1824,12 +1837,24 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
               }
             }
             return { ...p, score: adjustedScore, matchedBy };
-          })
+          });
+
+        // near-miss 판정용 원본 top score (필터 적용 전, 시·도 가드만 먼저 반영)
+        const rawTop = scored.reduce((acc, p) => {
+          if (evSido) {
+            const ptSido = sidoOf(p.address);
+            if (ptSido && ptSido !== evSido) return acc;  // 시·도 불일치는 near-miss 도 아님
+          }
+          return p.score > acc ? p.score : acc;
+        }, 0);
+
+        candidates = scored
           .filter(p => {
             if (p.score < minScore) return false;
-            // brand-only evidence: PT.address 시·도 토큰이 evParsed 에 있어야 인정
-            //   (실제로는 거의 없을 테니 → 자동 매칭에서 제외, 검수 페이지에서 수동 확인)
-            if (isShortBrandOnly && p.score < 0.97) return false;
+            // brand-only evidence: unit/sido 보조 일치 시 0.85 허용, 아니면 0.97 요구
+            if (isShortBrandOnly && p.score < 0.97) {
+              if (!(relaxBrandOnly(p) && p.score >= 0.85)) return false;
+            }
             // [Address 가드] evidence 본문 주소가 있고 PT.address 도 있으면 시·도 일치 필수
             if (evSido) {
               const ptSido = sidoOf(p.address);
@@ -1838,11 +1863,27 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
             return true;
           })
           .sort((a, b) => b.score - a.score);
+
+        // candidates 가 비었으면 near-miss 기록용으로 rawTop 보존
+        if (candidates.length === 0 && rawTop >= 0.65) {
+          candidates = [];  // 여전히 비어있지만 아래 분기에서 near-miss 처리
+          ev.__nearMissScore = rawTop;
+        }
       }
 
       if (candidates.length === 0) {
-        results.unmatched++;
-        if (!dryRun) updates[`evidence/${fileId}/ptMatchStatus`] = 'no_match';
+        // near-miss (0.65 ≤ top < minScore): needs_review 로 분류 → 검수 페이지 우선 노출
+        const nearMiss = ev.__nearMissScore;
+        if (nearMiss != null && nearMiss >= 0.65) {
+          results.nearMiss = (results.nearMiss || 0) + 1;
+          if (!dryRun) {
+            updates[`evidence/${fileId}/ptMatchStatus`] = 'needs_review';
+            updates[`evidence/${fileId}/nearMissScore`] = Number(nearMiss.toFixed(3));
+          }
+        } else {
+          results.unmatched++;
+          if (!dryRun) updates[`evidence/${fileId}/ptMatchStatus`] = 'no_match';
+        }
         continue;
       }
 
@@ -1900,7 +1941,9 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       summary: {
         processed: results.evidenceProcessed,
         matched: results.matched,
+        matchedByAlias: results.matchedByAlias,
         multiMatch: results.multiMatch,
+        nearMiss: results.nearMiss || 0,
         unmatched: results.unmatched,
       },
       updateKeys: dryRun ? undefined : Object.keys(updates).length,
