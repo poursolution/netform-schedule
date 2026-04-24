@@ -9902,13 +9902,25 @@ const SETTLEMENT_BADGE_STYLE = {
                                               </span>
                                             )}
                                             {!isSelfPT && !isSuperseded && currentResult && currentResult !== '패' && (() => {
+                                              // 분기 마감일 윈도우 기반 분류 (운영 룰: Q1=4/30, Q2=7/30, Q3=10/30, Q4=익년1/30)
+                                              //   1/1~1/30  → 전년 Q4
+                                              //   1/31~4/30 → Q1   (예: 4월에 처리한 1~3월 PT 는 Q1)
+                                              //   5/1~7/30  → Q2
+                                              //   7/31~10/30→ Q3
+                                              //   10/31~12/31→ Q4
                                               const toQuarter = (iso) => {
                                                 if (!iso) return '';
                                                 try {
                                                   const d = new Date(iso);
+                                                  if (isNaN(d.getTime())) return '';
                                                   const y = d.getFullYear();
-                                                  const q = Math.floor(d.getMonth() / 3) + 1;
-                                                  return `${y}-Q${q}`;
+                                                  const m = d.getMonth() + 1;
+                                                  const day = d.getDate();
+                                                  if (m === 1 && day <= 30) return `${y - 1}-Q4`;
+                                                  if ((m >= 1 && m < 4) || (m === 4 && day <= 30)) return `${y}-Q1`;
+                                                  if ((m > 4 && m < 7) || (m === 4 && day > 30) || (m === 7 && day <= 30)) return `${y}-Q2`;
+                                                  if ((m > 7 && m < 10) || (m === 7 && day > 30) || (m === 10 && day <= 30)) return `${y}-Q3`;
+                                                  return `${y}-Q4`;
                                                 } catch (_) { return ''; }
                                               };
                                               if (settlement.completed || settlement.selfSales) {
