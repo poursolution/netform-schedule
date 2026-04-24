@@ -10496,7 +10496,22 @@ tr.suppressed td.fname{color:#64748b;}
                                                               }
                                                             }}
                                                             title={canPoke ? `${aName}님 개인 잔디로 크로스체크 메모 전송` : `${aName}님 웹훅 미등록`}
-                                                            style={{ fontSize: '10px', color: canPoke ? '#d97706' : '#94a3b8', cursor: canPoke && pokeState !== 'busy' ? 'pointer' : 'not-allowed', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: pokeState === 'ok' ? '#dcfce7' : pokeState === 'fail' ? '#fee2e2' : 'transparent', border: `1px solid ${canPoke ? '#fcd34d' : '#e2e8f0'}` }}
+                                                            style={{
+                                                              fontSize: '13px',
+                                                              color: pokeState === 'ok' ? '#15803d' : pokeState === 'fail' ? '#b91c1c' : canPoke ? 'white' : '#94a3b8',
+                                                              cursor: canPoke && pokeState !== 'busy' ? 'pointer' : 'not-allowed',
+                                                              fontWeight: '700',
+                                                              padding: '7px 14px',
+                                                              borderRadius: '8px',
+                                                              background: pokeState === 'ok' ? '#dcfce7' : pokeState === 'fail' ? '#fee2e2' : canPoke ? '#f59e0b' : '#f1f5f9',
+                                                              border: `1px solid ${pokeState === 'ok' ? '#86efac' : pokeState === 'fail' ? '#fca5a5' : canPoke ? '#d97706' : '#e2e8f0'}`,
+                                                              boxShadow: canPoke && !pokeState ? '0 1px 3px rgba(245, 158, 11, 0.3)' : 'none',
+                                                              transition: 'all 0.15s',
+                                                              userSelect: 'none',
+                                                              whiteSpace: 'nowrap',
+                                                            }}
+                                                            onMouseOver={e => { if (canPoke && !pokeState) { e.currentTarget.style.background = '#d97706'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
+                                                            onMouseOut={e => { if (canPoke && !pokeState) { e.currentTarget.style.background = '#f59e0b'; e.currentTarget.style.transform = 'translateY(0)'; } }}
                                                           >{label}</span>
                                                         );
                                                       })()}
