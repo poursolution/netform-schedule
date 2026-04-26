@@ -1676,6 +1676,24 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
 
     // parsedSite 변형 — 원본 + 지역 prefix 제거 버전 (제거한 토큰 기록)
     // 반환: [{ text, strippedTokens: [] }, ...]
+    //
+    // [Generic suffix 가드] 단지명 식별력 없는 토큰만 남는 variant 는 추가 안 함.
+    //   예: "경남 아파트" → strip "경남" → "아파트" 1단어 → 어떤 PT 도 매칭됨 → 차단.
+    const GENERIC_SUFFIX_TOKENS = new Set([
+      '아파트', 'apt', 'apartment',
+      '빌라', '빌리지', 'villa', 'village',
+      '오피스텔', 'officetel',
+      '주상복합', '타운하우스', 'townhouse',
+      '단지', '동', '차',
+    ]);
+    const isGenericOnly = (text) => {
+      if (!text) return true;
+      const compact = text.replace(/\s+/g, '').toLowerCase();
+      if (compact.length <= 3) return true;  // "아파트"(3) 같이 너무 짧음
+      // 알려진 generic suffix 만으로 구성됐는지
+      if (GENERIC_SUFFIX_TOKENS.has(compact)) return true;
+      return false;
+    };
     const variantsOf = (s) => {
       const original = (s || '').trim();
       const out = [{ text: original, strippedTokens: [] }];
@@ -1688,7 +1706,10 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
         if (REGIONS.includes(first) || /[시군구읍면동]$/.test(first) || first.length <= 3) {
           cur = rest;
           stripped.push(first);
-          if (!out.find(v => v.text === cur)) out.push({ text: cur, strippedTokens: [...stripped] });
+          // Generic suffix 만 남는 variant 는 추가 안 함 (예: "아파트")
+          if (!isGenericOnly(cur) && !out.find(v => v.text === cur)) {
+            out.push({ text: cur, strippedTokens: [...stripped] });
+          }
         } else break;
       }
       return out;
@@ -1703,8 +1724,30 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       return hay.includes(t);
     };
 
+    // [지역 prefix 충돌 검출]
+    // ev 단지명이 pt 단지명 안에 substring 으로 들어있을 때 (예: ev='신안실크밸리',
+    // pt='목포죽교신안실크밸리7차'), pt 의 prefix '목포죽교' 안에 REGIONS 키워드가
+    // 포함되었는데 ev 단지명/parsedAddress 어디에도 그 지역 흔적이 없으면 →
+    // 같은 브랜드 다른 지역 동명 단지일 가능성 → 강하게 감점.
+    const regionPrefixConflict = (ptName, evName, evParsedAddress) => {
+      const ptN = norm(ptName);
+      const evN = norm(evName);
+      if (!ptN || !evN || ptN === evN) return { conflict: false };
+      const idx = ptN.indexOf(evN);
+      if (idx <= 0) return { conflict: false };
+      const prefix = ptN.slice(0, idx);
+      for (const region of REGIONS) {
+        const r = region.toLowerCase();
+        if (!prefix.includes(r)) continue;
+        const evHay = (evN + ' ' + (evParsedAddress || '')).toLowerCase();
+        if (evHay.includes(r)) return { conflict: false };
+        return { conflict: true, region, prefix };
+      }
+      return { conflict: false };
+    };
+
     // 복합 매칭 — 변형별로 스코어 계산, 단 지역 stripped 된 variant는 해당 지역이 PT에도 있어야 인정
-    const composite = (parsedSite, pt) => {
+    const composite = (parsedSite, pt, evParsedAddress) => {
       const addr = pt.address || '';
       const variants = variantsOf(parsedSite);
       let bestName = 0, bestAddr = 0, bestVariant = null;
@@ -1717,7 +1760,14 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
         if (ns > bestName) { bestName = ns; bestVariant = v; }
         if (as > bestAddr) bestAddr = as;
       }
-      if (bestName >= 0.95) return { score: bestName, matchedBy: 'name' };
+
+      // [지역 prefix 충돌] — substring 매칭이 다른 지역 동명 단지를 잡는 것 차단
+      const conflictCheck = regionPrefixConflict(pt.siteName, parsedSite, evParsedAddress);
+      if (conflictCheck.conflict) {
+        bestName = Math.min(bestName, 0.45);  // 강한 감점 → minScore 0.75 통과 못함
+      }
+
+      if (bestName >= 0.95) return { score: bestName, matchedBy: conflictCheck.conflict ? 'name-regionConflict' : 'name' };
 
       let regionBoost = 0;
       const firstToken = (parsedSite.match(/^[가-힣]{2,3}/) || [])[0];
@@ -1731,7 +1781,10 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       }
       const addrOnly = bestAddr * 0.8;
       if (addrOnly > bestName) return { score: addrOnly, matchedBy: 'address' };
-      return { score: bestName, matchedBy: 'name' };
+      return {
+        score: bestName,
+        matchedBy: conflictCheck.conflict ? `name-regionConflict(${conflictCheck.region})` : 'name',
+      };
     };
 
     // 1. evidence 로드
@@ -1849,7 +1902,7 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
 
         const scored = ptEntries
           .map(p => {
-            const c = composite(evSite, p);
+            const c = composite(evSite, p, ev.parsedAddress);
             // 공법 보정 적용 (단지명 0.5 미만은 보정 의미 없음 — 너무 약한 매칭)
             let adjustedScore = c.score;
             let matchedBy = c.matchedBy;
@@ -2209,6 +2262,21 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
       '전주','군산','익산','정읍','남원','목포','여수','순천','나주','광양',
       '포항','경주','구미','김천','안동','영주','경산','영천','상주','문경','창원','마산','진주','통영','김해','밀양','거제','양산','사천',
     ];
+    // [Generic suffix 가드] — composite 와 동일
+    const GENERIC_SUFFIX_TOKENS_2 = new Set([
+      '아파트', 'apt', 'apartment',
+      '빌라', '빌리지', 'villa', 'village',
+      '오피스텔', 'officetel',
+      '주상복합', '타운하우스', 'townhouse',
+      '단지', '동', '차',
+    ]);
+    const isGenericOnly2 = (text) => {
+      if (!text) return true;
+      const compact = text.replace(/\s+/g, '').toLowerCase();
+      if (compact.length <= 3) return true;
+      if (GENERIC_SUFFIX_TOKENS_2.has(compact)) return true;
+      return false;
+    };
     const variantsOf = (s) => {
       const original = (s || '').trim();
       const out = [{ text: original, strippedTokens: [] }];
@@ -2221,7 +2289,9 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
         if (REGIONS.includes(first) || /[시군구읍면동]$/.test(first) || first.length <= 3) {
           cur = rest;
           stripped.push(first);
-          if (!out.find(v => v.text === cur)) out.push({ text: cur, strippedTokens: [...stripped] });
+          if (!isGenericOnly2(cur) && !out.find(v => v.text === cur)) {
+            out.push({ text: cur, strippedTokens: [...stripped] });
+          }
         } else break;
       }
       return out;
@@ -2233,7 +2303,24 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
       const hay = (pt.siteName || '') + ' ' + (pt.address || '');
       return hay.includes(t);
     };
-    const composite = (parsedSite, pt) => {
+    // [지역 prefix 충돌 검출] — composite 동일 로직 (이쪽은 norm 함수가 다른 점만 주의)
+    const regionPrefixConflict2 = (ptName, evName, evParsedAddress) => {
+      const ptN = norm(ptName);
+      const evN = norm(evName);
+      if (!ptN || !evN || ptN === evN) return { conflict: false };
+      const idx = ptN.indexOf(evN);
+      if (idx <= 0) return { conflict: false };
+      const prefix = ptN.slice(0, idx);
+      for (const region of REGIONS) {
+        const r = region.toLowerCase();
+        if (!prefix.includes(r)) continue;
+        const evHay = (evN + ' ' + (evParsedAddress || '')).toLowerCase();
+        if (evHay.includes(r)) return { conflict: false };
+        return { conflict: true, region };
+      }
+      return { conflict: false };
+    };
+    const composite = (parsedSite, pt, evParsedAddress) => {
       const addr = pt.address || '';
       const variants = variantsOf(parsedSite);
       let bestName = 0, bestAddr = 0;
@@ -2245,7 +2332,9 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
         if (ns > bestName) bestName = ns;
         if (as > bestAddr) bestAddr = as;
       }
-      if (bestName >= 0.95) return { score: bestName, matchedBy: 'name' };
+      const conflictCheck = regionPrefixConflict2(pt.siteName, parsedSite, evParsedAddress);
+      if (conflictCheck.conflict) bestName = Math.min(bestName, 0.45);
+      if (bestName >= 0.95) return { score: bestName, matchedBy: conflictCheck.conflict ? 'name-regionConflict' : 'name' };
       let regionBoost = 0;
       const firstToken = (parsedSite.match(/^[가-힣]{2,3}/) || [])[0];
       if (firstToken && addr.includes(firstToken)) regionBoost = 0.3;
@@ -2257,7 +2346,10 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
       }
       const addrOnly = bestAddr * 0.8;
       if (addrOnly > bestName) return { score: addrOnly, matchedBy: 'address' };
-      return { score: bestName, matchedBy: 'name' };
+      return {
+        score: bestName,
+        matchedBy: conflictCheck.conflict ? `name-regionConflict(${conflictCheck.region})` : 'name',
+      };
     };
 
     const unmatched = [];
@@ -2269,7 +2361,7 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
       }
       const candidates = ptEntries
         .map(p => {
-          const c = composite(ev.parsedSiteName, p);
+          const c = composite(ev.parsedSiteName, p, ev.parsedAddress);
           return { ...p, score: c.score, matchedBy: c.matchedBy };
         })
         .filter(p => p.score >= minCandidateScore)
