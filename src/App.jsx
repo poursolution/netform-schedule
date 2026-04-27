@@ -901,10 +901,8 @@ const SETTLEMENT_BADGE_STYLE = {
       // === PT 실적 데이터 내보내기 (Excel, 분석용) ===
       // 한 행 = (PT × 담당자) 단위 분리 → 피벗/필터/합계 자유롭게 가능.
       // 정산 상태, 분기 귀속, 검증 상태, 제외 사유, 증빙 파일 수까지 모두 포함.
-      const handleExportPtPerformanceXlsx = async () => {
+      const handleExportPtPerformanceXlsx = () => {
         try {
-          // XLSX 동적 로드 (기존 패턴과 동일)
-          const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs');
           const rows = [];
           ptSchedules.forEach(s => {
             const tokens = (s.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
