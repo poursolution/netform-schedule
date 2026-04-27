@@ -79,6 +79,7 @@ export function deriveAssigneeResult(pt, assignee, opts = {}) {
     if (mainResult === '승') return '지원';
     if (mainResult === '무') return exceptionApproved ? '지원' : '제외';
     if (mainResult === '패') return '패';
+    if (mainResult === '지원') return '지원';  // 주담·지원자 모두 지원 → 둘 다 250K (동등 지원)
     return null;
   }
 

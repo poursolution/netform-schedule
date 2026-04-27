@@ -124,6 +124,7 @@ function getPtResult(s, assignee) {
     if (primaryResult === '승') return '지원';
     if (primaryResult === '무') return '지원';
     if (primaryResult === '패') return '패';
+    if (primaryResult === '지원') return '지원';  // 주담·지원자 모두 지원 → 둘 다 250K
     return null;
   }
   return raw;
