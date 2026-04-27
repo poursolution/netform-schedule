@@ -134,11 +134,6 @@ function isSelfSales(s, assignee) {
   return s.settlement?.[assignee]?.selfSales || false;
 }
 
-function isSuperseded(s, assignee) {
-  const stl = s.settlement?.[assignee];
-  return !!(stl && (stl.superseded === true || stl.supersededBy));
-}
-
 function isSettlementCompleted(s, assignee) {
   const set = s.settlement?.[assignee];
   return set?.completed || set?.selfSales || false;
@@ -237,7 +232,6 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
     skippedNonSettlementAssignee: 0,
     skippedNonSettlementResult: 0,
     skippedCancelled: 0,
-    skippedSuperseded: 0,
     skippedOutOfQuarter: 0,
     missingResultConfirmDate: 0,
     includedVerified: 0,
@@ -271,8 +265,6 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
     const assignees = parseAssignees(s.ptAssignee);
     assignees.forEach(a => {
       if (!SETTLEMENT_ASSIGNEES_SET.has(a)) { debugStats.skippedNonSettlementAssignee++; return; }
-      // Superseded — 동일 단지/공종 최신 PT 로 단일화된 PT 는 보고서에서 명시 제외
-      if (isSuperseded(s, a)) { debugStats.skippedSuperseded++; return; }
 
       const rawResult = getPtResult(s, a);
       const exceptionApproved = isExceptionApproved(s, a);
@@ -332,7 +324,6 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
       정산담당자_아님: debugStats.skippedNonSettlementAssignee,
       승무지원_아님: debugStats.skippedNonSettlementResult,
       취소공고: debugStats.skippedCancelled,
-      중복제외: debugStats.skippedSuperseded,
       분기_범위_밖: debugStats.skippedOutOfQuarter,
     },
     resultConfirmDate_없음_PT일_fallback: debugStats.missingResultConfirmDate,
