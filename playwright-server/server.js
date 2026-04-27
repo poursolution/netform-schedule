@@ -1724,25 +1724,42 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       return hay.includes(t);
     };
 
-    // [지역 prefix 충돌 검출]
-    // ev 단지명이 pt 단지명 안에 substring 으로 들어있을 때 (예: ev='신안실크밸리',
-    // pt='목포죽교신안실크밸리7차'), pt 의 prefix '목포죽교' 안에 REGIONS 키워드가
-    // 포함되었는데 ev 단지명/parsedAddress 어디에도 그 지역 흔적이 없으면 →
-    // 같은 브랜드 다른 지역 동명 단지일 가능성 → 강하게 감점.
-    const regionPrefixConflict = (ptName, evName, evParsedAddress) => {
+    // [지역 prefix 충돌 검출] — 양방향
+    // 케이스 A: ev ⊂ pt (예: ev='신안실크밸리', pt='목포죽교신안실크밸리7차')
+    //           pt prefix='목포죽교' 안에 REGIONS 키워드 → ev 단지명/parsedAddress 에 있어야 함.
+    // 케이스 B: pt ⊂ ev (예: pt='SK뷰아파트', ev='보령SK뷰아파트')
+    //           ev prefix='보령' 안에 REGIONS 키워드 → pt.address 에 있어야 함.
+    const regionPrefixConflict = (ptName, evName, evParsedAddress, ptAddress) => {
       const ptN = norm(ptName);
       const evN = norm(evName);
       if (!ptN || !evN || ptN === evN) return { conflict: false };
-      const idx = ptN.indexOf(evN);
-      if (idx <= 0) return { conflict: false };
-      const prefix = ptN.slice(0, idx);
-      for (const region of REGIONS) {
-        const r = region.toLowerCase();
-        if (!prefix.includes(r)) continue;
-        const evHay = (evN + ' ' + (evParsedAddress || '')).toLowerCase();
-        if (evHay.includes(r)) return { conflict: false };
-        return { conflict: true, region, prefix };
+
+      // 케이스 A: ev ⊂ pt
+      const idxA = ptN.indexOf(evN);
+      if (idxA > 0) {
+        const prefix = ptN.slice(0, idxA);
+        for (const region of REGIONS) {
+          const r = region.toLowerCase();
+          if (!prefix.includes(r)) continue;
+          const evHay = (evN + ' ' + (evParsedAddress || '')).toLowerCase();
+          if (evHay.includes(r)) return { conflict: false };
+          return { conflict: true, region, side: 'A' };
+        }
       }
+
+      // 케이스 B: pt ⊂ ev
+      const idxB = evN.indexOf(ptN);
+      if (idxB > 0) {
+        const prefix = evN.slice(0, idxB);
+        for (const region of REGIONS) {
+          const r = region.toLowerCase();
+          if (!prefix.includes(r)) continue;
+          const ptHay = (ptN + ' ' + String(ptAddress || '').toLowerCase()).toLowerCase();
+          if (ptHay.includes(r)) return { conflict: false };
+          return { conflict: true, region, side: 'B' };
+        }
+      }
+
       return { conflict: false };
     };
 
@@ -1762,7 +1779,7 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       }
 
       // [지역 prefix 충돌] — substring 매칭이 다른 지역 동명 단지를 잡는 것 차단
-      const conflictCheck = regionPrefixConflict(pt.siteName, parsedSite, evParsedAddress);
+      const conflictCheck = regionPrefixConflict(pt.siteName, parsedSite, evParsedAddress, pt.address);
       if (conflictCheck.conflict) {
         bestName = Math.min(bestName, 0.45);  // 강한 감점 → minScore 0.75 통과 못함
       }
@@ -2303,20 +2320,35 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
       const hay = (pt.siteName || '') + ' ' + (pt.address || '');
       return hay.includes(t);
     };
-    // [지역 prefix 충돌 검출] — composite 동일 로직 (이쪽은 norm 함수가 다른 점만 주의)
-    const regionPrefixConflict2 = (ptName, evName, evParsedAddress) => {
+    // [지역 prefix 충돌 검출] — 양방향 (composite 동일 로직)
+    const regionPrefixConflict2 = (ptName, evName, evParsedAddress, ptAddress) => {
       const ptN = norm(ptName);
       const evN = norm(evName);
       if (!ptN || !evN || ptN === evN) return { conflict: false };
-      const idx = ptN.indexOf(evN);
-      if (idx <= 0) return { conflict: false };
-      const prefix = ptN.slice(0, idx);
-      for (const region of REGIONS) {
-        const r = region.toLowerCase();
-        if (!prefix.includes(r)) continue;
-        const evHay = (evN + ' ' + (evParsedAddress || '')).toLowerCase();
-        if (evHay.includes(r)) return { conflict: false };
-        return { conflict: true, region };
+
+      // 케이스 A: ev ⊂ pt
+      const idxA = ptN.indexOf(evN);
+      if (idxA > 0) {
+        const prefix = ptN.slice(0, idxA);
+        for (const region of REGIONS) {
+          const r = region.toLowerCase();
+          if (!prefix.includes(r)) continue;
+          const evHay = (evN + ' ' + (evParsedAddress || '')).toLowerCase();
+          if (evHay.includes(r)) return { conflict: false };
+          return { conflict: true, region, side: 'A' };
+        }
+      }
+      // 케이스 B: pt ⊂ ev
+      const idxB = evN.indexOf(ptN);
+      if (idxB > 0) {
+        const prefix = evN.slice(0, idxB);
+        for (const region of REGIONS) {
+          const r = region.toLowerCase();
+          if (!prefix.includes(r)) continue;
+          const ptHay = (ptN + ' ' + String(ptAddress || '').toLowerCase()).toLowerCase();
+          if (ptHay.includes(r)) return { conflict: false };
+          return { conflict: true, region, side: 'B' };
+        }
       }
       return { conflict: false };
     };
@@ -2332,7 +2364,7 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
         if (ns > bestName) bestName = ns;
         if (as > bestAddr) bestAddr = as;
       }
-      const conflictCheck = regionPrefixConflict2(pt.siteName, parsedSite, evParsedAddress);
+      const conflictCheck = regionPrefixConflict2(pt.siteName, parsedSite, evParsedAddress, pt.address);
       if (conflictCheck.conflict) bestName = Math.min(bestName, 0.45);
       if (bestName >= 0.95) return { score: bestName, matchedBy: conflictCheck.conflict ? 'name-regionConflict' : 'name' };
       let regionBoost = 0;
