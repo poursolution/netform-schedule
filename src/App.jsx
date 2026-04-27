@@ -2214,56 +2214,58 @@ const SETTLEMENT_BADGE_STYLE = {
         
         // 내 일정 필터링 (오늘 + 내일)
         const mySchedules = [];
-        
+        const labelFor = (d) => d === todayStr ? '오늘' : d === tomorrowStr ? '내일' : (d || '');
+
         ptSchedules.forEach(s => {
           if ((s.date === todayStr || s.date === tomorrowStr) && s.ptAssignee === userName) {
-            mySchedules.push({ ...s, type: 'pt', isToday: s.date === todayStr });
+            mySchedules.push({ ...s, type: 'pt', isToday: s.date === todayStr, dateLabel: labelFor(s.date) });
           }
         });
-        
+
         briefingSchedules.forEach(s => {
           const assignees = (s.assignee || '').split(/[\/,]/).map(a => a.trim());
           if ((s.date === todayStr || s.date === tomorrowStr) && assignees.includes(userName)) {
-            mySchedules.push({ ...s, type: 'briefing', isToday: s.date === todayStr });
+            mySchedules.push({ ...s, type: 'briefing', isToday: s.date === todayStr, dateLabel: labelFor(s.date) });
           }
         });
-        
+
         if (mySchedules.length > 0) {
           setMyUpcomingSchedules(mySchedules);
           setShowScheduleAlert(true);
         }
       };
-      
+
       // 오늘 다시 알리지 않음
       const dismissScheduleAlert = () => {
         const today = new Date().toISOString().split('T')[0];
         localStorage.setItem('scheduleAlertDismissed', today);
         setShowScheduleAlert(false);
       };
-      
+
       // 자동 로그인 시 일정 체크 (ptSchedules, briefingSchedules 접근 가능)
       const checkMySchedulesOnLoad = (userName) => {
         const dismissedDate = localStorage.getItem('scheduleAlertDismissed');
         const today = new Date().toISOString().split('T')[0];
         if (dismissedDate === today) return;
-        
+
         const todayStr = today;
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
         const tomorrowStr = tomorrow.toISOString().split('T')[0];
-        
+
         const mySchedules = [];
-        
+        const labelFor = (d) => d === todayStr ? '오늘' : d === tomorrowStr ? '내일' : (d || '');
+
         ptSchedules.forEach(s => {
           if ((s.date === todayStr || s.date === tomorrowStr) && s.ptAssignee === userName) {
-            mySchedules.push({ ...s, type: 'pt', isToday: s.date === todayStr });
+            mySchedules.push({ ...s, type: 'pt', isToday: s.date === todayStr, dateLabel: labelFor(s.date) });
           }
         });
-        
+
         briefingSchedules.forEach(s => {
           const assignees = (s.assignee || '').split(/[\/,]/).map(a => a.trim());
           if ((s.date === todayStr || s.date === tomorrowStr) && assignees.includes(userName)) {
-            mySchedules.push({ ...s, type: 'briefing', isToday: s.date === todayStr });
+            mySchedules.push({ ...s, type: 'briefing', isToday: s.date === todayStr, dateLabel: labelFor(s.date) });
           }
         });
         
@@ -14252,7 +14254,8 @@ tr.suppressed td.fname{color:#64748b;}
                 
                 <div style={{ marginBottom: '16px' }}>
                   {/* 날짜별로 그룹핑 - 동적으로 고유 라벨 추출 */}
-                  {[...new Set(myUpcomingSchedules.map(s => s.dateLabel))].map(label => {
+                  {[...new Set(myUpcomingSchedules.map(s => s.dateLabel).filter(Boolean))].map(label => {
+                    if (!label) return null;
                     const items = myUpcomingSchedules.filter(s => s.dateLabel === label);
                     if (items.length === 0) return null;
                     const isToday = label.startsWith('오늘');
