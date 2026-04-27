@@ -61,6 +61,7 @@ const EXCLUSION_REASON_LABEL = {
   [EXCLUSION_REASONS.DRAW_SUPPORT_EXCLUDED]: '주담무승부',
   [EXCLUSION_REASONS.LOSS]: '패배',
   [EXCLUSION_REASONS.CANCELLED_NOTICE]: '취소공고',
+  [EXCLUSION_REASONS.SUPERSEDED]: '중복(최신 PT로 단일화)',
 };
 import { normalizeApartmentName, addApartmentAlias } from './utils/apartmentMatch.js';
 import * as theme from './utils/theme.js';
@@ -652,6 +653,8 @@ const SETTLEMENT_BADGE_STYLE = {
       //   key: {scenarioId}_{ptId}_{assignee}  (문제 텍스트는 변할 수 있으니 식별자에서 제외)
       //   value: { at, by, scenarioId, scenarioName, ptId, siteName, assignee, problem }
       const [uatPokeHistory, setUatPokeHistory] = useState({});
+      // 크로스체크 메모 찌르기 히스토리 — RTDB 'crossCheckPokes/{ptId}_{assignee}'
+      const [crossCheckPokeHistory, setCrossCheckPokeHistory] = useState({});
 
       // 상단 관리자 버튼 드롭다운 (성격별 묶음)
       //   null | 'audit' (감사·이슈) | 'system' (시스템 설정)
@@ -1522,6 +1525,11 @@ const SETTLEMENT_BADGE_STYLE = {
         const uatPokesRef = database.ref('uatPokes');
         uatPokesRef.on('value', (snapshot) => {
           setUatPokeHistory(snapshot.val() || {});
+        });
+        // 크로스체크 메모 찌르기 히스토리 구독
+        const ccPokesRef = database.ref('crossCheckPokes');
+        ccPokesRef.on('value', (snapshot) => {
+          setCrossCheckPokeHistory(snapshot.val() || {});
         });
 
         // 잔디 웹훅 설정 로드 (admin 공통 채널 + 담당자별 개인 webhook)
@@ -10468,15 +10476,34 @@ tr.suppressed td.fname{color:#64748b;}
                                                         // 찌르기 버튼 — 담당자 개인 잔디 webhook 으로 크로스체크 메모 전송
                                                         //   관리자/담당자 본인 모두 노출 (메모 작성자가 당사자에게 재촉 가능)
                                                         const pokeKey = noteKey;
+                                                        const ccPokeKey = `${card.id}_${aName}`;
                                                         const pokeState = pokingAdmin[pokeKey];
+                                                        const ccHistory = crossCheckPokeHistory[ccPokeKey];
                                                         const userHook = jandiUserWebhooks?.[aName];
                                                         const canPoke = !!(userHook?.url && userHook.enabled !== false);
-                                                        const label = pokeState === 'busy' ? '전송 중...' : pokeState === 'ok' ? '✅ 보냄' : pokeState === 'fail' ? '❌ 실패' : '📣 찌르기';
+                                                        // 경과 시간 (이미 찌른 경우)
+                                                        let ccElapsed = '';
+                                                        if (ccHistory?.at) {
+                                                          const diffMs = Date.now() - new Date(ccHistory.at).getTime();
+                                                          const days = Math.floor(diffMs / 86400000);
+                                                          const hours = Math.floor(diffMs / 3600000);
+                                                          const mins = Math.floor(diffMs / 60000);
+                                                          if (days >= 1) ccElapsed = `${days}일 전`;
+                                                          else if (hours >= 1) ccElapsed = `${hours}시간 전`;
+                                                          else if (mins >= 1) ccElapsed = `${mins}분 전`;
+                                                          else ccElapsed = '방금';
+                                                        }
+                                                        const label = pokeState === 'busy' ? '전송 중...'
+                                                          : pokeState === 'ok' ? '✅ 보냄'
+                                                          : pokeState === 'fail' ? '❌ 실패'
+                                                          : ccHistory ? `✅ ${ccElapsed} 찌름 (재전송)`
+                                                          : '📣 찌르기';
                                                         return (
                                                           <span
                                                             onClick={async () => {
                                                               if (!canPoke) { alert(`${aName}님 개인 잔디 웹훅이 설정되지 않음.\n관리자 설정 → 잔디 → 담당자 웹훅 에 등록 필요.`); return; }
                                                               if (pokeState === 'busy') return;
+                                                              if (ccHistory && !window.confirm(`이미 ${ccElapsed} 찌른 건입니다.\n${ccHistory.at?.slice(0, 16).replace('T', ' ')} · ${ccHistory.by || '-'}\n\n재전송하시겠습니까?`)) return;
                                                               setPokingAdmin(prev => ({ ...prev, [pokeKey]: 'busy' }));
                                                               try {
                                                                 await fetch(userHook.url, {
@@ -10484,7 +10511,7 @@ tr.suppressed td.fname{color:#64748b;}
                                                                   mode: 'no-cors',
                                                                   headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
                                                                   body: JSON.stringify({
-                                                                    body: '📣 크로스체크 확인 요청',
+                                                                    body: ccHistory ? '📣 크로스체크 재확인 요청' : '📣 크로스체크 확인 요청',
                                                                     connectColor: '#f59e0b',
                                                                     connectInfo: [{
                                                                       title: `${card.rawData?.siteName || '단지명 미입력'} — ${aName}`,
@@ -10494,12 +10521,26 @@ tr.suppressed td.fname{color:#64748b;}
                                                                         '',
                                                                         `📝 관리자 메모:`,
                                                                         rd.adminNote,
+                                                                        ccHistory ? `\n(이전 찌름: ${ccHistory.at?.slice(0, 16).replace('T', ' ')})` : '',
                                                                         '',
                                                                         `→ 시스템에서 확인 후 관련 자료 업로드/회신 부탁드립니다.`,
-                                                                      ].join('\n'),
+                                                                      ].filter(Boolean).join('\n'),
                                                                     }],
                                                                   }),
                                                                 });
+                                                                // Firebase 영구 기록
+                                                                if (firebaseEnabled && database) {
+                                                                  try {
+                                                                    await database.ref(`crossCheckPokes/${ccPokeKey}`).set({
+                                                                      at: new Date().toISOString(),
+                                                                      by: currentUser?.name || 'admin',
+                                                                      ptId: card.id,
+                                                                      siteName: card.rawData?.siteName || null,
+                                                                      assignee: aName,
+                                                                      adminNote: rd.adminNote,
+                                                                    });
+                                                                  } catch (_) {}
+                                                                }
                                                                 setPokingAdmin(prev => ({ ...prev, [pokeKey]: 'ok' }));
                                                                 setTimeout(() => setPokingAdmin(prev => { const c = { ...prev }; delete c[pokeKey]; return c; }), 3000);
                                                               } catch (e) {
@@ -10508,7 +10549,7 @@ tr.suppressed td.fname{color:#64748b;}
                                                                 setTimeout(() => setPokingAdmin(prev => { const c = { ...prev }; delete c[pokeKey]; return c; }), 3000);
                                                               }
                                                             }}
-                                                            title={canPoke ? `${aName}님 개인 잔디로 크로스체크 메모 전송` : `${aName}님 웹훅 미등록`}
+                                                            title={canPoke ? (ccHistory ? `${aName}님에게 재전송 (마지막: ${ccElapsed} · ${ccHistory.by || '-'})` : `${aName}님 개인 잔디로 크로스체크 메모 전송`) : `${aName}님 웹훅 미등록`}
                                                             style={{
                                                               fontSize: '13px',
                                                               color: pokeState === 'ok' ? '#15803d' : pokeState === 'fail' ? '#b91c1c' : canPoke ? 'white' : '#94a3b8',

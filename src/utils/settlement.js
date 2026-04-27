@@ -35,6 +35,7 @@ export const EXCLUSION_REASONS = {
   DRAW_SUPPORT_EXCLUDED: 'draw_support_excluded',  // 주담 무승부 → 지원자 관리자예외승인 필요
   LOSS: 'loss',                         // 결과가 패배
   CANCELLED_NOTICE: 'cancelled_notice', // K-APT 취소공고 (공고 올라왔지만 발주처 취소) — 재공고 대기
+  SUPERSEDED: 'superseded',             // 동일 단지/공종 최신 PT 로 단일화 — 정산 대상 아님
 };
 
 // ===== 금액 테이블 =====
@@ -105,6 +106,12 @@ export function calculateSettlementAmount(pt, assignee, opts = {}) {
   const stl = pt.settlement?.[assignee] || {};
   if (stl.selfSales) {
     return { amount: 0, reason: EXCLUSION_REASONS.SELF_SALES, result: '제외' };
+  }
+
+  // 2.3) Superseded — 동일 단지/공종 최신 PT 로 단일화된 PT 는 정산 대상 아님
+  //      금액 0원 + 제외 사유 = SUPERSEDED. 분기 보고서·UI 합계에서 자동 제외됨.
+  if (stl.superseded === true || stl.supersededBy) {
+    return { amount: 0, reason: EXCLUSION_REASONS.SUPERSEDED, result: '제외' };
   }
 
   // 2.5) K-APT 취소공고 — 공고 있었으나 발주처 취소 → 정산 제외 (재공고 대기)
