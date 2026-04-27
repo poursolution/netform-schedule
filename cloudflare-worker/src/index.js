@@ -346,6 +346,18 @@ Rules:
       }
     }
 
+    // 동일 단지/담당/공종 PT 자동 superseded 수동 실행: POST /run-auto-supersede
+    //   { dryRun?, force? } — dryRun=true 면 처리 대상만 미리보기
+    if (url.pathname === '/run-auto-supersede' && request.method === 'POST') {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const result = await runAutoSupersede(env, { dryRun: !!body.dryRun, force: !!body.force });
+        return jsonResponse(result, env);
+      } catch (e) {
+        return jsonResponse({ status: 'error', error: e.message }, env, 500);
+      }
+    }
+
     // 김유림 발송 준비 상태 체크: POST /check-report-readiness { quarterKey?, force? }
     //   전원 finalConfirmed → admin 잔디 알림 (중복 방지)
     if (url.pathname === '/check-report-readiness' && request.method === 'POST') {
@@ -452,11 +464,141 @@ Rules:
           const sm = await sendSalesMeetingReminders(env);
           console.log('[cron] sales meeting reminders', sm);
         } catch (e) { console.error('[cron] sales meeting reminders failed', e); }
+        // 동일 단지/담당/공종 PT 자동 superseded
+        try {
+          const sp = await runAutoSupersede(env);
+          console.log('[cron] auto-supersede', sp);
+        } catch (e) { console.error('[cron] auto-supersede failed', e); }
       }
       return;
     }
   },
 };
+
+// === 동일 단지/담당자/공종 카테고리 PT 그룹 자동 superseded ===
+// 룰: 같은 (단지명 정규화 + 주담당자 + 공종 카테고리) PT 그룹 → 최후 PT 만 살리고 이전 모두 superseded.
+// 안전 가드: 이전 PT 가 이미 completed(정산완료) 면 자동 처리 skip → 경고 리포트만.
+// 실행: 매일 cron (0 0,8 * * *) 09 KST 1회.
+// 수동: POST /run-auto-supersede { dryRun?, force? }
+//
+// 같은 단지 다른 공종(슬라브 vs 에폭시 등)은 카테고리 기반으로 별개 그룹 → 자동 처리 안 함.
+// (사용자가 요청한 슬라브/에폭시 분리 케이스 보존)
+const SUPERSEDE_CATEGORY_KEYWORDS = {
+  방수:   ['옥상방수','옥상 방수','우레탄','복합방수','시트방수','방수공사','방수','시트'],
+  재도장: ['재도장','외벽도장','외벽 도장','균열보수','균열 보수','균열','크랙','도장','페인트'],
+  주차장: ['지하주차장','주차장','에폭시'],
+  도로:   ['아스콘','경계석','도로 포장','도로포장','포장공사'],
+};
+function inferSupersedeCategory(text) {
+  if (!text) return null;
+  const lower = String(text).toLowerCase();
+  const matched = new Set();
+  for (const [cat, kws] of Object.entries(SUPERSEDE_CATEGORY_KEYWORDS)) {
+    for (const kw of kws) { if (lower.includes(kw.toLowerCase())) { matched.add(cat); break; } }
+  }
+  if (matched.size === 0) return null;
+  if (matched.has('방수')) return '방수';
+  if (matched.has('도로')) return '도로';
+  if (matched.has('주차장')) return '주차장';
+  return '재도장';
+}
+function normSupersedeSite(s) {
+  return String(s || '')
+    .replace(/_?\d+차PT$/gi, '')
+    .replace(/\s+/g, '')
+    .replace(/[()()[\]【】]/g, '')
+    .toLowerCase();
+}
+function primaryAssigneeSupersede(pt) {
+  return (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean)[0] || null;
+}
+
+async function runAutoSupersede(env, opts = {}) {
+  const { dryRun = false, force = false } = opts;
+  if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) {
+    return { skipped: 'no_firebase_config' };
+  }
+  const ptUrl = `${env.FIREBASE_DB_URL}/pt.json?auth=${env.FIREBASE_DB_SECRET}`;
+  const ptResp = await fetch(ptUrl);
+  if (!ptResp.ok) return { error: `firebase_${ptResp.status}` };
+  const pts = await ptResp.json() || {};
+
+  const groups = new Map();
+  for (const [id, pt] of Object.entries(pts)) {
+    if (!pt || pt.selfPT) continue;
+    const isSupervision = /감리/.test((pt.workType || '') + '|' + (pt.siteName || ''));
+    if (isSupervision) continue;
+    const a = primaryAssigneeSupersede(pt);
+    if (!a) continue;
+    const cat = pt.mainCategory || inferSupersedeCategory(pt.workType);
+    if (!cat) continue;
+    const site = normSupersedeSite(pt.siteName);
+    if (!site) continue;
+    const key = `${site}__${a}__${cat}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ id, pt });
+  }
+
+  const ops = [];
+  const conflicts = [];
+  for (const [key, list] of groups.entries()) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => (a.pt.date || '').localeCompare(b.pt.date || ''));
+    const latest = list[list.length - 1];
+    for (const earlier of list.slice(0, -1)) {
+      const a = primaryAssigneeSupersede(earlier.pt);
+      const stl = earlier.pt.settlement?.[a] || {};
+      if (!force && (stl.superseded === true || stl.status === 'superseded')) continue;
+      if (!force && (stl.completed === true || stl.status === 'completed')) {
+        conflicts.push({ key, earlierId: earlier.id, earlierDate: earlier.pt.date,
+                         latestId: latest.id, latestDate: latest.pt.date,
+                         siteName: earlier.pt.siteName, reason: 'earlier-completed' });
+        continue;
+      }
+      ops.push({ key, earlier, latest, assignee: a });
+    }
+  }
+
+  if (dryRun) {
+    return {
+      dryRun: true, totalGroups: groups.size, opsCount: ops.length, conflictsCount: conflicts.length,
+      ops: ops.slice(0, 20).map(o => ({ siteName: o.earlier.pt.siteName,
+        earlierId: o.earlier.id, earlierDate: o.earlier.pt.date,
+        latestId: o.latest.id, latestDate: o.latest.pt.date, assignee: o.assignee })),
+      conflicts,
+    };
+  }
+
+  // 적용
+  const nowISO = new Date().toISOString();
+  const updatePromises = [];
+  for (const o of ops) {
+    const base = `pt/${o.earlier.id}/settlement/${o.assignee}`;
+    const patch = {
+      superseded: true,
+      supersededAt: nowISO,
+      supersededBy: o.latest.id,
+      supersededReason: `동일 단지/담당/공종 — 최신 PT(${o.latest.pt.date})로 단일화 [auto]`,
+      status: 'superseded',
+      calculatedAmount: 0,
+    };
+    const url = `${env.FIREBASE_DB_URL}/${base}.json?auth=${env.FIREBASE_DB_SECRET}`;
+    updatePromises.push(fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }));
+  }
+  await Promise.all(updatePromises);
+
+  return {
+    totalGroups: groups.size, processed: ops.length, conflictsCount: conflicts.length,
+    sample: ops.slice(0, 10).map(o => ({ siteName: o.earlier.pt.siteName,
+      earlierId: o.earlier.id, earlierDate: o.earlier.pt.date,
+      latestId: o.latest.id, latestDate: o.latest.pt.date })),
+    conflicts,
+  };
+}
 
 // === 영업회의 알림 (D-7 / D-1) ===
 // meetings/{id} 노드에서 title 에 "영업회의" 포함된 미래 회의 조회.
