@@ -73,7 +73,6 @@ const SETTLEMENT_BADGE_STYLE = {
   [SETTLEMENT_STATUS.CONFIRMED]:    { bg: '#e0e7ff', color: '#4338ca', border: '#a5b4fc', label: '정산확정' },
   [SETTLEMENT_STATUS.COMPLETED]:    { bg: '#dcfce7', color: '#166534', border: '#86efac', label: '정산완료' },
   [SETTLEMENT_STATUS.EXCLUDED]:     { bg: '#fee2e2', color: '#991b1b', border: '#fca5a5', label: '제외' },
-  [SETTLEMENT_STATUS.SUPERSEDED]:   { bg: '#e2e8f0', color: '#475569', border: '#cbd5e1', label: '🔁 중복 제외' },
 };
 
     // 시스템 명칭 상수
@@ -9837,8 +9836,6 @@ const SETTLEMENT_BADGE_STYLE = {
                                     const aList = (s?.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(Boolean);
                                     if (aList.length === 0) return null;
                                     const statuses = aList.map(a => getSettlementStatus(s, a));
-                                    // SUPERSEDED 우선 — 모든 담당자가 superseded 면 "🔁 중복 제외" 단일 배지
-                                    if (statuses.length > 0 && statuses.every(st => st === SETTLEMENT_STATUS.SUPERSEDED)) return SETTLEMENT_STATUS.SUPERSEDED;
                                     if (statuses.includes(SETTLEMENT_STATUS.NEEDS_REVIEW)) return SETTLEMENT_STATUS.NEEDS_REVIEW;
                                     if (statuses.every(st => st === SETTLEMENT_STATUS.EXCLUDED)) return SETTLEMENT_STATUS.EXCLUDED;
                                     if (statuses.every(st => st === SETTLEMENT_STATUS.COMPLETED)) return SETTLEMENT_STATUS.COMPLETED;

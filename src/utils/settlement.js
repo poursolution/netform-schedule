@@ -24,7 +24,6 @@ export const SETTLEMENT_STATUS = {
   CONFIRMED: 'confirmed',
   COMPLETED: 'completed',
   EXCLUDED: 'excluded',
-  SUPERSEDED: 'superseded',  // 동일 단지/공종 최신 PT로 단일화 — 정산 대상 아님
 };
 
 export const EXCLUSION_REASONS = {
@@ -151,12 +150,6 @@ export function calculateSettlementAmount(pt, assignee, opts = {}) {
 export function getSettlementStatus(pt, assignee) {
   if (!pt || !assignee) return SETTLEMENT_STATUS.UNSETTLED;
   const stl = pt.settlement?.[assignee] || {};
-
-  // [Superseded 우선] 동일 단지/공종 최신 PT 로 단일화된 건 — kaptVerified 등
-  // 다른 신호와 무관하게 SUPERSEDED 로 확정. status 필드가 누락됐어도 superseded:true 면 인정.
-  if (stl.superseded === true || stl.supersededBy) {
-    return SETTLEMENT_STATUS.SUPERSEDED;
-  }
 
   // [결과 미입력 가드] PT 결과(승/무/패/지원) 가 없는 상태에서는 settlement.status 가
   // 어떻게 박혀있든 정산 상태 배지를 띄우면 안 됨 (자동 K-APT 검증이 결과 입력 전에
