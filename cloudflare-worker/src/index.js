@@ -547,6 +547,7 @@ async function runAutoSupersede(env, opts = {}) {
     const latest = list[list.length - 1];
     for (const earlier of list.slice(0, -1)) {
       const a = primaryAssigneeSupersede(earlier.pt);
+      if (!a) continue;  // [가드] 잘못된 settlement.null 키 생성 방지
       const stl = earlier.pt.settlement?.[a] || {};
       if (!force && (stl.superseded === true || stl.status === 'superseded')) continue;
       if (!force && (stl.completed === true || stl.status === 'completed')) {
