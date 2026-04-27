@@ -150,6 +150,12 @@ export function getSettlementStatus(pt, assignee) {
   if (!pt || !assignee) return SETTLEMENT_STATUS.UNSETTLED;
   const stl = pt.settlement?.[assignee] || {};
 
+  // [결과 미입력 가드] PT 결과(승/무/패/지원) 가 없는 상태에서는 settlement.status 가
+  // 어떻게 박혀있든 정산 상태 배지를 띄우면 안 됨 (자동 K-APT 검증이 결과 입력 전에
+  // status='needs_review'를 미리 박는 케이스 방지).
+  const hasResult = !!(pt.results?.[assignee] || pt.result);
+  if (!hasResult) return SETTLEMENT_STATUS.UNSETTLED;
+
   // 1) 명시적 status 필드 우선
   if (stl.status && Object.values(SETTLEMENT_STATUS).includes(stl.status)) {
     return stl.status;
