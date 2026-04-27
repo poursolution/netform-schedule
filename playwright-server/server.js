@@ -1814,7 +1814,7 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
     const pts = ptSnap.val() || {};
     const ptEntries = Object.entries(pts)
       .filter(([, v]) => v?.siteName)
-      .map(([id, v]) => ({ id, siteName: v.siteName, address: v.address || '', ptAssignee: v.ptAssignee, date: v.date, result: v.results, workType: v.workType || '' }));
+      .map(([id, v]) => ({ id, siteName: v.siteName, address: v.address || '', ptAssignee: v.ptAssignee, date: v.date, result: v.results, workType: v.workType || '', mainCategory: v.mainCategory || null }));
 
     // 2.5. apartmentAlias 로드 → ev parsed name → ptId lookup map 구축
     //   학습된 alias 가 있으면 자동 매칭으로 score=1.0 부여 (사용자 검증 결과 신뢰)
@@ -1843,7 +1843,45 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
       const lower = String(s).toLowerCase();
       return METHOD_TOKENS.filter(t => lower.includes(t));
     };
-    const methodMultiplier = (evMethod, ptWorkType) => {
+
+    // [공종 카테고리 4대 분류] 같은 단지 다른 공사 차단용
+    //   방수: 옥상방수, 우레탄, 방수, 시트
+    //   재도장: 재도장, 외벽도장, 도장, 균열보수, 균열, 페인트
+    //   주차장: 주차장, 지하주차장, 에폭시
+    //   도로: 도로, 아스콘, 포장, 경계석
+    //   감리/기타: 그 외
+    const CATEGORY_KEYWORDS = {
+      방수:   ['옥상방수','옥상 방수','우레탄','복합방수','시트방수','방수공사','방수','시트'],
+      재도장: ['재도장','외벽도장','외벽 도장','균열보수','균열 보수','균열','크랙','도장','페인트'],
+      주차장: ['지하주차장','주차장','에폭시'],
+      도로:   ['아스콘','경계석','도로 포장','도로포장','포장공사'],
+    };
+    const inferCategory = (text) => {
+      if (!text) return null;
+      const lower = String(text).toLowerCase();
+      const matched = new Set();
+      for (const [cat, kws] of Object.entries(CATEGORY_KEYWORDS)) {
+        for (const kw of kws) {
+          if (lower.includes(kw.toLowerCase())) { matched.add(cat); break; }
+        }
+      }
+      if (matched.size === 0) return null;
+      if (matched.size === 1) return [...matched][0];
+      // 복수 매칭 → 우선순위: 방수 > 도로 > 주차장 > 재도장 (방수가 가장 명확한 분류)
+      if (matched.has('방수')) return '방수';
+      if (matched.has('도로')) return '도로';
+      if (matched.has('주차장')) return '주차장';
+      return '재도장';
+    };
+
+    const methodMultiplier = (evMethod, ptWorkType, ptMainCategory) => {
+      // 1) 카테고리 충돌 강한 페널티 — 같은 단지 다른 공사 차단
+      const evCat = inferCategory(evMethod);
+      const ptCat = ptMainCategory || inferCategory(ptWorkType);
+      if (evCat && ptCat && evCat !== ptCat) {
+        return 0.55;  // 0.9 score × 0.55 = 0.495 → minScore 0.75 통과 못함
+      }
+      // 2) 토큰 단위 보정 (기존 로직)
       const ev = extractMethodTokens(evMethod);
       const pt = extractMethodTokens(ptWorkType);
       if (ev.length === 0 || pt.length === 0) return 1.0;
@@ -1924,7 +1962,7 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
             let adjustedScore = c.score;
             let matchedBy = c.matchedBy;
             if (c.score >= 0.5) {
-              const mul = methodMultiplier(ev.parsedMethod, p.workType || '');
+              const mul = methodMultiplier(ev.parsedMethod, p.workType || '', p.mainCategory);
               if (mul !== 1.0) {
                 adjustedScore = Math.min(1, c.score * mul);
                 matchedBy = matchedBy + (mul > 1 ? '+method' : '-method');
