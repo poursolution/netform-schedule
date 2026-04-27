@@ -12092,32 +12092,29 @@ tr.suppressed td.fname{color:#64748b;}
                               setShowUnconfirmedPtModal(true);
                             }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <span style={{ fontSize: 14 }}>&#9888;</span>
-                                <span style={{ fontSize: 12, fontWeight: 700, color: '#92400e' }}>{qNum}분기 PT 실적 확인 필요</span>
-                              </div>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309' }}>{qNum}분기 PT 실적 확인 필요</span>
                               {quarterUnconfirmedCount > 0 && (
-                                <span style={{ fontSize: 11, fontWeight: 700, color: '#d97706', background: '#fef3c7', padding: '2px 8px', borderRadius: 6 }}>{quarterUnconfirmedCount}건</span>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '2px 8px', borderRadius: 6 }}>{quarterUnconfirmedCount}건</span>
                               )}
                             </div>
-                            <div style={{ fontSize: 11, color: '#b45309', marginTop: 3, marginLeft: 22 }}>정산 전 담당 PT 결과를 확인해주세요</div>
+                            <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>정산 전 담당 PT 결과를 확인해주세요</div>
                             <div style={{ textAlign: 'right', marginTop: 4 }}>
-                              <span style={{ fontSize: 11, fontWeight: 600, color: '#d97706', textDecoration: 'underline' }}>확인하러 가기 ▸</span>
+                              <span style={{ fontSize: 11, fontWeight: 600, color: '#b45309', textDecoration: 'underline' }}>확인하러 가기</span>
                             </div>
                           </div>
                         );
                       })()}
                     </div>
 
-                    {/* 💰 컨트롤타워 — 이번 분기 예상 정산 (최상단, 가장 크게) */}
-                    <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #065f46 100%)', borderRadius: 16, padding: '20px 22px', color: 'white', position: 'relative', overflow: 'hidden' }}>
-                      <div style={{ fontSize: 11, opacity: 0.7, fontWeight: 600, letterSpacing: '0.1em' }}>💰 {viewingUser}님 · 이번 분기 예상 정산 · {nowY}-Q{nowQ}</div>
+                    {/* 컨트롤타워 — 이번 분기 예상 정산 (단색 다크네이비) */}
+                    <div style={{ background: '#1e293b', borderRadius: 16, padding: '20px 22px', color: 'white', position: 'relative', overflow: 'hidden' }}>
+                      <div style={{ fontSize: 11, opacity: 0.7, fontWeight: 600, letterSpacing: '0.1em' }}>{viewingUser}님 · 이번 분기 예상 정산 · {nowY}-Q{nowQ}</div>
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 6 }}>
-                        <div style={{ fontSize: 32, fontWeight: 800, color: '#34d399', letterSpacing: -1 }}>{qMoney.total.toLocaleString('ko-KR')}</div>
+                        <div style={{ fontSize: 32, fontWeight: 800, color: '#22c55e', letterSpacing: -1 }}>{qMoney.total.toLocaleString('ko-KR')}</div>
                         <div style={{ fontSize: 14, opacity: 0.7 }}>원</div>
                         {prevQMoney > 0 && (
-                          <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: qDelta >= 0 ? '#6ee7b7' : '#fca5a5' }}>
-                            {qDelta >= 0 ? '▲' : '▼'} 전분기 대비 {qDelta >= 0 ? '+' : ''}{qDelta}%
+                          <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: qDelta >= 0 ? '#22c55e' : '#94a3b8' }}>
+                            전분기 대비 {qDelta >= 0 ? '+' : ''}{qDelta}%
                           </span>
                         )}
                       </div>
@@ -12126,7 +12123,7 @@ tr.suppressed td.fname{color:#64748b;}
                         <div style={{ fontSize: 10, opacity: 0.75, marginTop: 4, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                           {changeReasons.length > 0 && <span>사유: {changeReasons.join(' · ')}</span>}
                           {teamAvg > 0 && (
-                            <span style={{ marginLeft: 'auto', color: avgDelta >= 0 ? '#6ee7b7' : '#fca5a5', fontWeight: 700 }}>
+                            <span style={{ marginLeft: 'auto', color: avgDelta >= 0 ? '#22c55e' : '#94a3b8', fontWeight: 700 }}>
                               팀 평균({teamAvg.toLocaleString('ko-KR')}원) 대비 {avgDelta >= 0 ? '+' : ''}{avgDelta}%
                             </span>
                           )}
@@ -12135,47 +12132,47 @@ tr.suppressed td.fname{color:#64748b;}
                       <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
                         <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 10px' }}>
                           <div style={{ fontSize: 9, opacity: 0.7, fontWeight: 600 }}>완료</div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: '#86efac', marginTop: 2 }}>{qMoney.completed.toLocaleString('ko-KR')}</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#22c55e', marginTop: 2 }}>{qMoney.completed.toLocaleString('ko-KR')}</div>
                         </div>
                         <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 10px' }}>
                           <div style={{ fontSize: 9, opacity: 0.7, fontWeight: 600 }}>확정</div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: '#c4b5fd', marginTop: 2 }}>{qMoney.confirmed.toLocaleString('ko-KR')}</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>{qMoney.confirmed.toLocaleString('ko-KR')}</div>
                         </div>
                         <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 10px' }}>
                           <div style={{ fontSize: 9, opacity: 0.7, fontWeight: 600 }}>요청</div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: '#93c5fd', marginTop: 2 }}>{qMoney.requested.toLocaleString('ko-KR')}</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>{qMoney.requested.toLocaleString('ko-KR')}</div>
                         </div>
                         <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 10px' }}>
                           <div style={{ fontSize: 9, opacity: 0.7, fontWeight: 600 }}>검토</div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: '#fcd34d', marginTop: 2 }}>{qMoney.review.toLocaleString('ko-KR')}</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>{qMoney.review.toLocaleString('ko-KR')}</div>
                         </div>
                       </div>
-                      {/* 정산 진행률 바 */}
+                      {/* 정산 진행률 바 — 단색 */}
                       {qMoney.total > 0 && (
                         <div style={{ marginTop: 12 }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, opacity: 0.75, marginBottom: 4 }}>
                             <span>정산 진행률 (완료+확정)</span>
-                            <span style={{ fontWeight: 700, color: qProgress >= 80 ? '#34d399' : qProgress >= 50 ? '#fbbf24' : '#fca5a5' }}>{qProgress}%</span>
+                            <span style={{ fontWeight: 700, color: qProgress >= 80 ? '#22c55e' : qProgress >= 50 ? '#f59e0b' : '#94a3b8' }}>{qProgress}%</span>
                           </div>
                           <div style={{ width: '100%', height: 6, background: 'rgba(255,255,255,0.15)', borderRadius: 3, overflow: 'hidden' }}>
-                            <div style={{ width: `${qProgress}%`, height: '100%', background: 'linear-gradient(90deg, #34d399 0%, #6ee7b7 100%)', transition: 'width 0.3s' }} />
+                            <div style={{ width: `${qProgress}%`, height: '100%', background: '#22c55e', transition: 'width 0.3s' }} />
                           </div>
                         </div>
                       )}
-                      {/* 개인 인사이트 (강점/약점 공종) */}
+                      {/* 개인 인사이트 (강점/약점 공종) — 이모지 제거 */}
                       {(strongWT || weakWT) && (
                         <div style={{ marginTop: 12, padding: '8px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: 8, fontSize: 11, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-                          {strongWT && <span>🟢 강점 공종: <b style={{ color: '#6ee7b7' }}>{strongWT.cat}</b> 승률 {strongWT.rate}% ({strongWT.win}/{strongWT.total})</span>}
-                          {weakWT && <span>🔴 약점 공종: <b style={{ color: '#fca5a5' }}>{weakWT.cat}</b> 승률 {weakWT.rate}% ({weakWT.win}/{weakWT.total})</span>}
+                          {strongWT && <span>강점 공종: <b style={{ color: '#22c55e' }}>{strongWT.cat}</b> 승률 {strongWT.rate}% ({strongWT.win}/{strongWT.total})</span>}
+                          {weakWT && <span>약점 공종: <b style={{ color: '#94a3b8' }}>{weakWT.cat}</b> 승률 {weakWT.rate}% ({weakWT.win}/{weakWT.total})</span>}
                         </div>
                       )}
                     </div>
 
-                    {/* ⚠ 리스크 / 검토 필요 (Action 앞에 배치 — 문제 먼저 보여주기) */}
+                    {/* 리스크 / 검토 필요 (Action 앞에 배치 — 문제 먼저 보여주기) */}
                     {riskItems.length > 0 && (
                       <div style={cardStyle}>
                         <div style={{ padding: '14px 20px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontSize: 15, fontWeight: 700, color: '#991b1b' }}>⚠ 리스크 · 검토 필요</span>
+                          <span style={{ fontSize: 15, fontWeight: 700, color: '#dc2626' }}>리스크 · 검토 필요</span>
                           <span style={{ fontSize: 11, fontWeight: 700, color: 'white', background: '#dc2626', borderRadius: 10, padding: '2px 8px' }}>{riskItems.reduce((sum, r) => sum + r.count, 0)}건</span>
                         </div>
                         <div style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -12215,15 +12212,15 @@ tr.suppressed td.fname{color:#64748b;}
                     {/* 오늘 처리할 업무 - unified section */}
                     <div style={cardStyle}>
                       <div style={{ padding: '16px 20px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>오늘 처리할 업무</span>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: 'white', background: (todaySchedules.length + totalActionItems) > 0 ? '#ef4444' : '#10b981', borderRadius: 10, padding: '2px 8px', lineHeight: 1.4 }}>{todaySchedules.length + totalActionItems}건</span>
+                        <span style={{ fontSize: 15, fontWeight: 700, color: '#1e293b' }}>오늘 처리할 업무</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'white', background: (todaySchedules.length + totalActionItems) > 0 ? '#dc2626' : '#64748b', borderRadius: 10, padding: '2px 8px', lineHeight: 1.4 }}>{todaySchedules.length + totalActionItems}건</span>
                       </div>
 
                       {/* Today's schedules first */}
                       {todaySchedules.length > 0 && (
                         <div style={{ padding: '0 16px 8px' }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: '#3b82f6', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <div style={{ width: 4, height: 4, borderRadius: 2, background: '#3b82f6' }} />
+                          <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <div style={{ width: 4, height: 4, borderRadius: 2, background: '#94a3b8' }} />
                             오늘 일정
                           </div>
                           {todaySchedules.map((s, idx) => {
@@ -12243,60 +12240,62 @@ tr.suppressed td.fname{color:#64748b;}
 
                       {/* Severity-based warning list */}
                       {totalActionItems > 0 && (
-                        <div style={{ padding: todaySchedules.length > 0 ? '8px 16px 12px' : '0 16px 12px', borderTop: todaySchedules.length > 0 ? '1px solid #f2f4f8' : 'none' }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: '#ef4444', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <div style={{ width: 4, height: 4, borderRadius: 2, background: '#ef4444' }} />
+                        <div style={{ padding: todaySchedules.length > 0 ? '8px 16px 12px' : '0 16px 12px', borderTop: todaySchedules.length > 0 ? '1px solid #e2e8f0' : 'none' }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: '#dc2626', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <div style={{ width: 4, height: 4, borderRadius: 2, background: '#dc2626' }} />
                             조치 필요
                           </div>
-                          {/* PT 결과 미입력 - Critical (red) */}
+                          {/* PT 결과 미입력 - 긴급 (Danger) */}
                           {unenteredPts.length > 0 && (
                             <div onClick={() => { setShowMyPage(false); setShowPerformance(true); setShowDashboard(false); setShowMeetingView(false); setShowSalesView(false); setSelectedAssignee(viewingUser); setPreviewAssignee(viewingUser); setSettlementFilter('all'); }}
                               style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 4, cursor: 'pointer', background: '#fef2f2', border: '1px solid #fecaca', transition: 'background 0.15s' }}
                               onMouseOver={e => e.currentTarget.style.background = '#fee2e2'}
                               onMouseOut={e => e.currentTarget.style.background = '#fef2f2'}>
-                              <div style={{ width: 4, height: 28, borderRadius: 2, background: '#ef4444', flexShrink: 0 }} />
+                              <div style={{ width: 4, height: 28, borderRadius: 2, background: '#dc2626', flexShrink: 0 }} />
                               <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: '#dc2626' }}>📌 PT 결과 미입력</div>
-                                <div style={{ fontSize: 10, color: '#ef4444', opacity: 0.7, marginTop: 1 }}>최종 결과 입력이 필요한 PT</div>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#dc2626' }}>PT 결과 미입력</div>
+                                <div style={{ fontSize: 10, color: '#64748b', marginTop: 1 }}>최종 결과 입력이 필요한 PT</div>
                               </div>
-                              <span style={{ fontSize: 18, fontWeight: 800, color: '#ef4444' }}>{unenteredPts.length}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
+                              <span style={{ fontSize: 18, fontWeight: 800, color: '#dc2626' }}>{unenteredPts.length}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
                             </div>
                           )}
-                          {/* ② 신규 — K-APT 검토필요 (Warning, 노랑) */}
+                          {/* K-APT 검토필요 - 주의 (Warning) */}
                           {kaptReviewNeededPts.length > 0 && (
                             <div onClick={() => { setShowMyPage(false); setShowPerformance(true); setShowDashboard(false); setShowMeetingView(false); setShowSalesView(false); setSelectedAssignee(viewingUser); setPreviewAssignee(viewingUser); setSiteListTab('unverified'); }}
-                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 4, cursor: 'pointer', background: '#fef3c7', border: '1px solid #fcd34d', transition: 'background 0.15s' }}
-                              onMouseOver={e => e.currentTarget.style.background = '#fde68a'}
-                              onMouseOut={e => e.currentTarget.style.background = '#fef3c7'}>
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 4, cursor: 'pointer', background: '#fffbeb', border: '1px solid #fcd34d', transition: 'background 0.15s' }}
+                              onMouseOver={e => e.currentTarget.style.background = '#fef3c7'}
+                              onMouseOut={e => e.currentTarget.style.background = '#fffbeb'}>
                               <div style={{ width: 4, height: 28, borderRadius: 2, background: '#f59e0b', flexShrink: 0 }} />
                               <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e' }}>⚠ K-APT 검증 필요</div>
-                                <div style={{ fontSize: 10, color: '#d97706', opacity: 0.8, marginTop: 1 }}>공고문·K-APT 증빙 둘 다 없는 정산대상</div>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#b45309' }}>K-APT 검증 필요</div>
+                                <div style={{ fontSize: 10, color: '#64748b', marginTop: 1 }}>공고문·K-APT 증빙 둘 다 없는 정산대상</div>
                               </div>
-                              <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>{kaptReviewNeededPts.length}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
+                              <span style={{ fontSize: 18, fontWeight: 800, color: '#b45309' }}>{kaptReviewNeededPts.length}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
                             </div>
                           )}
-                          {/* ② 신규 — 정산요청 필요 (Info, 파랑) */}
+                          {/* 정산요청 필요 - 주의 (Warning) */}
                           {settlementRequestNeededPts.length > 0 && (
                             <div onClick={() => { setShowMyPage(false); setShowPerformance(true); setShowDashboard(false); setShowMeetingView(false); setShowSalesView(false); setSelectedAssignee(viewingUser); setPreviewAssignee(viewingUser); setSettlementFilter('pending'); }}
-                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 4, cursor: 'pointer', background: '#eff6ff', border: '1px solid #bfdbfe', transition: 'background 0.15s' }}
-                              onMouseOver={e => e.currentTarget.style.background = '#dbeafe'}
-                              onMouseOut={e => e.currentTarget.style.background = '#eff6ff'}>
-                              <div style={{ width: 4, height: 28, borderRadius: 2, background: '#3b82f6', flexShrink: 0 }} />
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 4, cursor: 'pointer', background: '#fffbeb', border: '1px solid #fcd34d', transition: 'background 0.15s' }}
+                              onMouseOver={e => e.currentTarget.style.background = '#fef3c7'}
+                              onMouseOut={e => e.currentTarget.style.background = '#fffbeb'}>
+                              <div style={{ width: 4, height: 28, borderRadius: 2, background: '#f59e0b', flexShrink: 0 }} />
                               <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: '#1e40af' }}>💰 정산요청 필요</div>
-                                <div style={{ fontSize: 10, color: '#3b82f6', opacity: 0.8, marginTop: 1 }}>결과 입력됐지만 정산요청 체크 안 된 PT</div>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#b45309' }}>정산요청 필요</div>
+                                <div style={{ fontSize: 10, color: '#64748b', marginTop: 1 }}>결과 입력됐지만 정산요청 체크 안 된 PT</div>
                               </div>
-                              <span style={{ fontSize: 18, fontWeight: 800, color: '#2563eb' }}>{settlementRequestNeededPts.length}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
+                              <span style={{ fontSize: 18, fontWeight: 800, color: '#b45309' }}>{settlementRequestNeededPts.length}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
                             </div>
                           )}
-                          {/* Pipeline warnings - grouped by stage with severity colors */}
+                          {/* Pipeline warnings - grouped by stage (긴급/주의 2단계로 통합) */}
                           {pipelineWarnings.length > 0 && (() => {
                             const stageConfig = {
-                              '컨설팅 설계단계': { label: '컨설팅 설계 지연', severity: 'critical', bg: '#fef2f2', border: '#fecaca', textColor: '#dc2626', barColor: '#ef4444' },
-                              '컨설팅 자료 발송완료': { label: '자료 발송 후속 지연', severity: 'warning', bg: '#fffbeb', border: '#fed7aa', textColor: '#d97706', barColor: '#f59e0b' },
-                              '유대관계 강화': { label: '유대관계 미활동', severity: 'normal', bg: '#eff6ff', border: '#bfdbfe', textColor: '#2563eb', barColor: '#3b82f6' },
-                              '침묵 관리 단계': { label: '침묵 관리 필요', severity: 'warning', bg: '#f5f3ff', border: '#ddd6fe', textColor: '#7c3aed', barColor: '#8b5cf6' },
+                              // 긴급 (Danger) — 컨설팅 설계 지연만
+                              '컨설팅 설계단계': { label: '컨설팅 설계 지연', severity: 'critical', bg: '#fef2f2', border: '#fecaca', textColor: '#dc2626', barColor: '#dc2626' },
+                              // 주의 (Warning) — 자료발송 후속, 유대관계, 침묵관리 모두 통합
+                              '컨설팅 자료 발송완료': { label: '자료 발송 후속 지연', severity: 'warning', bg: '#fffbeb', border: '#fcd34d', textColor: '#b45309', barColor: '#f59e0b' },
+                              '유대관계 강화': { label: '유대관계 미활동', severity: 'warning', bg: '#fffbeb', border: '#fcd34d', textColor: '#b45309', barColor: '#f59e0b' },
+                              '침묵 관리 단계': { label: '침묵 관리 필요', severity: 'warning', bg: '#fffbeb', border: '#fcd34d', textColor: '#b45309', barColor: '#f59e0b' },
                             };
                             const grouped = {};
                             pipelineWarnings.forEach(w => {
@@ -12310,10 +12309,10 @@ tr.suppressed td.fname{color:#64748b;}
                               return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
                             });
                             return sortedKeys.map(stageKey => {
-                              const cfg = stageConfig[stageKey] || { label: stageKey, bg: '#f8f9fb', border: '#e2e8f0', textColor: '#64748b', barColor: '#94a3b8' };
+                              const cfg = stageConfig[stageKey] || { label: stageKey, bg: '#f8fafc', border: '#e2e8f0', textColor: '#64748b', barColor: '#94a3b8' };
                               const items = grouped[stageKey];
                               const isOpen = myPageOpenStage === stageKey;
-                              const hasUrgent = items.some(w => w.color === '#ef4444');
+                              const hasUrgent = items.some(w => w.color === '#dc2626' || w.color === '#ef4444');
                               return (
                                 <div key={stageKey} style={{ marginBottom: 4 }}>
                                   <div onClick={() => setMyPageOpenStage(isOpen ? null : stageKey)}
@@ -12330,7 +12329,7 @@ tr.suppressed td.fname{color:#64748b;}
                                       )}
                                     </div>
                                     <span style={{ fontSize: 18, fontWeight: 800, color: cfg.textColor }}>{items.length}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
-                                    <span style={{ fontSize: 10, color: cfg.textColor, opacity: 0.5, transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>{'\u25BC'}</span>
+                                    <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>{isOpen ? '−' : '+'}</span>
                                   </div>
                                   {/* Expanded detail list */}
                                   {isOpen && (
@@ -12338,10 +12337,10 @@ tr.suppressed td.fname{color:#64748b;}
                                       {items.map((w, idx) => (
                                         <div key={idx} onClick={(e) => { e.stopPropagation(); setSelectedPipelineItem(w.item); }}
                                           style={{ padding: '7px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, transition: 'background 0.15s', borderRadius: '0 8px 8px 0' }}
-                                          onMouseOver={e => e.currentTarget.style.background = '#f8f9fb'}
+                                          onMouseOver={e => e.currentTarget.style.background = '#f8fafc'}
                                           onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
-                                          <div style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: '#1a1a2e', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{w.item.orgName}</div>
-                                          <span style={{ fontSize: 11, fontWeight: 800, color: w.color === '#ef4444' ? '#ef4444' : cfg.textColor, flexShrink: 0 }}>+{w.overDays}일</span>
+                                          <div style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: '#1e293b', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{w.item.orgName}</div>
+                                          <span style={{ fontSize: 11, fontWeight: 800, color: (w.color === '#dc2626' || w.color === '#ef4444') ? '#dc2626' : cfg.textColor, flexShrink: 0 }}>+{w.overDays}일</span>
                                         </div>
                                       ))}
                                     </div>
@@ -12355,8 +12354,8 @@ tr.suppressed td.fname{color:#64748b;}
 
                       {/* Empty state */}
                       {todaySchedules.length === 0 && totalActionItems === 0 && (
-                        <div style={{ padding: '24px 20px', textAlign: 'center', color: '#10b981', fontSize: 13, fontWeight: 600 }}>
-                          {'\u2728'} 오늘 처리할 업무가 없습니다
+                        <div style={{ padding: '24px 20px', textAlign: 'center', color: '#64748b', fontSize: 13, fontWeight: 600 }}>
+                          오늘 처리할 업무가 없습니다
                         </div>
                       )}
                     </div>
@@ -12364,38 +12363,38 @@ tr.suppressed td.fname{color:#64748b;}
                     {/* ② 신규 — 이번 분기 실적·정산 요약 */}
                     <div style={cardStyle}>
                       <div style={{ padding: '16px 20px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>이번 분기 요약</span>
+                        <span style={{ fontSize: 15, fontWeight: 700, color: '#1e293b' }}>이번 분기 요약</span>
                         <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', background: '#f1f5f9', borderRadius: 10, padding: '2px 10px' }}>{nowY}-Q{nowQ}</span>
                       </div>
                       <div style={{ padding: '0 16px 14px' }}>
-                        {/* 실적 4색 */}
+                        {/* 실적 4박스 — 흰 카드 + 컬러 숫자만 */}
                         <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-                          <div style={{ flex: 1, padding: '10px 8px', background: '#eff6ff', borderRadius: 8, border: '1px solid #bfdbfe', textAlign: 'center' }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#2563eb', marginBottom: 2 }}>승</div>
-                            <div style={{ fontSize: 18, fontWeight: 800, color: '#1e40af' }}>{qWins}</div>
+                          <div style={{ flex: 1, padding: '10px 8px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0', textAlign: 'center' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', marginBottom: 2 }}>승</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: '#2563eb' }}>{qWins}</div>
                           </div>
-                          <div style={{ flex: 1, padding: '10px 8px', background: '#fffbeb', borderRadius: 8, border: '1px solid #fde68a', textAlign: 'center' }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#d97706', marginBottom: 2 }}>무</div>
-                            <div style={{ fontSize: 18, fontWeight: 800, color: '#a16207' }}>{qDraws}</div>
+                          <div style={{ flex: 1, padding: '10px 8px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0', textAlign: 'center' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', marginBottom: 2 }}>무</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: '#f59e0b' }}>{qDraws}</div>
                           </div>
-                          <div style={{ flex: 1, padding: '10px 8px', background: '#fef2f2', borderRadius: 8, border: '1px solid #fca5a5', textAlign: 'center' }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#dc2626', marginBottom: 2 }}>패</div>
-                            <div style={{ fontSize: 18, fontWeight: 800, color: '#991b1b' }}>{qLosses}</div>
+                          <div style={{ flex: 1, padding: '10px 8px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0', textAlign: 'center' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', marginBottom: 2 }}>패</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: '#dc2626' }}>{qLosses}</div>
                           </div>
-                          <div style={{ flex: 1, padding: '10px 8px', background: '#f3e8ff', borderRadius: 8, border: '1px solid #c4b5fd', textAlign: 'center' }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#7c3aed', marginBottom: 2 }}>지원</div>
-                            <div style={{ fontSize: 18, fontWeight: 800, color: '#6b21a8' }}>{qSupports}</div>
+                          <div style={{ flex: 1, padding: '10px 8px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0', textAlign: 'center' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', marginBottom: 2 }}>지원</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: '#64748b' }}>{qSupports}</div>
                           </div>
                         </div>
-                        {/* 정산 블록 */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: 'linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%)', borderRadius: 10, border: '1px solid #a7f3d0' }}>
+                        {/* 정산 블록 — 흰 배경 + 좌측 초록 컬러바 */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: '#ffffff', borderRadius: 10, border: '1px solid #e2e8f0', borderLeft: '4px solid #16a34a' }}>
                           <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#047857', marginBottom: 2 }}>이번 분기 예상 정산금액</div>
-                            <div style={{ fontSize: 20, fontWeight: 800, color: '#065f46' }}>{thisQuarterAmount.toLocaleString('ko-KR')}<span style={{ fontSize: 12, fontWeight: 600, marginLeft: 2 }}>원</span></div>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', marginBottom: 2 }}>이번 분기 예상 정산금액</div>
+                            <div style={{ fontSize: 20, fontWeight: 800, color: '#16a34a' }}>{thisQuarterAmount.toLocaleString('ko-KR')}<span style={{ fontSize: 12, fontWeight: 600, marginLeft: 2, color: '#1e293b' }}>원</span></div>
                           </div>
                           <div style={{ textAlign: 'right' }}>
                             <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', marginBottom: 2 }}>미정산</div>
-                            <div style={{ fontSize: 16, fontWeight: 800, color: qUnsettledCount > 0 ? '#f59e0b' : '#10b981' }}>{qUnsettledCount}<span style={{ fontSize: 10, fontWeight: 600, marginLeft: 2 }}>건</span></div>
+                            <div style={{ fontSize: 16, fontWeight: 800, color: qUnsettledCount > 0 ? '#f59e0b' : '#64748b' }}>{qUnsettledCount}<span style={{ fontSize: 10, fontWeight: 600, marginLeft: 2 }}>건</span></div>
                           </div>
                         </div>
                       </div>
