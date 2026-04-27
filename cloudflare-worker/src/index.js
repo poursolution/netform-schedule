@@ -1440,8 +1440,10 @@ async function notifyJandiToUrl(webhookUrl, message) {
       const resp = await fetch(webhookUrl, {
         method: 'POST',
         headers: {
+          // 잔디 webhook 은 Content-Type: application/vnd.tosslab.jandi-v2+json 을
+          // 거절(400 "Invalid payload - body"). application/json 으로 변경.
           'Accept': 'application/vnd.tosslab.jandi-v2+json',
-          'Content-Type': 'application/vnd.tosslab.jandi-v2+json',
+          'Content-Type': 'application/json',
         },
         body: bodyBytes,
       });
