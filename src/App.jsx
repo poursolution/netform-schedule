@@ -898,6 +898,197 @@ const SETTLEMENT_BADGE_STYLE = {
         link.click();
       };
       
+      // === PT 실적 데이터 내보내기 (Excel, 분석용) ===
+      // 한 행 = (PT × 담당자) 단위 분리 → 피벗/필터/합계 자유롭게 가능.
+      // 정산 상태, 분기 귀속, 검증 상태, 제외 사유, 증빙 파일 수까지 모두 포함.
+      const handleExportPtPerformanceXlsx = () => {
+        try {
+          const rows = [];
+          ptSchedules.forEach(s => {
+            const tokens = (s.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+            const assignees = tokens.length > 0 ? tokens : ['(미지정)'];
+            const mainAssignee = assignees[0];
+
+            assignees.forEach(a => {
+              const stl = s.settlement?.[a] || {};
+              const calc = (typeof calculateSettlementAmount === 'function')
+                ? calculateSettlementAmount(s, a)
+                : { amount: 0, reason: null, result: null };
+              const status = (typeof getSettlementStatus === 'function')
+                ? getSettlementStatus(s, a)
+                : null;
+              const rawResult = s.results?.[a] || (assignees.length === 1 ? s.result : null);
+
+              // 확정일 4단계 fallback (분기 귀속 기준)
+              const finalConfirmedAt = stl.finalConfirmedAt ? stl.finalConfirmedAt.slice(0, 10) : '';
+              const requestedAt = stl.requestedAt ? stl.requestedAt.slice(0, 10) : '';
+              const resultConfirmDate = s.resultConfirmDate?.[a] ? String(s.resultConfirmDate[a]).slice(0, 10) : '';
+              const confirmDate = finalConfirmedAt || requestedAt || resultConfirmDate || s.date || '';
+              const confirmSource = finalConfirmedAt ? 'finalConfirmed'
+                : requestedAt ? 'requested'
+                : resultConfirmDate ? 'resultInput'
+                : 'ptDate';
+
+              // 분기 귀속 (가이드 룰: PT 진행 분기 마감 안 입력 → 진행 분기 / 마감 지남 → 입력일 분기)
+              let quarterKey = '';
+              try {
+                const m = (s.date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                if (m) {
+                  const ptY = parseInt(m[1], 10);
+                  const ptM = parseInt(m[2], 10);
+                  const ptQ = Math.ceil(ptM / 3);
+                  const dlMonth = ptQ * 3 + 1;
+                  const dlYear = dlMonth > 12 ? ptY + 1 : ptY;
+                  const dlMonthAdj = dlMonth > 12 ? 1 : dlMonth;
+                  const deadlineStr = `${dlYear}-${String(dlMonthAdj).padStart(2, '0')}-30`;
+                  if (!confirmDate || confirmDate <= deadlineStr) {
+                    quarterKey = `${ptY}-Q${ptQ}`;
+                  } else {
+                    const cm = parseInt(confirmDate.slice(5, 7), 10);
+                    const cd = parseInt(confirmDate.slice(8, 10), 10);
+                    const cy = parseInt(confirmDate.slice(0, 4), 10);
+                    if (cm === 1 && cd <= 30) quarterKey = `${cy - 1}-Q4`;
+                    else if ((cm >= 1 && cm < 4) || (cm === 4 && cd <= 30)) quarterKey = `${cy}-Q1`;
+                    else if ((cm > 4 && cm < 7) || (cm === 4 && cd > 30) || (cm === 7 && cd <= 30)) quarterKey = `${cy}-Q2`;
+                    else if ((cm > 7 && cm < 10) || (cm === 7 && cd > 30) || (cm === 10 && cd <= 30)) quarterKey = `${cy}-Q3`;
+                    else quarterKey = `${cy}-Q4`;
+                  }
+                }
+              } catch (_) {}
+
+              // 급여 반영월 (분기 종료 다음달)
+              let payrollMonth = '';
+              if (quarterKey) {
+                const qm = quarterKey.match(/^(\d{4})-Q(\d)$/);
+                if (qm) {
+                  const qy = parseInt(qm[1], 10);
+                  const qn = parseInt(qm[2], 10);
+                  let pY = qy, pM = qn * 3 + 1;
+                  if (pM > 12) { pM = 1; pY += 1; }
+                  payrollMonth = `${pY}-${String(pM).padStart(2, '0')}`;
+                }
+              }
+
+              const evidenceCount = s.evidenceFiles ? Object.keys(s.evidenceFiles).length : 0;
+              const isSupervisionPt = /감리/.test((s.workType || '') + '|' + (s.siteName || ''));
+              const reasonLabel = calc.reason ? (EXCLUSION_REASON_LABEL[calc.reason] || calc.reason) : '';
+
+              rows.push({
+                'PT일자': s.date || '',
+                'PT시간': s.time || '',
+                '단지명': s.siteName || '',
+                '주소': s.address || '',
+                '공종': s.workType || '',
+                '대분류': s.mainCategory || '',
+                '공고번호': s.bidNo || '',
+                '요청사': s.requester || '',
+                '경쟁사': s.competitor || '',
+                '참여인원': s.participants || '',
+                '담당자': a,
+                '주담당자여부': a === mainAssignee ? 'Y' : 'N',
+                '결과(원시)': rawResult || '',
+                '결과(파생)': calc.result || '',
+                '정산금액': calc.amount || 0,
+                '정산상태': status || '',
+                '제외사유': reasonLabel,
+                '정산요청': stl.requested ? 'Y' : '',
+                '정산요청일': requestedAt,
+                '정산완료': stl.completed ? 'Y' : '',
+                '본인영업': stl.selfSales ? 'Y' : '',
+                '협약사자체PT': s.selfPT ? 'Y' : '',
+                '감리': isSupervisionPt ? 'Y' : '',
+                '중복제외(superseded)': stl.superseded ? 'Y' : '',
+                '단일화기준PT': stl.supersededBy || '',
+                '결과확정일': resultConfirmDate,
+                '확정일(보고서기준)': confirmDate,
+                '확정일출처': confirmSource,
+                '귀속분기': quarterKey,
+                '급여반영월': payrollMonth,
+                'K-APT검증상태': s.kaptVerified?.status || '',
+                'K-APT검증사유': s.kaptVerified?.reason || '',
+                '증빙파일수': evidenceCount,
+                '예외승인': s.exceptionRequests?.[a]?.status === 'approved' ? 'Y' : '',
+                '써밋': s.useSummit ? 'Y' : '',
+                '비고': s.note || '',
+              });
+            });
+          });
+
+          if (rows.length === 0) {
+            alert('내보낼 PT 실적 데이터가 없습니다.');
+            return;
+          }
+
+          // 정렬: PT일자 내림차순, 단지명, 담당자 순
+          rows.sort((a, b) => {
+            const c1 = (b['PT일자'] || '').localeCompare(a['PT일자'] || '');
+            if (c1 !== 0) return c1;
+            const c2 = (a['단지명'] || '').localeCompare(b['단지명'] || '');
+            if (c2 !== 0) return c2;
+            return (a['담당자'] || '').localeCompare(b['담당자'] || '');
+          });
+
+          const wb = XLSX.utils.book_new();
+          wb.Props = {
+            Title: 'PT 실적 데이터',
+            Subject: '데이터 분석용',
+            Author: 'POUR영업운영시스템',
+            CreatedDate: new Date(),
+          };
+          const ws = XLSX.utils.json_to_sheet(rows);
+
+          // 컬럼 너비 자동
+          const colWidths = Object.keys(rows[0]).map(k => {
+            const maxLen = Math.max(k.length, ...rows.map(r => String(r[k] ?? '').length));
+            return { wch: Math.min(Math.max(maxLen + 2, 8), 40) };
+          });
+          ws['!cols'] = colWidths;
+          ws['!freeze'] = { xSplit: 0, ySplit: 1 };  // 헤더 고정
+
+          XLSX.utils.book_append_sheet(wb, ws, 'PT실적');
+
+          // 요약 시트 — 담당자별 집계
+          const byAssignee = {};
+          for (const r of rows) {
+            const a = r['담당자'];
+            if (!byAssignee[a]) byAssignee[a] = { 담당자: a, 총건수: 0, 승: 0, 무: 0, 패: 0, 지원: 0, 정산금액합계: 0, 정산완료건수: 0, 정산요청건수: 0, 검토필요건수: 0, 중복제외건수: 0 };
+            byAssignee[a].총건수++;
+            if (r['결과(파생)'] === '승') byAssignee[a].승++;
+            else if (r['결과(파생)'] === '무') byAssignee[a].무++;
+            else if (r['결과(파생)'] === '패') byAssignee[a].패++;
+            else if (r['결과(파생)'] === '지원') byAssignee[a].지원++;
+            byAssignee[a].정산금액합계 += r['정산금액'] || 0;
+            if (r['정산완료'] === 'Y') byAssignee[a].정산완료건수++;
+            if (r['정산요청'] === 'Y') byAssignee[a].정산요청건수++;
+            if (r['정산상태'] === 'needs_review') byAssignee[a].검토필요건수++;
+            if (r['중복제외(superseded)'] === 'Y') byAssignee[a].중복제외건수++;
+          }
+          const summaryRows = Object.values(byAssignee).sort((a, b) => b.정산금액합계 - a.정산금액합계);
+          const ws2 = XLSX.utils.json_to_sheet(summaryRows);
+          ws2['!cols'] = Object.keys(summaryRows[0] || {}).map(k => ({ wch: Math.max(k.length + 2, 12) }));
+          ws2['!freeze'] = { xSplit: 0, ySplit: 1 };
+          XLSX.utils.book_append_sheet(wb, ws2, '담당자별요약');
+
+          const wbout = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+          const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+          const stamp = new Date().toISOString().slice(0, 10);
+          downloadBlob(blob, `PT실적_데이터_${stamp}.xlsx`);
+
+          // activityLog
+          try {
+            if (firebaseEnabled && database) {
+              database.ref('activityLog').push({
+                event: 'pt_performance_export', at: new Date().toISOString(),
+                by: currentUser?.name || 'admin', rowCount: rows.length,
+              });
+            }
+          } catch (_) {}
+        } catch (e) {
+          console.error('[exportPtPerformance] failed', e);
+          alert('내보내기 실패: ' + e.message);
+        }
+      };
+
       // CSV 파싱 함수
       const parseCSV = (text) => {
         const lines = text.split('\n');
@@ -8540,6 +8731,12 @@ const SETTLEMENT_BADGE_STYLE = {
                       <button onClick={() => exportQuarterlyExcel(expYear, exportQuarter, 'all')} style={{ padding: '7px 12px', borderRadius: '6px', border: '1px solid #16a34a', fontSize: '11px', fontWeight: '600', cursor: 'pointer', background: '#f0fdf4', color: '#16a34a' }}>Excel</button>
                       <button onClick={() => exportToPDF(expYear, exportQuarter)} style={{ padding: '7px 12px', borderRadius: '6px', border: '1px solid #dc2626', fontSize: '11px', fontWeight: '600', cursor: 'pointer', background: '#fef2f2', color: '#dc2626' }}>PDF</button>
                       <button onClick={() => exportToPPT(expYear, exportQuarter)} style={{ padding: '7px 12px', borderRadius: '6px', border: '1px solid #2563eb', fontSize: '11px', fontWeight: '600', cursor: 'pointer', background: '#eff6ff', color: '#2563eb' }}>PPT</button>
+                      <button
+                        onClick={handleExportPtPerformanceXlsx}
+                        title="PT × 담당자 단위 분리, 정산상태·분기귀속·검증·증빙·제외사유 모두 포함 — 피벗/필터 자유로운 분석용 Excel"
+                        style={{ padding: '7px 12px', borderRadius: '6px', border: '1px solid #7c3aed', fontSize: '11px', fontWeight: '700', cursor: 'pointer', background: '#f5f3ff', color: '#7c3aed' }}>
+                        📊 실적데이터
+                      </button>
                       {hasUnconfirmed && (
                         <span title={`미확인: ${quarterNotConfirmed.join(', ')}`} style={{ fontSize: 10, fontWeight: 600, color: '#f59e0b', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '3px 8px', cursor: 'help', whiteSpace: 'nowrap' }}>
                           &#9888; {quarterNotConfirmed.length}명 미확인
