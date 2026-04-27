@@ -334,6 +334,18 @@ Rules:
       }
     }
 
+    // 영업회의 D-7/D-1 알림 수동 실행 (테스트·재발송용): POST /run-sales-meeting-reminders
+    //   { dryRun?, force? } — force=true 면 notifyLog 무시하고 재발송
+    if (url.pathname === '/run-sales-meeting-reminders' && request.method === 'POST') {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const result = await sendSalesMeetingReminders(env, { dryRun: !!body.dryRun, force: !!body.force });
+        return jsonResponse(result, env);
+      } catch (e) {
+        return jsonResponse({ status: 'error', error: e.message }, env, 500);
+      }
+    }
+
     // 김유림 발송 준비 상태 체크: POST /check-report-readiness { quarterKey?, force? }
     //   전원 finalConfirmed → admin 잔디 알림 (중복 방지)
     if (url.pathname === '/check-report-readiness' && request.method === 'POST') {
@@ -416,6 +428,11 @@ Rules:
         const rr = await sendQuarterlyConfirmationReminders(env);
         console.log('[cron] reminder result', rr);
       } catch (e) { console.error('[cron] reminder failed', e); }
+      // 영업회의 알림도 (월요일 09시 = 영업회의 D-7 케이스 커버 — 화/수/목 트리거는 0,8 cron이 처리)
+      try {
+        const sm = await sendSalesMeetingReminders(env);
+        console.log('[cron] sales meeting reminders', sm);
+      } catch (e) { console.error('[cron] sales meeting reminders failed', e); }
       return;
     }
     if (event.cron === '0 0,8 * * *') {
@@ -428,10 +445,139 @@ Rules:
         const rr = await checkQuarterReportReadiness(env);
         console.log('[cron] readiness result', rr);
       } catch (e) { console.error('[cron] readiness check failed', e); }
+      // 영업회의 D-7 / D-1 알림 (09시 트리거에서만 — 17시는 중복 방지로 skip)
+      const utcHour = new Date(event.scheduledTime || Date.now()).getUTCHours();
+      if (utcHour === 0) {  // 09시 KST 만
+        try {
+          const sm = await sendSalesMeetingReminders(env);
+          console.log('[cron] sales meeting reminders', sm);
+        } catch (e) { console.error('[cron] sales meeting reminders failed', e); }
+      }
       return;
     }
   },
 };
+
+// === 영업회의 알림 (D-7 / D-1) ===
+// meetings/{id} 노드에서 title 에 "영업회의" 포함된 미래 회의 조회.
+// 오늘 기준 +7일 또는 +1일에 회의가 있으면 잔디 웹훅 발송.
+// 멱등성: meetings/{id}/notifyLog/{D-7|D-1} 에 발송 기록 → 중복 발송 방지.
+//
+// 웹훅 URL: SALES_MEETING_WEBHOOK_URL secret 또는 하드코딩 (사용자 제공).
+const SALES_MEETING_WEBHOOK_FALLBACK = 'https://wh.jandi.com/connect-api/webhook/26098605/503f681ce06c8e5e33a07c35d08c6b66';
+
+async function sendSalesMeetingReminders(env, opts = {}) {
+  const { dryRun = false, force = false } = opts;
+  if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) {
+    return { skipped: 'no_firebase_config' };
+  }
+  const webhookUrl = env.SALES_MEETING_WEBHOOK_URL || SALES_MEETING_WEBHOOK_FALLBACK;
+  if (!webhookUrl) return { skipped: 'no_webhook' };
+
+  // 오늘 KST 날짜
+  const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+  const todayStr = nowKst.toISOString().slice(0, 10);
+  const addDays = (n) => {
+    const d = new Date(nowKst);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+  const d7 = addDays(7);
+  const d1 = addDays(1);
+
+  // meetings 조회
+  const url = `${env.FIREBASE_DB_URL}/meetings.json?auth=${env.FIREBASE_DB_SECRET}`;
+  const resp = await fetch(url);
+  if (!resp.ok) return { error: `firebase_${resp.status}` };
+  const meetings = await resp.json() || {};
+
+  const sent = [];
+  const skipped = [];
+
+  for (const [mid, m] of Object.entries(meetings)) {
+    if (!m || !m.title || !m.date) continue;
+    if (!String(m.title).includes('영업회의')) continue;
+
+    let kind = null;
+    if (m.date === d7) kind = 'D-7';
+    else if (m.date === d1) kind = 'D-1';
+    if (!kind) continue;
+
+    // 멱등성: 이미 발송됐으면 skip (force=true 면 무시)
+    const logKey = kind === 'D-7' ? 'd7' : 'd1';
+    if (!force && m.notifyLog && m.notifyLog[logKey]) {
+      skipped.push({ mid, title: m.title, date: m.date, kind, reason: 'already_sent', sentAt: m.notifyLog[logKey].sentAt });
+      continue;
+    }
+
+    // 메시지 빌드
+    const dateObj = new Date(m.date + 'T00:00:00+09:00');
+    const dayKr = ['일','월','화','수','목','금','토'][dateObj.getUTCDay()];
+    const month = dateObj.getUTCMonth() + 1;
+    const day = dateObj.getUTCDate();
+    const time = m.time || '09:00';
+    const location = m.location || '본사 2층 회의실';
+    const headline = kind === 'D-7'
+      ? `📢 영업회의 일정 알림 — D-7 (1주일 전)`
+      : `⏰ 영업회의 내일 진행 — D-1 알림`;
+
+    const message = {
+      body: `@all ${headline}`,
+      connectColor: kind === 'D-7' ? '#2563eb' : '#dc2626',
+      connectInfo: [{
+        title: m.title,
+        description: [
+          `일시: ${month}월 ${day}일(${dayKr}) ${time}`,
+          `장소: ${location}`,
+          `참석대상: 전 영업담당자`,
+          '',
+          '영업회의 공지드립니다. 영업담당자 분들께서는 일정을 확인하시어 불참자 없이 반드시 전원 참석해주시기 바랍니다.',
+          '참석 여부를 사전에 체크 부탁드립니다.',
+        ].join('\n'),
+      }],
+    };
+
+    // dryRun 이면 발송 skip, 미리보기만 반환
+    if (dryRun) {
+      sent.push({ mid, title: m.title, date: m.date, kind, dryRun: true, preview: message });
+      continue;
+    }
+
+    // 발송
+    let ok = false, errMsg = null;
+    try {
+      const r = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/vnd.tosslab.jandi-v2+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(message),
+      });
+      ok = r.ok;
+      if (!r.ok) errMsg = `HTTP ${r.status}`;
+    } catch (e) {
+      errMsg = e.message || 'fetch_failed';
+    }
+
+    if (ok) {
+      // 발송 로그 기록 (멱등성)
+      const logUrl = `${env.FIREBASE_DB_URL}/meetings/${mid}/notifyLog/${logKey}.json?auth=${env.FIREBASE_DB_SECRET}`;
+      try {
+        await fetch(logUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sentAt: new Date().toISOString(), kind, by: 'cron-worker' }),
+        });
+      } catch (_) {}
+      sent.push({ mid, title: m.title, date: m.date, kind });
+    } else {
+      skipped.push({ mid, title: m.title, date: m.date, kind, reason: 'send_failed', error: errMsg });
+    }
+  }
+
+  return { todayStr, d7, d1, sentCount: sent.length, sent, skippedCount: skipped.length, skipped };
+}
 
 // === VPS 프록시 (한국 Lightsail Seoul → K-APT 직접 접근) ===
 // 검증 성공(verified) 시 → Firebase pt/{scheduleId}에 공고번호·공법 자동 기록 (크로스체크 자동화)
