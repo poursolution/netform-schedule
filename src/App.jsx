@@ -3589,13 +3589,21 @@ const SETTLEMENT_BADGE_STYLE = {
         const range = skipDateFilter ? null : getDateRangeForStats(yearFilter, quarterFilter);
 
         // 담당자 이름이 포함된 일정 필터 (복수 담당자 지원: "정정훈/김성민", "정정훈,김성민" 등)
-        // 사용자 룰: 분기 귀속 = pt.date 기준
+        // 분기정산 모달과 동일 룰: pt.date <= 분기 종료일 + requested(or mv) + !completed + !superseded
+        // 단, 분기 필터 안 한 경우(전체)는 모든 PT 포함 (역사 조회용)
         const list = ptSchedules.filter(s => {
           if (!s.date || !s.ptAssignee) return false;
           if (s.selfPT) return false; // 협약사자체PT 제외
-          if (!skipDateFilter && (s.date < range.start || s.date > range.end)) return false;
           const assignees = s.ptAssignee.split(/[\/,+&]/).map(a => a.trim());
-          return assignees.includes(assignee);
+          if (!assignees.includes(assignee)) return false;
+          if (skipDateFilter) return true; // 전체 조회 — 정산 필터 없음
+          // 분기 선택 시: 분기정산 모달 룰 적용
+          if (s.date > range.end) return false; // 분기 종료일 이후 PT 제외
+          const stl = s.settlement?.[assignee] || {};
+          if (!(stl.requested === true || stl.manualVerified === true)) return false;
+          if (stl.completed === true) return false;
+          if (stl.superseded === true || stl.status === 'superseded') return false;
+          return true;
         });
         
         // 개별 담당자 결과 (지원 규칙 종속: util deriveAssigneeResult 위임)
@@ -11821,7 +11829,15 @@ tr.suppressed td.fname{color:#64748b;}
                 const qStart = `${nowY}-${String((nowQ - 1) * 3 + 1).padStart(2, '0')}-01`;
                 const qEnd = `${nowY}-${String(nowQ * 3).padStart(2, '0')}-${nowQ === 1 || nowQ === 4 ? '31' : nowQ === 2 ? '30' : '30'}`;
                 // 사용자 룰: 분기 귀속 = pt.date 기준
-                const _inQuarter = (s) => s.date && s.date >= qStart && s.date <= qEnd;
+                // 분기정산 모달과 동일 룰: pt.date <= 분기 종료일 + requested(or mv) + !completed + !superseded
+                const _inQuarter = (s) => {
+                  if (!s.date || s.date > qEnd) return false;
+                  const stl = s.settlement?.[viewingUser] || {};
+                  if (!(stl.requested === true || stl.manualVerified === true)) return false;
+                  if (stl.completed === true) return false;
+                  if (stl.superseded === true || stl.status === 'superseded') return false;
+                  return true;
+                };
                 const thisQuarterAmount = myPtSchedules.filter(_inQuarter).reduce((sum, s) => {
                   const r = getMyResult(s);
                   if (!r || s.selfPT) return sum;
