@@ -11705,8 +11705,23 @@ tr.suppressed td.fname{color:#64748b;}
                 }, 0);
 
                 // 이번 분기 예상 수당
-                const nowQ = Math.ceil((new Date().getMonth() + 1) / 3);
-                const nowY = new Date().getFullYear();
+                // grace period 보정: 분기 첫달(1·4·7·10) 30일 이전 + 직전 분기 finalConfirm 안됨 → 직전 분기로 표시
+                //   (컨트롤타워·qStart/qEnd·정산 집계 모두 같이 적용됨)
+                const _nowDate = new Date();
+                const _nowMonth = _nowDate.getMonth() + 1;
+                const _nowDay = _nowDate.getDate();
+                let _adjMonth = _nowMonth;
+                let _adjYear = _nowDate.getFullYear();
+                if ([1, 4, 7, 10].includes(_nowMonth) && _nowDay <= 30) {
+                  let _pm = _nowMonth - 3;
+                  let _py = _adjYear;
+                  if (_pm < 1) { _pm += 12; _py -= 1; }
+                  const _pqKey = `${_py}-Q${Math.ceil(_pm / 3)}`;
+                  const _pConf = quarterConfirmations?.[_pqKey]?.[viewingUser]?.finalConfirmed === true;
+                  if (!_pConf) { _adjMonth = _pm; _adjYear = _py; }
+                }
+                const nowQ = Math.ceil(_adjMonth / 3);
+                const nowY = _adjYear;
                 const qStart = `${nowY}-${String((nowQ - 1) * 3 + 1).padStart(2, '0')}-01`;
                 const qEnd = `${nowY}-${String(nowQ * 3).padStart(2, '0')}-${nowQ === 1 || nowQ === 4 ? '31' : nowQ === 2 ? '30' : '30'}`;
                 const thisQuarterAmount = myPtSchedules.filter(s => s.date >= qStart && s.date <= qEnd).reduce((sum, s) => {
@@ -11730,32 +11745,9 @@ tr.suppressed td.fname{color:#64748b;}
                   return sum;
                 }, 0);
 
-                // 미확정 PT 관리 데이터
-                // 분기 마감 grace period 보정 (담당자별):
-                //   1) 분기 첫달(1,4,7,10) 30일 이전 → 직전 분기 (예: 4월 = Q1 확인 기간)
-                //   2) 단, 해당 담당자가 직전 분기 finalConfirmed 했으면 → 현재 분기로 전환
-                //      (Q1 정산완료한 담당자는 4월에도 Q2 표시)
-                const _now = new Date();
-                const _m = _now.getMonth() + 1;
-                const _d = _now.getDate();
-                let _displayMonth = _m;
-                let _displayYear = _now.getFullYear();
-                if ([1, 4, 7, 10].includes(_m) && _d <= 30) {
-                  let _prevMonth = _m - 3;
-                  let _prevYear = _displayYear;
-                  if (_prevMonth < 1) { _prevMonth += 12; _prevYear -= 1; }
-                  const _prevQKey = `${_prevYear}-Q${Math.ceil(_prevMonth / 3)}`;
-                  const _prevFinalConfirmed = quarterConfirmations?.[_prevQKey]?.[viewingUser]?.finalConfirmed === true;
-                  // 직전 분기 finalConfirmed 안 됐으면 직전 분기 표시 (확인 진행 중)
-                  if (!_prevFinalConfirmed) {
-                    _displayMonth = _prevMonth;
-                    _displayYear = _prevYear;
-                  }
-                  // finalConfirmed 됐으면 _displayMonth/Year 그대로 → 현재 분기 표시
-                }
-                const currentQMonth = _displayMonth;
-                const currentQuarterNum = Math.ceil(currentQMonth / 3);
-                const currentYearNum = _displayYear;
+                // 미확정 PT 관리 데이터 — nowQ/nowY 와 동일 (grace period 보정값)
+                const currentQuarterNum = nowQ;
+                const currentYearNum = nowY;
 
                 // 분기 미확정 PT: 최종 결과가 아직 확정되지 않은 모든 PT
                 // 결과확인중(본인PT 포함) + 연락없음 + 진행보류 + 진행중단
@@ -15995,21 +15987,24 @@ tr.suppressed td.fname{color:#64748b;}
                                   </td>
                                   <td style={{ padding: '8px', textAlign: 'center' }}>
                                     <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                                      {/* 담당자 실적으로 바로가기 — 실적 페이지에서 해당 담당자·분기·승리 필터로 표시 */}
+                                      {/* 담당자 실적으로 바로가기 — 실적 페이지에서 해당 담당자·분기·년·승리 필터로 표시 */}
                                       <button
                                         onClick={() => {
-                                          // monthlySettlementMonth "2026-Q1" → '1분기' 형태로 변환
-                                          const qNumMatch = String(monthlySettlementMonth || '').match(/Q(\d)/);
-                                          const qLabel = qNumMatch ? `${qNumMatch[1]}분기` : 'all';
+                                          // monthlySettlementMonth "2026-Q1" → 년="2026", 분기="1분기"
+                                          const yMatch = String(monthlySettlementMonth || '').match(/^(\d{4})/);
+                                          const qMatch = String(monthlySettlementMonth || '').match(/Q(\d)/);
+                                          const yLabel = yMatch ? yMatch[1] : 'all';
+                                          const qLabel = qMatch ? `${qMatch[1]}분기` : 'all';
                                           setShowMonthlySettlement(false);
                                           setShowPerformance(true);
                                           setSelectedAssignee(r.assignee);
+                                          setExportYear(yLabel);
                                           setExportQuarter(qLabel);
-                                          setSiteListTab('win'); // 승리 PT 검증 우선
+                                          setSiteListTab('win'); // 승리 PT 검증 탭으로 이동
                                         }}
-                                        style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', background: '#f8fafc', color: '#1e293b', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
-                                        title={`${r.assignee} ${monthlySettlementMonth} 승리 PT 보기 — 실적 페이지로 이동, 검증 직접 판단·관리`}
-                                      >📋 실적보기</button>
+                                        style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #16a34a', background: '#f0fdf4', color: '#166534', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+                                        title={`${r.assignee} · ${monthlySettlementMonth} · 승리 PT 검증으로 이동`}
+                                      >📋 실적·승리 검증</button>
                                       {r.status === 'draft' && (
                                         <button onClick={() => updateRowStatus(r.assignee, 'confirmed')} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #93c5fd', background: '#eff6ff', color: '#1e40af', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>확정</button>
                                       )}
