@@ -1827,15 +1827,16 @@ function deriveResultWorker(pt, assignee) {
     if (tokens.length <= 1) raw = pt.result || null;
   }
   if (!raw) return null;
-  // 지원자 규칙
+  // 지원자 규칙 (client deriveAssigneeResult 와 일치)
   const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
   const main = tokens[0];
   if (raw === '지원' && main && assignee !== main) {
     const mainResult = pt.results?.[main] || pt.result;
     if (mainResult === '승') return '지원';
-    if (mainResult === '무') return '제외';  // exceptionApproved 는 Worker 에서 판단 불가 → 제외
+    if (mainResult === '무') return '제외';
     if (mainResult === '패') return '패';
-    return null;
+    // main 결과가 '지원' 또는 미입력 → 지원자도 그대로 '지원' 처리 (250K 인정)
+    return '지원';
   }
   return raw;
 }
