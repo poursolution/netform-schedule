@@ -9692,16 +9692,20 @@ const SETTLEMENT_BADGE_STYLE = {
                             return acc;
                           }, { target: 0, pending: 0, requested: 0, completed: 0 });
 
-                          // 미검증 판정 헬퍼: 정산대상(승/무/지원 + !정산완료·!selfPT·!감리) 인데 공고문·K-APT 증빙 둘 다 없으면 미검증
+                          // 미검증 판정 헬퍼: 정산대상(승/무/지원 + !정산완료·!selfPT·!감리·!중복) 인데 공고문·K-APT 증빙 둘 다 없으면 미검증
                           const isUnverified = (c) => {
                             const s = c.rawData;
                             if (!s) return false;
                             if (s.selfPT) return false;
+                            if (supersededMap.has(c.id)) return false; // 중복(superseded) 제외 - 검토필요에 안 보이게
                             if (/감리/.test((s.workType || '') + '|' + (s.siteName || ''))) return false; // 감리는 공고문 불필요
                             const isSettledResult = c._type === 'win' || c._type === 'draw' || c._type === 'support';
                             if (!isSettledResult) return false;
                             const stl = s.settlement?.[c.manager] || {};
                             if (stl.completed || stl.selfSales) return false;
+                            if (stl.superseded === true || stl.status === 'superseded') return false; // 중복 처리
+                            // manualVerified=true 면 admin 통과시킨 것 → 미검증 아님
+                            if (stl.manualVerified === true) return false;
                             const hasEvidence = s.evidenceFiles && Object.keys(s.evidenceFiles).length > 0;
                             const kaptVerified = s.kaptVerified?.status === 'verified';
                             return !hasEvidence && !kaptVerified;
