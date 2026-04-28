@@ -3319,7 +3319,7 @@ const SETTLEMENT_BADGE_STYLE = {
       // 결과 버튼 클릭 핸들러 (승/패/무는 사유 모달, 지원은 바로 저장)
       const handleResultClick = (schedule, result, assignee = null) => {
         // 수정 권한 체크
-        const canEdit = currentUser?.isAdmin || currentUser?.name === assignee;
+        const canEdit = currentUser?.isAdmin || currentUser?.name === assignee || currentUser?.name === '한준엽';
         if (!canEdit) return;
         
         // 현재 결과 확인
@@ -3496,7 +3496,7 @@ const SETTLEMENT_BADGE_STYLE = {
         const schedule = ptSchedules.find(s => s.id === scheduleId);
         if (!schedule) return;
         // 권한 체크
-        const canEdit = currentUser?.isAdmin || currentUser?.name === assigneeName;
+        const canEdit = currentUser?.isAdmin || currentUser?.name === assigneeName || currentUser?.name === '한준엽';
         if (!canEdit) return;
 
         const oldStatus = getPtTrackingStatus(schedule, assigneeName);
