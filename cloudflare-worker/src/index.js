@@ -1916,25 +1916,33 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
   const ptData = await ptResp.json();
   const allPts = ptData ? Object.entries(ptData).map(([id, pt]) => ({ id, ...pt })) : [];
 
-  // 2) 담당자별 집계 — 사용자 정의 룰: pt.date 기준 분기 분류
-  //    Q1 = pt.date 가 1~3월 인 PT (단, 화이트리스트 담당자 + selfPT 제외)
-  // 우리 회사 영업담당자 화이트리스트 — 자체PT/협약사 entries 제외 + 조현식 정산 제외
+  // 2) 담당자별 집계 — 사용자 정의 룰
+  //    분기 정산 대상 = pt.date <= 분기 종료일 + settlement.{a}.requested=true (또는 mv) + completed != true
+  //    옛날 PT라도 정산요청되면 해당 분기에 합산, 정산완료되면 다음 분기에 자동 제외
   const VALID_ASSIGNEES = new Set([
     '한준엽', '조재연', '정정훈', '김성민', '이필선', '한인규', '황윤선',
     '이승우', '부산지사',
   ]);
+  // 분기 종료일 계산
+  const _qParsed = parseQuarterKey(quarterKey);
+  const _qEndMonth = _qParsed.quarter * 3;
+  const _qEndDay = _qEndMonth === 3 || _qEndMonth === 12 ? 31 : 30;
+  const _qEndDate = `${_qParsed.year}-${String(_qEndMonth).padStart(2, '0')}-${String(_qEndDay).padStart(2, '0')}`;
   const perAssignee = {};
   for (const pt of allPts) {
     if (pt.selfPT) continue; // 협약사 자체PT 통째 제외
-    const ptDateForQ = pt.date || '';
-    const ptQK = getQuarterKeyByConfirmDate(ptDateForQ);
-    if (ptQK !== quarterKey) continue; // pt.date 기반 분기 매칭 (사용자 룰)
+    const ptDate = pt.date || '';
+    if (!ptDate || ptDate > _qEndDate) continue; // 분기 종료일 이후 PT 는 제외 (다음 분기 대상)
     const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
     for (const assignee of tokens) {
-      // 화이트리스트에 없는 이름 (자체PT 라벨, 협약사 직원명 등) 제외
       if (!VALID_ASSIGNEES.has(assignee)) continue;
-      const confirmDate = ptDateForQ; // 사용자 룰: pt.date 기준
-      const assigneeQK = ptQK;
+      const stl = pt.settlement?.[assignee] || {};
+      // 정산요청 OR 수동검증 안 됐으면 분기 정산 대상 아님 (담당자가 명시적으로 정산요청 누른 것만)
+      if (!(stl.requested === true || stl.manualVerified === true)) continue;
+      // 이미 정산완료된 건은 다음 분기 들어가지 않게 제외
+      if (stl.completed === true) continue;
+      const confirmDate = ptDate;
+      const assigneeQK = quarterKey;
 
       if (!perAssignee[assignee]) {
         perAssignee[assignee] = {
@@ -2018,30 +2026,35 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
     }],
   });
 
-  // 7) 담당자별 개인 잔디 알림 (config/jandi/users/{name} 등록된 담당자만)
-  const userNotifyResults = { sent: 0, skipped: 0, failed: 0 };
-  for (const agg of Object.values(perAssignee)) {
-    if (agg.totalCount === 0) continue;
-    const personalUrl = await fetchUserJandiWebhook(env, agg.assignee);
-    if (!personalUrl) { userNotifyResults.skipped++; continue; }
-    const amountStr = (agg.estimatedAmount || 0).toLocaleString('ko-KR') + '원';
-    const r = await notifyJandiToUrl(personalUrl, {
-      body: `[${quarterKey} 정산 안내]`,
-      connectColor: '#2563eb',
-      connectInfo: [{
-        title: `담당자: ${agg.assignee}`,
-        description: [
-          `정산대상: ${agg.totalCount}건`,
-          `승 ${agg.winCount} / 무 ${agg.drawCount} / 지원 ${agg.supportCount}`,
-          `예상 정산금액: ${amountStr}`,
-          agg.reviewCount > 0 ? `⚠ 검토필요: ${agg.reviewCount}건` : '',
-          '',
-          '👉 시스템에서 정산요청 상태를 확인해주세요.',
-        ].filter(Boolean).join('\n'),
-      }],
-    });
-    if (r.ok) userNotifyResults.sent++;
-    else userNotifyResults.failed++;
+  // 7) 담당자별 개인 잔디 알림 — admin 이 명시적으로 notifyUsers:true 줄 때만 발송
+  //    분기정산 생성/재집계 만으로는 발송 X (사용자 요청: 확정 전 발송 차단)
+  const userNotifyResults = { sent: 0, skipped: 0, failed: 0, suppressedByDefault: false };
+  if (opts.notifyUsers === true) {
+    for (const agg of Object.values(perAssignee)) {
+      if (agg.totalCount === 0) continue;
+      const personalUrl = await fetchUserJandiWebhook(env, agg.assignee);
+      if (!personalUrl) { userNotifyResults.skipped++; continue; }
+      const amountStr = (agg.estimatedAmount || 0).toLocaleString('ko-KR') + '원';
+      const r = await notifyJandiToUrl(personalUrl, {
+        body: `[${quarterKey} 정산 안내]`,
+        connectColor: '#2563eb',
+        connectInfo: [{
+          title: `담당자: ${agg.assignee}`,
+          description: [
+            `정산대상: ${agg.totalCount}건`,
+            `승 ${agg.winCount} / 무 ${agg.drawCount} / 지원 ${agg.supportCount}`,
+            `예상 정산금액: ${amountStr}`,
+            agg.reviewCount > 0 ? `⚠ 검토필요: ${agg.reviewCount}건` : '',
+            '',
+            '👉 시스템에서 정산요청 상태를 확인해주세요.',
+          ].filter(Boolean).join('\n'),
+        }],
+      });
+      if (r.ok) userNotifyResults.sent++;
+      else userNotifyResults.failed++;
+    }
+  } else {
+    userNotifyResults.suppressedByDefault = true;
   }
 
   return { status: 'ok', quarterKey, totals, assigneesWritten: Object.keys(perAssignee).length, userNotify: userNotifyResults };
