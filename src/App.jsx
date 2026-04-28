@@ -15420,8 +15420,10 @@ tr.suppressed td.fname{color:#64748b;}
             const totals = data?.totals || null;
             // 담당자 확인 상태 + reviewRequests 주입 (quarterConfirmations 에서)
             const confByName = quarterConfirmations[monthlySettlementMonth] || {};
+            const SETTLEMENT_EXCLUDED_NAMES = ['조현식']; // 정산 집계에서 제외할 담당자
             const rows = Object.values(perAssignee)
               .filter(a => a.totalCount > 0)
+              .filter(a => !SETTLEMENT_EXCLUDED_NAMES.includes(a.assignee))
               .filter(a => monthlySettlementStatusFilter === 'all' || a.status === monthlySettlementStatusFilter)
               .map(a => {
                 const conf = confByName[a.assignee] || {};
@@ -15961,7 +15963,22 @@ tr.suppressed td.fname{color:#64748b;}
                                     </div>
                                   </td>
                                   <td style={{ padding: '8px', textAlign: 'center' }}>
-                                    <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                                    <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                                      {/* 담당자 실적으로 바로가기 — 미확정 PT 모달을 분기·담당자 필터로 오픈 */}
+                                      <button
+                                        onClick={() => {
+                                          // monthlySettlementMonth 는 "2026-Q1" 형태 → quarterRanges 키('1'~'4')로 변환
+                                          const qNumMatch = String(monthlySettlementMonth || '').match(/Q(\d)/);
+                                          const qKey = qNumMatch ? qNumMatch[1] : 'all';
+                                          setShowMonthlySettlement(false);
+                                          setUnconfirmedPtFilter('all');
+                                          setUnconfirmedPtQuarter(qKey);
+                                          setUnconfirmedPtAssignee(r.assignee);
+                                          setShowUnconfirmedPtModal(true);
+                                        }}
+                                        style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', background: '#f8fafc', color: '#1e293b', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+                                        title={`${r.assignee} ${monthlySettlementMonth} PT 실적 보기 — 검토필요·미검증 직접 판단·관리`}
+                                      >📋 실적보기</button>
                                       {r.status === 'draft' && (
                                         <button onClick={() => updateRowStatus(r.assignee, 'confirmed')} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #93c5fd', background: '#eff6ff', color: '#1e40af', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>확정</button>
                                       )}
