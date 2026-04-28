@@ -1916,9 +1916,8 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
   const ptData = await ptResp.json();
   const allPts = ptData ? Object.entries(ptData).map(([id, pt]) => ({ id, ...pt })) : [];
 
-  // 2) 담당자별 집계 — 운영 룰 (OPERATIONS.md): 결과 확정일(resultConfirmDate) 기준
-  //    Q1 = 결과 확정일이 4월 30일(다음달 30일 = grace period) 이전인 PT
-  //    우선순위: finalConfirmedAt > requestedAt > pt.resultConfirmDate[a] > pt.date (fallback)
+  // 2) 담당자별 집계 — 사용자 정의 룰: pt.date 기준 분기 분류
+  //    Q1 = pt.date 가 1~3월 인 PT (단, 화이트리스트 담당자 + selfPT 제외)
   // 우리 회사 영업담당자 화이트리스트 — 자체PT/협약사 entries 제외 + 조현식 정산 제외
   const VALID_ASSIGNEES = new Set([
     '한준엽', '조재연', '정정훈', '김성민', '이필선', '한인규', '황윤선',
@@ -1927,13 +1926,15 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
   const perAssignee = {};
   for (const pt of allPts) {
     if (pt.selfPT) continue; // 협약사 자체PT 통째 제외
+    const ptDateForQ = pt.date || '';
+    const ptQK = getQuarterKeyByConfirmDate(ptDateForQ);
+    if (ptQK !== quarterKey) continue; // pt.date 기반 분기 매칭 (사용자 룰)
     const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
     for (const assignee of tokens) {
       // 화이트리스트에 없는 이름 (자체PT 라벨, 협약사 직원명 등) 제외
       if (!VALID_ASSIGNEES.has(assignee)) continue;
-      const confirmDate = getResultConfirmDateWorker(pt, assignee);
-      const assigneeQK = getQuarterKeyByConfirmDate(confirmDate);
-      if (assigneeQK !== quarterKey) continue;
+      const confirmDate = ptDateForQ; // 사용자 룰: pt.date 기준
+      const assigneeQK = ptQK;
 
       if (!perAssignee[assignee]) {
         perAssignee[assignee] = {
