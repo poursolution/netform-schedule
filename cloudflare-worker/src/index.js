@@ -2050,11 +2050,16 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
   });
   if (!writeResp.ok) return { status: 'error', reason: `firebase_write_http_${writeResp.status}`, totals };
 
-  // 6) 관리자 잔디 알림
+  // 6) 관리자 잔디 알림 — 정산건수 = 승+무 (지원 별도, 사용자 룰)
   const perList = Object.values(perAssignee)
     .filter(a => a.totalCount > 0)
     .sort((a, b) => b.estimatedAmount - a.estimatedAmount)
-    .map(a => `${a.assignee}: ${a.totalCount}건 · 예상 ${(a.estimatedAmount || 0).toLocaleString('ko-KR')}원 (검토 ${a.reviewCount})`)
+    .map(a => {
+      const wd = (a.winCount || 0) + (a.drawCount || 0);
+      const sup = a.supportCount || 0;
+      const supLbl = sup > 0 ? ` + 지원${sup}` : '';
+      return `${a.assignee}: ${wd}건${supLbl} · 예상 ${(a.estimatedAmount || 0).toLocaleString('ko-KR')}원 (검토 ${a.reviewCount})`;
+    })
     .slice(0, 15);
   await notifyJandi(env, {
     body: `[${quarterKey} 분기정산 생성 완료 — 관리자 확인 필요]`,
@@ -2081,16 +2086,18 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
       const personalUrl = await fetchUserJandiWebhook(env, agg.assignee);
       if (!personalUrl) { userNotifyResults.skipped++; continue; }
       const amountStr = (agg.estimatedAmount || 0).toLocaleString('ko-KR') + '원';
-      // 실제 정산 받아가는 건수 = 승 + 무 + 지원 (결과 미입력·제외·패 제외)
-      const paidCount = (agg.winCount || 0) + (agg.drawCount || 0) + (agg.supportCount || 0);
+      // 정산건수 = 승 + 무 (순수 본인 실적, 지원은 별도)
+      // 사용자 룰: "순수하게 승.무.패만"
+      const winDrawCount = (agg.winCount || 0) + (agg.drawCount || 0);
+      const supportCount = agg.supportCount || 0;
       const r = await notifyJandiToUrl(personalUrl, {
         body: `[${quarterKey} 정산 안내]`,
         connectColor: '#2563eb',
         connectInfo: [{
           title: `담당자: ${agg.assignee}`,
           description: [
-            `정산건수: ${paidCount}건 (실제 정산 대상)`,
-            `승 ${agg.winCount} / 무 ${agg.drawCount} / 지원 ${agg.supportCount}`,
+            `정산건수: ${winDrawCount}건 (승 ${agg.winCount} / 무 ${agg.drawCount})`,
+            supportCount > 0 ? `지원: ${supportCount}건 (별도)` : '',
             `예상 정산금액: ${amountStr}`,
             agg.reviewCount > 0 ? `⚠ 검토필요: ${agg.reviewCount}건` : '',
             '',
