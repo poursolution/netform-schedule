@@ -1637,7 +1637,7 @@ const SETTLEMENT_BADGE_STYLE = {
           'hys': { password: '', name: '황윤선', isAdmin: true, canManagePasswords: false, canAccessPerformance: true },
           'lps': { password: '', name: '이필선', isAdmin: false, canManagePasswords: false, canAccessPerformance: true },
           'hig': { password: '', name: '한인규', isAdmin: false, canManagePasswords: false, canAccessPerformance: true },
-          'hjy': { password: '', name: '한준엽', isAdmin: false, canManagePasswords: false, canAccessPerformance: true, isTeamLeader: true, teamMembers: ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민'] },
+          'hjy': { password: '', name: '한준엽', isAdmin: false, canManagePasswords: false, canAccessPerformance: true, isTeamLeader: true, teamMembers: ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '황윤선'] },
           'jjh': { password: '', name: '정정훈', isAdmin: false, canManagePasswords: false, canAccessPerformance: true },
           'ksm': { password: '', name: '김성민', isAdmin: false, canManagePasswords: false, canAccessPerformance: true },
           'jjy': { password: '', name: '조재연', isAdmin: false, canManagePasswords: false, canAccessPerformance: true },
@@ -2806,6 +2806,36 @@ const SETTLEMENT_BADGE_STYLE = {
         if (result && targetAssignee) {
           logActivity('result_input', { ptId: scheduleId, siteName: updatedSchedule.siteName, assignee: targetAssignee, result });
         }
+
+        // 결과 입력 시 분기정산 자동 갱신 — 백그라운드 트리거 (사용자 대기 X, 분기정산 모달 새로고침 시 즉시 반영)
+        try {
+          // PT date 의 분기 키 계산
+          const dateForQ = updatedSchedule.date || schedule.date;
+          if (dateForQ) {
+            const ym = String(dateForQ).match(/^(\d{4})-(\d{2})/);
+            if (ym) {
+              const yr = ym[1];
+              const mo = parseInt(ym[2], 10);
+              const qNum = Math.ceil(mo / 3);
+              const qKey = `${yr}-Q${qNum}`;
+              // notifyUsers:false 명시 — 자동 발송 차단
+              fetch('https://kapt-verify-worker.promieses.workers.dev/run-quarterly-settlement', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ quarterKey: qKey, force: true, overwrite: true, notifyUsers: false }),
+              }).then(async (r) => {
+                if (!r.ok) return;
+                // 분기정산 모달이 열려있으면 데이터 reload
+                if (showMonthlySettlement && monthlySettlementMonth === qKey && database) {
+                  try {
+                    const snap = await database.ref(`quarterlySettlements/${qKey}`).once('value');
+                    setMonthlySettlementData(snap.val() || null);
+                  } catch (_) {}
+                }
+              }).catch(() => {});
+            }
+          }
+        } catch (_) {}
 
         // === [신규] PT 실적 승·무·패 검증 시스템 — 결과 입력 즉시 자동 진행 ===
         // 승 + 잔디 evidence/K-APT 근거 충분 → auto_win_checked → verified_win
@@ -5649,7 +5679,7 @@ const SETTLEMENT_BADGE_STYLE = {
       
       // 팀장용 팀원 필터 함수 (한준엽 하드코딩)
       const teamLeaderName = '한준엽';
-      const teamMembersList = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민'];
+      const teamMembersList = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '황윤선'];
       const isCurrentUserTeamLeader = currentUser?.name === teamLeaderName;
       
       const isTeamMemberSchedule = (schedule) => {
@@ -8826,7 +8856,7 @@ const SETTLEMENT_BADGE_STYLE = {
                     {/* 담당자별 카드 (개요/분석 탭 위) */}
                     <div style={{ marginBottom: '16px' }}>
                       <div style={{ fontSize: '13px', fontWeight: '700', color: '#64748b', marginBottom: '8px' }}>담당자별</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : `repeat(${(() => { const isTeamLeader = currentUser?.name === '한준엽'; const teamMembers = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민']; const displayList = isTeamLeader ? assigneeList.filter(a => teamMembers.includes(a)) : assigneeList; return Math.min(displayList.length + 1, 10); })()}, 1fr)`, gap: '10px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : `repeat(${(() => { const isTeamLeader = currentUser?.name === '한준엽'; const teamMembers = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '황윤선']; const displayList = isTeamLeader ? assigneeList.filter(a => teamMembers.includes(a)) : assigneeList; return Math.min(displayList.length + 1, 10); })()}, 1fr)`, gap: '10px' }}>
                         {/* 전체 카드 */}
                         {(() => {
                           const isActive = previewAssignee === null;
@@ -8847,7 +8877,7 @@ const SETTLEMENT_BADGE_STYLE = {
                         {/* 개별 담당자 카드 */}
                         {(() => {
                           const isTeamLeader = currentUser?.name === '한준엽';
-                          const teamMembers = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민'];
+                          const teamMembers = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '황윤선'];
                           const displayList = isTeamLeader ? assigneeList.filter(a => teamMembers.includes(a)) : assigneeList;
                           return displayList.map(a => {
                             const st = getPerformanceStats(a, exportYear, exportQuarter);
@@ -8885,7 +8915,7 @@ const SETTLEMENT_BADGE_STYLE = {
                       const periodLabel = exportYear === 'all' ? '전체' : exportQuarter ? `${exportYear} ${exportQuarter}` : `${exportYear}`;
                       // 담당자별 실적 테이블
                       const isTeamLeader = currentUser?.name === '한준엽';
-                      const teamMembers = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민'];
+                      const teamMembers = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '황윤선'];
                       const displayList = isTeamLeader ? assigneeList.filter(a => teamMembers.includes(a)) : assigneeList;
                       const assigneeStats = displayList.map(a => {
                         const st = getPerformanceStats(a, exportYear, exportQuarter);
