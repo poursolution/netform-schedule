@@ -11731,17 +11731,27 @@ tr.suppressed td.fname{color:#64748b;}
                 }, 0);
 
                 // 미확정 PT 관리 데이터
-                // 분기 마감 grace period 보정:
-                //   분기 첫달(1, 4, 7, 10) 30일 이전 → 직전 분기 (마감일 ~ 다음달 30일까지 직전 분기 확인 진행 중)
-                //   예: 4월 1~30일 → Q1 표시, 5월 → Q2 표시
+                // 분기 마감 grace period 보정 (담당자별):
+                //   1) 분기 첫달(1,4,7,10) 30일 이전 → 직전 분기 (예: 4월 = Q1 확인 기간)
+                //   2) 단, 해당 담당자가 직전 분기 finalConfirmed 했으면 → 현재 분기로 전환
+                //      (Q1 정산완료한 담당자는 4월에도 Q2 표시)
                 const _now = new Date();
                 const _m = _now.getMonth() + 1;
                 const _d = _now.getDate();
                 let _displayMonth = _m;
                 let _displayYear = _now.getFullYear();
                 if ([1, 4, 7, 10].includes(_m) && _d <= 30) {
-                  _displayMonth = _m - 3;
-                  if (_displayMonth < 1) { _displayMonth += 12; _displayYear -= 1; }
+                  let _prevMonth = _m - 3;
+                  let _prevYear = _displayYear;
+                  if (_prevMonth < 1) { _prevMonth += 12; _prevYear -= 1; }
+                  const _prevQKey = `${_prevYear}-Q${Math.ceil(_prevMonth / 3)}`;
+                  const _prevFinalConfirmed = quarterConfirmations?.[_prevQKey]?.[viewingUser]?.finalConfirmed === true;
+                  // 직전 분기 finalConfirmed 안 됐으면 직전 분기 표시 (확인 진행 중)
+                  if (!_prevFinalConfirmed) {
+                    _displayMonth = _prevMonth;
+                    _displayYear = _prevYear;
+                  }
+                  // finalConfirmed 됐으면 _displayMonth/Year 그대로 → 현재 분기 표시
                 }
                 const currentQMonth = _displayMonth;
                 const currentQuarterNum = Math.ceil(currentQMonth / 3);
@@ -12264,16 +12274,24 @@ tr.suppressed td.fname{color:#64748b;}
                       })()}
                     </div>
 
-                    {/* ③ 신규 — 1분기 실적 확인 패널 (확인완료 / 검증요청 / 최종확정) */}
+                    {/* ③ 신규 — 분기 실적 확인 패널 (확인완료 / 검증요청 / 최종확정)
+                        qKey 는 grace period 보정된 currentYearNum/currentQuarterNum 사용:
+                        - 4월 (Q1 마감 진행 중) + 본인 Q1 finalConfirm 안됨 → Q1 표시
+                        - 4월 + 본인 Q1 finalConfirm 완료 → Q2 표시
+                        - 5월부터 자연스럽게 Q2 표시 */}
                     {(() => {
-                      const qKey = `${nowY}-Q${nowQ}`;
+                      const qKey = `${currentYearNum}-Q${currentQuarterNum}`;
                       const myConfirmation = quarterConfirmations[qKey]?.[viewingUser] || {};
                       const isConfirmed = myConfirmation.confirmed === true;
                       const finalRequested = !!myConfirmation.finalRequestedAt;
                       const isFinalConfirmed = myConfirmation.finalConfirmed === true;
                       const reviewRequests = myConfirmation.reviewRequests || {};
                       const reviewRequestArr = Object.entries(reviewRequests).map(([k, v]) => ({ id: k, ...v }));
-                      const deadlineStr = `${nowY}-${String(nowQ * 3 + 1).padStart(2, '0')}-24`; // 분기 종료 익월 24일
+                      // 마감일 = 분기 종료 익월 30일 (운영 룰)
+                      const _deadlineMonth = currentQuarterNum * 3 + 1;
+                      const _deadlineYear = _deadlineMonth > 12 ? currentYearNum + 1 : currentYearNum;
+                      const _deadlineMonthAdj = _deadlineMonth > 12 ? _deadlineMonth - 12 : _deadlineMonth;
+                      const deadlineStr = `${_deadlineYear}-${String(_deadlineMonthAdj).padStart(2, '0')}-30`;
 
                       const handleFinalConfirm = async () => {
                         // 행동 강제력 — 리스크 미해결 상태에서 최종 확정 차단
