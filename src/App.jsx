@@ -15718,6 +15718,65 @@ tr.suppressed td.fname{color:#64748b;}
                   ...prev,
                   perAssignee: { ...prev.perAssignee, [assignee]: { ...prev.perAssignee[assignee], status: newStatus } },
                 }) : prev);
+
+                // === 정산 완료 cascade — completed 처리 시 그 담당자의 분기 PT 모두 settlement.completed=true 마킹
+                //     → 다음 분기에서 자동 제외 (rule: !completed 조건 통과 못함)
+                //     사용자 룰: "정산완료되면 다음 분기에 안 보여야"
+                if (newStatus === 'completed') {
+                  const row = rows.find(r => r.assignee === assignee);
+                  if (row?.items?.length) {
+                    const nowISO = new Date().toISOString();
+                    const updates = {};
+                    for (const it of row.items) {
+                      if (!it.ptId) continue;
+                      // 패/제외 PT 는 어차피 정산 대상 아니지만, 일관성 위해 모두 마킹
+                      const base = `pt/${it.ptId}/settlement/${assignee}`;
+                      updates[`${base}/completed`] = true;
+                      updates[`${base}/completedAt`] = nowISO;
+                      updates[`${base}/completedBy`] = currentUser?.name || 'admin';
+                      updates[`${base}/completedQuarter`] = monthlySettlementMonth;
+                      updates[`${base}/status`] = 'completed';
+                    }
+                    if (Object.keys(updates).length) {
+                      await database.ref().update(updates);
+                      // 로컬 state 도 갱신 (다음 분기 모달이 즉시 반영)
+                      setPtSchedules(prev => prev.map(ps => {
+                        const item = row.items.find(it => it.ptId === ps.id);
+                        if (!item) return ps;
+                        const cur = ps.settlement?.[assignee] || {};
+                        return { ...ps, settlement: { ...(ps.settlement || {}), [assignee]: { ...cur, completed: true, completedAt: nowISO, completedBy: currentUser?.name || 'admin', completedQuarter: monthlySettlementMonth, status: 'completed' } } };
+                      }));
+                    }
+                  }
+                }
+                // === 되돌리기 — completed → confirmed 시 일괄 해제
+                else if (newStatus === 'confirmed') {
+                  const row = rows.find(r => r.assignee === assignee);
+                  if (row?.items?.length) {
+                    const updates = {};
+                    for (const it of row.items) {
+                      if (!it.ptId) continue;
+                      const base = `pt/${it.ptId}/settlement/${assignee}`;
+                      updates[`${base}/completed`] = false;
+                      updates[`${base}/completedAt`] = null;
+                      updates[`${base}/completedBy`] = null;
+                      updates[`${base}/completedQuarter`] = null;
+                    }
+                    if (Object.keys(updates).length) {
+                      try {
+                        await database.ref().update(updates);
+                        setPtSchedules(prev => prev.map(ps => {
+                          const item = row.items.find(it => it.ptId === ps.id);
+                          if (!item) return ps;
+                          const cur = ps.settlement?.[assignee] || {};
+                          const next = { ...cur };
+                          delete next.completed; delete next.completedAt; delete next.completedBy; delete next.completedQuarter;
+                          return { ...ps, settlement: { ...(ps.settlement || {}), [assignee]: next } };
+                        }));
+                      } catch (_) {}
+                    }
+                  }
+                }
               } catch (e) { alert('상태 변경 실패: ' + e.message); }
             };
             const bulkConfirm = async () => {
