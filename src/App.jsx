@@ -9671,20 +9671,22 @@ const SETTLEMENT_BADGE_STYLE = {
                             return map;
                           })();
 
-                          // 정산 상태별 카운트 계산 (본인영업도 정산완료로 처리, 협약사자체PT 제외, 중복-구버전 제외)
+                          // 정산 상태별 카운트 (사용자 룰: 정산대상 = 정산완료·중복 제외)
                           const settlementCounts = allRows.reduce((acc, c) => {
                             if (c.rawData?.selfPT) return acc; // 협약사자체PT 정산 제외
                             if (supersededMap.has(c.id)) return acc; // 중복 PT 구버전 제외
                             const stl = c.rawData?.settlement?.[c.manager] || {};
+                            if (stl.superseded === true || stl.status === 'superseded') return acc; // 중복 처리
                             const result = c._type === 'win' ? '승' : c._type === 'draw' ? '무' : c._type === 'support' ? '지원' : null;
                             if (result && result !== '패') {
-                              if (!stl.selfSales) acc.target++; // 정산대상: 본인영업 제외 모두
                               if (stl.completed || stl.selfSales) {
                                 acc.completed++;
                               } else if (stl.requested) {
                                 acc.requested++;
+                                acc.target++; // 정산대상 = pending + requested (정산완료 제외)
                               } else {
                                 acc.pending++;
+                                acc.target++;
                               }
                             }
                             return acc;
@@ -9714,14 +9716,16 @@ const SETTLEMENT_BADGE_STYLE = {
                             : siteListTab === 'unverified' ? allRows.filter(isUnverified)
                             : allRows.filter(c => c._type === 'inProgress');
 
-                          // 정산 필터 적용 (협약사자체PT 제외)
+                          // 정산 필터 적용 (협약사자체PT 제외, 중복(superseded) 제외, 정산완료 제외)
                           const settlementFiltered = settlementFilter === 'all' ? statusFiltered
                             : statusFiltered.filter(c => {
                               if (c.rawData?.selfPT) return false; // 협약사자체PT 정산 제외
+                              if (supersededMap.has(c.id)) return false; // 중복 PT 제외 (사용자 룰)
                               const stl = c.rawData?.settlement?.[c.manager] || {};
+                              if (stl.superseded === true || stl.status === 'superseded') return false; // 중복 처리
                               const result = c._type === 'win' ? '승' : c._type === 'draw' ? '무' : c._type === 'support' ? '지원' : null;
-                              // 신규 'target' — 정산 대상 전체 (승/무/지원 + 본인영업·자체PT 아닌 건, 상태 무관)
-                              if (settlementFilter === 'target') return result && result !== '패' && !stl.selfSales;
+                              // 'target' — 정산 대상 (정산완료·중복 제외, 사용자 룰)
+                              if (settlementFilter === 'target') return result && result !== '패' && !stl.selfSales && !stl.completed;
                               if (settlementFilter === 'pending') return result && result !== '패' && !stl.requested && !stl.completed && !stl.selfSales;
                               if (settlementFilter === 'requested') return result && result !== '패' && !!stl.requested && !stl.completed && !stl.selfSales;
                               if (settlementFilter === 'completed') return result && result !== '패' && (!!stl.completed || !!stl.selfSales);
