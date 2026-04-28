@@ -2081,13 +2081,15 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
       const personalUrl = await fetchUserJandiWebhook(env, agg.assignee);
       if (!personalUrl) { userNotifyResults.skipped++; continue; }
       const amountStr = (agg.estimatedAmount || 0).toLocaleString('ko-KR') + '원';
+      // 실제 정산 받아가는 건수 = 승 + 무 + 지원 (결과 미입력·제외·패 제외)
+      const paidCount = (agg.winCount || 0) + (agg.drawCount || 0) + (agg.supportCount || 0);
       const r = await notifyJandiToUrl(personalUrl, {
         body: `[${quarterKey} 정산 안내]`,
         connectColor: '#2563eb',
         connectInfo: [{
           title: `담당자: ${agg.assignee}`,
           description: [
-            `정산대상: ${agg.totalCount}건`,
+            `정산건수: ${paidCount}건 (실제 정산 대상)`,
             `승 ${agg.winCount} / 무 ${agg.drawCount} / 지원 ${agg.supportCount}`,
             `예상 정산금액: ${amountStr}`,
             agg.reviewCount > 0 ? `⚠ 검토필요: ${agg.reviewCount}건` : '',
@@ -2168,7 +2170,7 @@ async function sendQuarterlyConfirmationReminders(env, opts = {}) {
         title: `${name}님 — 아직 확인 전입니다 (마감 ${deadlineLabel})`,
         description: [
           `본인 ${quarterKey} 실적:`,
-          `  ${agg.totalCount}건 · 예상 ${amountStr}`,
+          `  정산건수: ${(agg.winCount || 0) + (agg.drawCount || 0) + (agg.supportCount || 0)}건 · 예상 ${amountStr}`,
           `  승 ${agg.winCount || 0} / 무 ${agg.drawCount || 0} / 지원 ${agg.supportCount || 0}${agg.supervisionCount ? ` / 감리 ${agg.supervisionCount}` : ''}`,
           agg.reviewCount > 0 ? `  ⚠ 검토필요: ${agg.reviewCount}건` : '',
           '',
