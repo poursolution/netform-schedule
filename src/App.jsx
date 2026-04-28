@@ -677,6 +677,9 @@ const SETTLEMENT_BADGE_STYLE = {
       const [showAnalysisReport, setShowAnalysisReport] = useState(false);
       const [analysisReportYear, setAnalysisReportYear] = useState(new Date().getFullYear());
       const [analysisReportQuarter, setAnalysisReportQuarter] = useState(Math.ceil((new Date().getMonth() + 1) / 3));
+      // 대표 보고용 분석 — 담당자/패배사유 펼침 toggle (인터랙티브 HTML)
+      const [expandedAnalysisAssignee, setExpandedAnalysisAssignee] = useState(null);
+      const [expandedAnalysisLossReason, setExpandedAnalysisLossReason] = useState(null);
 
       // 잔디 웹훅 설정
       const [jandiUrl, setJandiUrl] = useState('');
@@ -18480,8 +18483,11 @@ tr.suppressed td.fname{color:#64748b;}
                 return parseInt(m[1]) === yy && parseInt(m[2]) >= sM && parseInt(m[2]) <= eM;
               };
               const byA = {}; const byW = {}; const byT = {}; const lossR = {};
+              const byAssigneePtList = {}; // 담당자별 PT 리스트 (대표 보고용)
+              const lossReasonPtList = {}; // 패배 사유별 PT 상세 리스트
+              const byRequester = {}; // 협약사(요청사)별 승/패/무 + PT 리스트
               let w = 0, d = 0, l = 0, sup = 0;
-              VALID_TEAM.forEach(n => { byA[n] = { win: 0, draw: 0, lose: 0, support: 0 }; });
+              VALID_TEAM.forEach(n => { byA[n] = { win: 0, draw: 0, lose: 0, support: 0 }; byAssigneePtList[n] = []; });
               ptSchedules.forEach(pt => {
                 if (pt.selfPT) return;
                 const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
@@ -18493,11 +18499,45 @@ tr.suppressed td.fname{color:#64748b;}
                   if (!r) continue;
                   const cat = categorize(pt.workType, pt.siteName);
                   if (!byW[cat]) byW[cat] = { win: 0, lose: 0, draw: 0, support: 0 };
+                  // 담당자별 PT 리스트 누적 (siteName · 결과 · 공종 · 일자)
+                  byAssigneePtList[a].push({
+                    ptId: pt.id,
+                    siteName: pt.siteName || '',
+                    result: r,
+                    workType: pt.workType || '',
+                    category: cat,
+                    date: pt.date || '',
+                    confirmDate: cd,
+                  });
+                  // 협약사(요청사)별 누적 — 어느 업체가 많이 요청했고 결과가 어땠는지
+                  const reqName = (pt.requester || '').trim();
+                  if (reqName) {
+                    if (!byRequester[reqName]) byRequester[reqName] = { win: 0, draw: 0, lose: 0, support: 0, total: 0, pts: [] };
+                    byRequester[reqName].total++;
+                    byRequester[reqName].pts.push({ ptId: pt.id, siteName: pt.siteName, result: r, assignee: a, date: pt.date });
+                    if (r === '승') byRequester[reqName].win++;
+                    else if (r === '무') byRequester[reqName].draw++;
+                    else if (r === '패') byRequester[reqName].lose++;
+                    else if (r === '지원') byRequester[reqName].support++;
+                  }
                   if (r === '승') { byA[a].win++; byW[cat].win++; w++; }
                   else if (r === '무') { byA[a].draw++; byW[cat].draw++; d++; }
                   else if (r === '패') { byA[a].lose++; byW[cat].lose++; l++;
                     const rKey = classifyLossReason(pt.resultReasons?.[a]?.reason || '');
                     lossR[rKey] = (lossR[rKey] || 0) + 1;
+                    // 패배 사유별 PT 상세 (현장명·담당자·사유 텍스트·공종·경쟁사)
+                    if (!lossReasonPtList[rKey]) lossReasonPtList[rKey] = [];
+                    lossReasonPtList[rKey].push({
+                      ptId: pt.id,
+                      siteName: pt.siteName || '',
+                      assignee: a,
+                      reasonText: pt.resultReasons?.[a]?.reason || '',
+                      competitor: pt.resultReasons?.[a]?.competitor || '',
+                      workType: pt.workType || '',
+                      category: cat,
+                      date: pt.date || '',
+                      requester: pt.requester || '',
+                    });
                   }
                   else if (r === '지원') { byA[a].support++; byW[cat].support++; sup++; }
                   if (r === '승') {
@@ -18514,7 +18554,7 @@ tr.suppressed td.fname{color:#64748b;}
                   }
                 }
               });
-              return { byAssignee: byA, byWorkType: byW, byOurTech: byT, lossReasons: lossR, totalWin: w, totalDraw: d, totalLose: l, totalSupport: sup };
+              return { byAssignee: byA, byAssigneePtList, byWorkType: byW, byOurTech: byT, lossReasons: lossR, lossReasonPtList, byRequester, totalWin: w, totalDraw: d, totalLose: l, totalSupport: sup };
             };
 
             // 현재 분기 집계
@@ -18756,22 +18796,115 @@ tr.suppressed td.fname{color:#64748b;}
                     <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 6 }}>※ announcementMethods/workType 에서 POUR·CNC 언급 기준 추정</div>
                   </div>
 
-                  {/* 5. 패배 원인 TOP */}
+                  {/* 5. 패배 원인 TOP — 클릭 시 PT 상세·사유 펼침 */}
                   <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>💔 패배 원인 분석 (resultReasons 텍스트 분류)</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>💔 패배 원인 분석 (클릭 시 현장·사유·분석 펼침)</div>
                     {lossReasonRanked.length > 0 ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {lossReasonRanked.map((l, i) => (
-                          <div key={l.reason} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: i === 0 ? '#fef2f2' : '#f8fafc', borderRadius: 8, border: `1px solid ${i === 0 ? '#fecaca' : '#e2e8f0'}` }}>
-                            <span style={{ fontSize: 16, fontWeight: 800, color: i === 0 ? '#991b1b' : '#64748b', minWidth: 24 }}>{i + 1}</span>
-                            <span style={{ flex: 1, fontSize: 12, color: '#1e293b', fontWeight: 600 }}>{l.reason}</span>
-                            <span style={{ fontSize: 12, fontWeight: 800, color: '#dc2626' }}>{l.count}건 ({l.pct}%)</span>
-                          </div>
-                        ))}
+                        {lossReasonRanked.map((l, i) => {
+                          const isExpanded = expandedAnalysisLossReason === l.reason;
+                          const reasonPts = (cur.lossReasonPtList?.[l.reason]) || [];
+                          return (
+                            <div key={l.reason}>
+                              <div onClick={() => setExpandedAnalysisLossReason(isExpanded ? null : l.reason)}
+                                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: i === 0 ? '#fef2f2' : '#f8fafc', borderRadius: 8, border: `1px solid ${i === 0 ? '#fecaca' : '#e2e8f0'}`, cursor: 'pointer', userSelect: 'none' }}>
+                                <span style={{ fontSize: 16, fontWeight: 800, color: i === 0 ? '#991b1b' : '#64748b', minWidth: 24 }}>{i + 1}</span>
+                                <span style={{ flex: 1, fontSize: 12, color: '#1e293b', fontWeight: 600 }}>{l.reason}</span>
+                                <span style={{ fontSize: 12, fontWeight: 800, color: '#dc2626' }}>{l.count}건 ({l.pct}%)</span>
+                                <span style={{ fontSize: 10, color: '#64748b' }}>{isExpanded ? '▲' : '▼'}</span>
+                              </div>
+                              {isExpanded && reasonPts.length > 0 && (
+                                <div style={{ marginTop: 6, padding: '10px 14px', background: '#fffaf0', borderRadius: 8, border: '1px dashed #fde68a' }}>
+                                  <div style={{ fontSize: 11, fontWeight: 700, color: '#92400e', marginBottom: 6 }}>📋 해당 패배 PT 상세 ({reasonPts.length}건)</div>
+                                  {reasonPts.map((p, idx) => (
+                                    <div key={p.ptId + idx} style={{ padding: '8px 0', borderTop: idx === 0 ? 'none' : '1px dashed #fde68a', fontSize: 11 }}>
+                                      <div style={{ fontWeight: 700, color: '#1e293b', marginBottom: 2 }}>{p.siteName} <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 400 }}>· {p.date} · {p.assignee} · {p.workType}</span></div>
+                                      {p.requester && <div style={{ fontSize: 10, color: '#64748b' }}>요청사: {p.requester}</div>}
+                                      <div style={{ fontSize: 11, color: '#7c2d12', marginTop: 3, lineHeight: 1.5 }}>
+                                        <b>📝 사유:</b> {p.reasonText || '(미입력)'}
+                                      </div>
+                                      {p.competitor && <div style={{ fontSize: 10, color: '#dc2626', marginTop: 2 }}>💢 경쟁사: {p.competitor}</div>}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : (
                       <div style={{ color: '#94a3b8', fontSize: 12, padding: 12 }}>패배 사유 텍스트 없음</div>
                     )}
+                  </div>
+
+                  {/* 6. 담당자별 아파트 리스트 — 클릭 시 PT 리스트 펼침 (대표 보고용) */}
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>👥 담당자별 아파트 리스트 (클릭 시 펼침)</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {VALID_TEAM.map(name => {
+                        const ptList = (cur.byAssigneePtList?.[name]) || [];
+                        if (ptList.length === 0) return null;
+                        const isExpanded = expandedAnalysisAssignee === name;
+                        const wins = byAssignee[name]?.win || 0;
+                        const draws = byAssignee[name]?.draw || 0;
+                        const losses = byAssignee[name]?.lose || 0;
+                        const sups = byAssignee[name]?.support || 0;
+                        return (
+                          <div key={name}>
+                            <div onClick={() => setExpandedAnalysisAssignee(isExpanded ? null : name)}
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#eff6ff', borderRadius: 8, border: '1px solid #bfdbfe', cursor: 'pointer', userSelect: 'none' }}>
+                              <span style={{ fontSize: 13, fontWeight: 800, color: '#1e40af', minWidth: 70 }}>{name}</span>
+                              <span style={{ flex: 1, fontSize: 11, color: '#475569' }}>총 {ptList.length}건 · 승{wins} 무{draws} 패{losses} 지원{sups}</span>
+                              <span style={{ fontSize: 10, color: '#64748b' }}>{isExpanded ? '▲' : '▼'}</span>
+                            </div>
+                            {isExpanded && (
+                              <div style={{ marginTop: 6, padding: '10px 14px', background: '#f8fafc', borderRadius: 8, border: '1px dashed #cbd5e1' }}>
+                                {ptList.sort((a, b) => (b.date || '').localeCompare(a.date || '')).map((p, idx) => {
+                                  const rc = p.result === '승' ? '#16a34a' : p.result === '무' ? '#f59e0b' : p.result === '패' ? '#dc2626' : '#64748b';
+                                  return (
+                                    <div key={p.ptId + idx} style={{ padding: '6px 0', borderTop: idx === 0 ? 'none' : '1px dashed #e2e8f0', fontSize: 11, display: 'flex', alignItems: 'center', gap: 10 }}>
+                                      <span style={{ fontWeight: 700, color: rc, minWidth: 32 }}>{p.result}</span>
+                                      <span style={{ flex: 1, color: '#1e293b' }}>{p.siteName}</span>
+                                      <span style={{ fontSize: 10, color: '#94a3b8' }}>{p.date} · {p.category}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 7. 업체(요청사)별 현황 — 어느 업체가 많이 요청했고 결과 분석 */}
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>🏢 업체(요청사)별 현황 — 분기 요청 빈도 + 승/패/무</div>
+                    {(() => {
+                      const reqList = Object.entries(cur.byRequester || {}).map(([name, v]) => ({ ...v, name }))
+                        .sort((a, b) => b.total - a.total);
+                      if (reqList.length === 0) return <div style={{ color: '#94a3b8', fontSize: 12, padding: 12 }}>요청사 정보 없음</div>;
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {reqList.map((r, i) => {
+                            const winRate = (r.win + r.draw + r.lose) > 0 ? Math.round(r.win / (r.win + r.draw + r.lose) * 100) : 0;
+                            const winRateColor = winRate >= 70 ? '#16a34a' : winRate >= 40 ? '#f59e0b' : '#dc2626';
+                            return (
+                              <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: i < 3 ? '#f0fdf4' : '#f8fafc', borderRadius: 8, border: `1px solid ${i < 3 ? '#bbf7d0' : '#e2e8f0'}` }}>
+                                <span style={{ fontSize: 14, fontWeight: 800, color: i < 3 ? '#15803d' : '#64748b', minWidth: 24 }}>{i + 1}</span>
+                                <span style={{ flex: 1, fontSize: 12, color: '#1e293b', fontWeight: 700 }}>{r.name}</span>
+                                <span style={{ fontSize: 11, color: '#64748b' }}>{r.total}건</span>
+                                <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 700 }}>승 {r.win}</span>
+                                <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 700 }}>무 {r.draw}</span>
+                                <span style={{ fontSize: 11, color: '#dc2626', fontWeight: 700 }}>패 {r.lose}</span>
+                                {r.support > 0 && <span style={{ fontSize: 11, color: '#7c3aed', fontWeight: 700 }}>지원 {r.support}</span>}
+                                <span style={{ fontSize: 11, color: winRateColor, fontWeight: 800, minWidth: 50, textAlign: 'right' }}>승률 {winRate}%</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
