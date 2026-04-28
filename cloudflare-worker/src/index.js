@@ -411,6 +411,31 @@ Rules:
       return jsonResponse(bid || { error: 'not found' }, env);
     }
 
+    // VPS 셀프 업데이트: POST /vps-update (코드 pull + npm install)
+    //                   POST /vps-restart (서비스 재시작)
+    //   목적: SSH 없이 워커로 VPS 갱신·재시작 — playwright-server self-update endpoint 패스스루
+    if ((url.pathname === '/vps-update' || url.pathname === '/vps-restart') && request.method === 'POST') {
+      if (!env.VPS_URL || !env.VPS_AUTH_TOKEN) {
+        return jsonResponse({ status: 'error', error: 'VPS_URL/VPS_AUTH_TOKEN 미설정' }, env, 500);
+      }
+      const target = url.pathname === '/vps-update' ? '/admin/self-update' : '/admin/self-restart';
+      try {
+        const r = await fetch(`${env.VPS_URL}${target}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${env.VPS_AUTH_TOKEN}`,
+          },
+          body: JSON.stringify({}),
+        });
+        const text = await r.text();
+        let data; try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 1000) }; }
+        return jsonResponse({ status: r.ok ? 'ok' : 'error', httpStatus: r.status, ...data }, env, r.ok ? 200 : 502);
+      } catch (e) {
+        return jsonResponse({ status: 'error', error: e.message }, env, 500);
+      }
+    }
+
     // 잔디 채널 sync (백필용): POST /jandi-sync
     //   Body: { channelName?, monthsBack?, maxFiles?, maxScrolls?, forceReupload? }
     //   playwright-server /admin/jandi-channel-sync 로 passthrough

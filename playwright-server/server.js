@@ -1328,34 +1328,104 @@ app.post('/admin/jandi-channel-sync', requireAuth, async (req, res) => {
     } catch (_) {}
     await page.waitForTimeout(5000);
 
-    // 3) 과거 메시지 스크롤 (헬퍼 사용)
-    const scrollRes = await scrollJandiChannelToCutoff(page, cutoff.getTime(), maxScrolls);
-    console.log('[channel-sync] scroll:', scrollRes);
-
-    // 4) 파일 메타 추출 (preview-file selected-attachment JSON)
-    const files = await page.evaluate(() => {
-      const out = [];
-      const seen = new Set();
-      for (const el of document.querySelectorAll('.preview-file[file-id]')) {
-        const fileId = el.getAttribute('file-id');
-        if (!fileId || seen.has(fileId)) continue;
-        seen.add(fileId);
-        let att = null;
-        try { att = JSON.parse(el.getAttribute('selected-attachment') || '{}'); } catch (_) {}
-        const c = att?.content || {};
-        if (!c.title) continue;
-        out.push({
-          fileId,
-          filename: c.title,
-          ext: c.ext,
-          size: c.size,
-          mimeType: c.type,
-          storageName: c.filename,
-          originalFileUrl: c.fileUrl,
-        });
+    // 3) + 4) 점진적 스크롤 + 파일 메타 누적 수집
+    //   문제: 잔디 웹 UI 가상화로 화면 밖 메시지가 DOM 에서 unload → 스크롤 끝나고 한 번에 수집 시 옛 파일 사라짐
+    //   해결: 매 N 회 스크롤마다 현재 보이는 .preview-file 메타를 Map 에 누적 → 가상화로 사라져도 보존
+    const accumulator = new Map(); // fileId -> meta
+    const captureCurrentFiles = async () => {
+      const items = await page.evaluate(() => {
+        const out = [];
+        for (const el of document.querySelectorAll('.preview-file[file-id]')) {
+          const fileId = el.getAttribute('file-id');
+          if (!fileId) continue;
+          let att = null;
+          try { att = JSON.parse(el.getAttribute('selected-attachment') || '{}'); } catch (_) {}
+          const c = att?.content || {};
+          if (!c.title) continue;
+          out.push({
+            fileId,
+            filename: c.title,
+            ext: c.ext,
+            size: c.size,
+            mimeType: c.type,
+            storageName: c.filename,
+            originalFileUrl: c.fileUrl,
+          });
+        }
+        return out;
+      });
+      for (const it of items) {
+        if (!accumulator.has(it.fileId)) accumulator.set(it.fileId, it);
       }
-      return out;
-    });
+      return items.length;
+    };
+
+    // 점진적 스크롤 — 매 5 회 wheel 후 capture (가상화로 unload 되기 전에 잡음)
+    const chatArea = page.locator('.cpanel._chatPanel, ._primaryPanel, .msgs-holder, .msgs-stage').first();
+    let box = null;
+    try { box = await chatArea.boundingBox({ timeout: 5000 }); } catch (_) {}
+    if (!box) {
+      const vp = page.viewportSize() || { width: 1280, height: 720 };
+      box = { x: vp.width / 2, y: vp.height / 2, width: 1, height: 1 };
+    }
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+
+    await captureCurrentFiles(); // 진입 직후 첫 capture
+    let scrolls = 0, stagnant = 0;
+    let oldestTs = null;
+    let lastAccCount = accumulator.size;
+    const cutoffMs = cutoff.getTime();
+    while (scrolls < maxScrolls) {
+      await page.mouse.wheel(0, -2500);
+      await page.waitForTimeout(450 + Math.floor(Math.random() * 200));
+      scrolls++;
+
+      // 매 5 회마다 progressive capture + cutoff 체크
+      if (scrolls % 5 === 0) {
+        await captureCurrentFiles();
+        // cutoff 도달 여부 확인 (시간 텍스트 파싱)
+        const { oldest } = await page.evaluate(() => {
+          const times = [...document.querySelectorAll('time, .fn-write-time time')]
+            .map(t => (t.textContent || '').trim()).filter(Boolean);
+          let oldest = Infinity;
+          for (const s of times) {
+            const m = s.match(/(\d{4})\/(\d{2})\/(\d{2})/);
+            if (m) {
+              const ts = new Date(`${m[1]}-${m[2]}-${m[3]}`).getTime();
+              if (ts > 0 && ts < oldest) oldest = ts;
+            }
+          }
+          return { oldest: oldest === Infinity ? null : oldest };
+        });
+        if (oldest) oldestTs = oldest;
+        if (oldest && oldest <= cutoffMs) break;
+
+        // accumulator 가 자라지 않으면 정지 카운트 — 10 회 정체 시 종료 (5*10=50 회)
+        if (accumulator.size === lastAccCount) {
+          stagnant++;
+          if (stagnant >= 10) break;
+        } else {
+          stagnant = 0;
+          lastAccCount = accumulator.size;
+        }
+      }
+
+      // 매 20 회마다 강력 스크롤 (Home 키 + 흔들기) — lazy load 재트리거
+      if (scrolls % 20 === 0) {
+        await page.keyboard.press('Home').catch(() => {});
+        await page.waitForTimeout(800);
+        await page.mouse.wheel(0, 800);
+        await page.waitForTimeout(300);
+        await page.mouse.wheel(0, -3000);
+        await page.waitForTimeout(800);
+      }
+    }
+    await captureCurrentFiles(); // 최종 capture
+    console.log('[channel-sync] progressive scroll:', { scrolls, accumulated: accumulator.size, oldestTs: oldestTs ? new Date(oldestTs).toISOString() : null });
+    const scrollRes = { scrolls, accumulated: accumulator.size, oldestTs: oldestTs ? new Date(oldestTs).toISOString() : null };
+
+    // 누적된 모든 파일 (fileId 기준 dedupe)
+    const files = [...accumulator.values()];
 
     // teamId 추출 — 첫 fileUrl 에서
     let teamId = null;
@@ -3892,6 +3962,38 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
     return res.status(500).json({ error: e.message, stack: e.stack });
   }
 }
+
+// === 셀프 업데이트 엔드포인트 ===
+// 사용: POST /admin/self-update
+// 동작: git pull origin main → npm install --production → systemctl restart kapt-playwright
+// 목적: SSH 없이 워커 패스스루로 코드 갱신 + 재시작 (Claude/관리자 자동화)
+app.post('/admin/self-update', requireAuth, async (req, res) => {
+  const { exec } = require('child_process');
+  const path = require('path');
+  // repo 위치 자동 추론 — 현재 server.js 파일 기준 상위 폴더
+  const repoDir = path.resolve(__dirname, '..');
+  const cmd = `cd ${repoDir} && git fetch origin main 2>&1 && git reset --hard origin/main 2>&1 && cd playwright-server && npm install --production --no-audit --no-fund 2>&1 | tail -20`;
+  exec(cmd, { timeout: 180000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    const ok = !err;
+    res.json({
+      ok,
+      err: err?.message || null,
+      stdout: (stdout || '').slice(-3000),
+      stderr: (stderr || '').slice(-1500),
+      hint: ok ? '코드 갱신 완료. 서비스 재시작은 별도 호출 필요: POST /admin/self-restart' : 'git pull 또는 npm install 실패',
+    });
+  });
+});
+
+// 서비스 재시작 (코드 반영) — systemd 또는 pm2 자동 감지
+app.post('/admin/self-restart', requireAuth, async (req, res) => {
+  const { exec } = require('child_process');
+  // 응답 먼저 전송 (재시작 후 본 프로세스 죽음)
+  res.json({ ok: true, hint: '재시작 명령 발사 — 5초 후 다시 health check 해주세요' });
+  setTimeout(() => {
+    exec('sudo systemctl restart kapt-playwright 2>&1 || pm2 restart all 2>&1 || echo "no_service_manager"', { timeout: 30000 }, () => {});
+  }, 500);
+});
 
 app.listen(PORT, () => {
   console.log(`[kapt-playwright-server] listening on :${PORT}`);
