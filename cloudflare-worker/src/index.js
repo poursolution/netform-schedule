@@ -2061,6 +2061,9 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
       return `${a.assignee}: ${wd}건${supLbl} · 예상 ${(a.estimatedAmount || 0).toLocaleString('ko-KR')}원 (검토 ${a.reviewCount})`;
     })
     .slice(0, 15);
+  // 관리자 채널 알림 — opts.notifyAdmin === true 일 때만 발송
+  // 결과 저장마다 자동 트리거되는 경우엔 발송 X (사용자: "자꾸 웹훅 오는데")
+  if (opts.notifyAdmin === true) {
   await notifyJandi(env, {
     body: `[${quarterKey} 분기정산 생성 완료 — 관리자 확인 필요]`,
     connectColor: '#dc2626',
@@ -2076,6 +2079,7 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
       ].join('\n'),
     }],
   });
+  }
 
   // 7) 담당자별 개인 잔디 알림 — admin 이 명시적으로 notifyUsers:true 줄 때만 발송
   //    분기정산 생성/재집계 만으로는 발송 X (사용자 요청: 확정 전 발송 차단)
