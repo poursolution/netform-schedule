@@ -8644,8 +8644,8 @@ const SETTLEMENT_BADGE_STYLE = {
                 {!isMobile && <div style={{ width: '1px', height: '28px', background: '#e2e8f0' }} />}
                 {/* 내보내기 */}
                 {(() => {
-                  // 분기별 정산 확인 상태 검증
-                  const allAssignees = ['한준엽', '조재연', '정정훈', '김성민', '이필선', '조현식', '한인규'];
+                  // 분기별 정산 확인 상태 검증 (조현식 정산 제외)
+                  const allAssignees = ['한준엽', '조재연', '정정훈', '김성민', '이필선', '한인규'];
                   const expYear = exportYear === 'all' ? new Date().getFullYear() : parseInt(exportYear);
                   const qNumMap = { '1분기': 1, '2분기': 2, '3분기': 3, '4분기': 4 };
                   const selectedQNum = qNumMap[exportQuarter];
@@ -12060,8 +12060,8 @@ tr.suppressed td.fname{color:#64748b;}
                 if (qDraws - prevQDraws !== 0) changeReasons.push(`무 ${qDraws - prevQDraws >= 0 ? '+' : ''}${qDraws - prevQDraws}`);
                 if (qLosses - prevQLosses !== 0) changeReasons.push(`패 ${qLosses - prevQLosses >= 0 ? '+' : ''}${qLosses - prevQLosses}`);
 
-                // 팀 평균 대비 (전 담당자 기준)
-                const VALID_TEAM_M = ['한준엽','조재연','정정훈','김성민','이필선','조현식','한인규','황윤선'];
+                // 팀 평균 대비 (전 담당자 기준 — 조현식 정산 제외)
+                const VALID_TEAM_M = ['한준엽','조재연','정정훈','김성민','이필선','한인규','황윤선'];
                 const teamQuarterMoney = VALID_TEAM_M.map(name => {
                   return ptSchedules.filter(s => s.date >= qStart && s.date <= qEnd).reduce((sum, s) => {
                     if (s.selfPT) return sum;
@@ -16830,7 +16830,7 @@ tr.suppressed td.fname{color:#64748b;}
                       <select value={unconfirmedPtAssignee || 'all'} onChange={(e) => setUnconfirmedPtAssignee(e.target.value === 'all' ? null : e.target.value)}
                         style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 12, fontWeight: 600, color: '#1a1a2e', background: '#f8fafc' }}>
                         <option value="all">전체 담당자</option>
-                        {['한준엽', '조재연', '정정훈', '김성민', '이필선', '조현식', '한인규'].map(name => (
+                        {['한준엽', '조재연', '정정훈', '김성민', '이필선', '한인규'].map(name => (
                           <option key={name} value={name}>{name}</option>
                         ))}
                       </select>
@@ -16851,7 +16851,7 @@ tr.suppressed td.fname{color:#64748b;}
                     const todayStr = new Date().toISOString().split('T')[0];
 
                     // Determine which PTs to show
-                    let targetAssignees = unconfirmedPtAssignee ? [unconfirmedPtAssignee] : (currentUser?.isAdmin ? ['한준엽', '조재연', '정정훈', '김성민', '이필선', '조현식', '한인규'] : [currentUser?.name]);
+                    let targetAssignees = unconfirmedPtAssignee ? [unconfirmedPtAssignee] : (currentUser?.isAdmin ? ['한준엽', '조재연', '정정훈', '김성민', '이필선', '한인규'] : [currentUser?.name]);
 
                     let filteredPts = [];
                     targetAssignees.forEach(assigneeName => {
@@ -18319,7 +18319,7 @@ tr.suppressed td.fname{color:#64748b;}
               return '기타';
             };
 
-            const VALID_TEAM = ['한준엽','조재연','정정훈','김성민','이필선','조현식','한인규','황윤선'];
+            const VALID_TEAM = ['한준엽','조재연','정정훈','김성민','이필선','한인규','황윤선']; // 조현식 정산 제외
 
             // 기간별 집계 함수 (현재 분기 + 전 분기 비교용)
             const aggregateForPeriod = (yy, qq) => {
