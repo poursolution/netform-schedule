@@ -592,6 +592,16 @@ function normSupersedeSite(s) {
     .replace(/[()()[\]【】]/g, '')
     .toLowerCase();
 }
+// 주소 정규화 — "광주시 북구 서하로94번길 10" / "광주 북구 서하로94번길 10" 같이 표기
+function normSupersedeAddress(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/특별시|광역시|특별자치시|특별자치도/g, '')
+    .replace(/\s+/g, '')
+    .replace(/[(),.-]/g, '')
+    .replace(/번지|동$/g, '')
+    .toLowerCase();
+}
 function primaryAssigneeSupersede(pt) {
   return (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean)[0] || null;
 }
@@ -606,7 +616,13 @@ async function runAutoSupersede(env, opts = {}) {
   if (!ptResp.ok) return { error: `firebase_${ptResp.status}` };
   const pts = await ptResp.json() || {};
 
-  const groups = new Map();
+  // 1차: 단지명 기반 그룹화 (기존)
+  // 2차: 주소 기반 그룹화 (사용자 요청 — 단지명 다르지만 같은 주소 = 동일 단지)
+  //      예: "쌍용예가" + "용봉동쌍용예가" = 둘 다 광주 북구 서하로94번길
+  // 두 그룹 중 하나라도 매치되면 같이 묶음 (Union-Find 방식)
+  const siteGroups = new Map(); // site key
+  const addrGroups = new Map(); // address key
+  const ptInfo = []; // [{ id, pt, siteKey, addrKey, assignee, cat }]
   for (const [id, pt] of Object.entries(pts)) {
     if (!pt || pt.selfPT) continue;
     const isSupervision = /감리/.test((pt.workType || '') + '|' + (pt.siteName || ''));
@@ -616,10 +632,37 @@ async function runAutoSupersede(env, opts = {}) {
     const cat = pt.mainCategory || inferSupersedeCategory(pt.workType);
     if (!cat) continue;
     const site = normSupersedeSite(pt.siteName);
-    if (!site) continue;
-    const key = `${site}__${a}__${cat}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push({ id, pt });
+    const addr = normSupersedeAddress(pt.address);
+    if (!site && !addr) continue;
+    const siteKey = site ? `S:${site}__${a}__${cat}` : null;
+    const addrKey = addr ? `A:${addr}__${a}__${cat}` : null;
+    ptInfo.push({ id, pt, siteKey, addrKey, assignee: a, cat });
+    if (siteKey) {
+      if (!siteGroups.has(siteKey)) siteGroups.set(siteKey, []);
+      siteGroups.get(siteKey).push(id);
+    }
+    if (addrKey) {
+      if (!addrGroups.has(addrKey)) addrGroups.set(addrKey, []);
+      addrGroups.get(addrKey).push(id);
+    }
+  }
+
+  // Union-Find: ptId → 대표(root) 매핑
+  const parent = new Map();
+  const find = (x) => { let r = x; while (parent.get(r) !== r) r = parent.get(r); while (parent.get(x) !== r) { const n = parent.get(x); parent.set(x, r); x = n; } return r; };
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+  for (const info of ptInfo) parent.set(info.id, info.id);
+  // 같은 siteKey 의 ID들 union
+  for (const ids of siteGroups.values()) for (let i = 1; i < ids.length; i++) union(ids[0], ids[i]);
+  // 같은 addrKey 의 ID들 union (siteKey 다른 PT 도 같은 주소면 묶임)
+  for (const ids of addrGroups.values()) for (let i = 1; i < ids.length; i++) union(ids[0], ids[i]);
+
+  // root 별로 PT 묶기
+  const groups = new Map();
+  for (const info of ptInfo) {
+    const root = find(info.id);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push({ id: info.id, pt: info.pt });
   }
 
   const ops = [];
