@@ -10481,26 +10481,38 @@ tr.suppressed td.fname{color:#64748b;}
                                                 const curAmt = aSettlement.manualAmount;
                                                 const editKey = `mamt_${card.id}_${assigneeName}`;
                                                 const editing = editingResults.hasOwnProperty(editKey) ? editingResults[editKey] : null;
-                                                const display = editing !== null ? editing : (typeof curAmt === 'number' ? String(curAmt) : '');
+                                                // 콤마 포맷팅 헬퍼: 입력값에서 숫자만 추출 → 천단위 콤마 추가
+                                                const formatWithComma = (raw) => {
+                                                  const digits = String(raw || '').replace(/[^0-9]/g, '');
+                                                  if (!digits) return '';
+                                                  return parseInt(digits, 10).toLocaleString('ko-KR');
+                                                };
+                                                const display = editing !== null
+                                                  ? formatWithComma(editing)
+                                                  : (typeof curAmt === 'number' ? curAmt.toLocaleString('ko-KR') : '');
                                                 return (
                                                   <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '11px', color: '#7c3aed', whiteSpace: 'nowrap', padding: '2px 6px', borderRadius: '6px', background: '#faf5ff', border: '1px solid #e9d5ff' }}>
                                                     <span style={{ fontWeight: 700 }}>감리 금액</span>
                                                     <input
-                                                      type="number"
-                                                      min="0"
-                                                      step="10000"
+                                                      type="text"
+                                                      inputMode="numeric"
                                                       value={display}
                                                       placeholder="0"
                                                       disabled={!canEditAmt}
-                                                      title={canEditAmt ? '감리 정산 금액 입력 후 [저장]' : '한준엽·관리자만 입력 가능'}
-                                                      onChange={(e) => setEditingResults(prev => ({ ...prev, [editKey]: e.target.value }))}
-                                                      style={{ width: 90, padding: '2px 6px', fontSize: 11, border: '1px solid #d8b4fe', borderRadius: 4, textAlign: 'right', background: canEditAmt ? 'white' : '#f3f4f6', color: '#1e293b', fontWeight: 700 }}
+                                                      title={canEditAmt ? '감리 정산 금액 입력 후 [저장] (콤마 자동)' : '한준엽·관리자만 입력 가능'}
+                                                      onChange={(e) => {
+                                                        // 사용자가 콤마/숫자 어떻게 치든 숫자만 추출해서 저장 (콤마는 display 시 자동 포맷)
+                                                        const digitsOnly = e.target.value.replace(/[^0-9]/g, '');
+                                                        setEditingResults(prev => ({ ...prev, [editKey]: digitsOnly }));
+                                                      }}
+                                                      style={{ width: 110, padding: '2px 6px', fontSize: 11, border: '1px solid #d8b4fe', borderRadius: 4, textAlign: 'right', background: canEditAmt ? 'white' : '#f3f4f6', color: '#1e293b', fontWeight: 700 }}
                                                     />
                                                     <span style={{ color: '#7c3aed' }}>원</span>
                                                     {canEditAmt && editing !== null && (
                                                       <button
                                                         onClick={async () => {
-                                                          const v = parseInt(editing, 10);
+                                                          // editing 은 숫자만 있는 문자열 — 콤마 변환 불필요
+                                                          const v = parseInt(editing || '0', 10);
                                                           if (!Number.isFinite(v) || v < 0) { alert('숫자만 입력 가능합니다.'); return; }
                                                           try {
                                                             if (firebaseEnabled && database) {
