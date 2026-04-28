@@ -19435,19 +19435,50 @@ tr.suppressed td.fname{color:#64748b;}
             //   대상: 해당 분기 settlement 데이터에 totalCount > 0 인 담당자만 (활동자 기준)
             //   관리자는 '가드 우회' 체크박스로 긴급 발송 가능 (권장 X)
             const reportQKey = `${quarterReportYear}-Q${quarterReportQuarter}`;
-            const qSettlement = (window._lastQuarterlySettlement?.[reportQKey]) || null;
-            // Firebase 에서 미리 로드하지 않았다면 렌더 중 한 번만 요청
-            if (!qSettlement && database && !window._loadingQuarterlySettlement?.[reportQKey]) {
-              window._loadingQuarterlySettlement = window._loadingQuarterlySettlement || {};
-              window._loadingQuarterlySettlement[reportQKey] = true;
-              database.ref(`quarterlySettlements/${reportQKey}`).once('value').then(snap => {
-                window._lastQuarterlySettlement = window._lastQuarterlySettlement || {};
-                window._lastQuarterlySettlement[reportQKey] = snap.val() || { loaded: true };
-                // 강제 리렌더
-                setQuarterReportBusy(b => b);
-                setTimeout(() => setQuarterReportBusy(b => !b ? false : b), 0);
-              }).catch(() => { window._loadingQuarterlySettlement[reportQKey] = false; });
-            }
+            // 실시간 계산: ptSchedules state 에서 직접 산출 (Firebase 캐시 의존 X)
+            //   사용자 룰: pt.date <= 분기 종료일 + requested(or mv) + !completed + !superseded + VALID_ASSIGNEES
+            //   결과 변경 즉시 분기보고서 갱신
+            const qSettlement = (() => {
+              const qParse = reportQKey.match(/^(\d{4})-Q([1-4])/);
+              if (!qParse) return null;
+              const yr = parseInt(qParse[1], 10);
+              const qn = parseInt(qParse[2], 10);
+              const qEndMonth = qn * 3;
+              const qEndDay = qEndMonth === 3 || qEndMonth === 12 ? 31 : 30;
+              const qEnd = `${yr}-${String(qEndMonth).padStart(2,'0')}-${String(qEndDay).padStart(2,'0')}`;
+              const VALID = new Set(['한준엽','조재연','정정훈','김성민','이필선','한인규','황윤선','이승우','부산지사']);
+              const acc = {};
+              for (const pt of ptSchedules) {
+                if (!pt || pt.selfPT) continue;
+                if (!pt.date || pt.date > qEnd) continue;
+                const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+                for (const a of tokens) {
+                  if (!VALID.has(a)) continue;
+                  const stl = pt.settlement?.[a] || {};
+                  if (!(stl.requested === true || stl.manualVerified === true)) continue;
+                  if (stl.completed === true) continue;
+                  if (stl.superseded === true || stl.status === 'superseded') continue;
+                  if (!acc[a]) acc[a] = { assignee: a, quarterKey: reportQKey, totalCount: 0, winCount: 0, drawCount: 0, supportCount: 0, excludedCount: 0, reviewCount: 0, estimatedAmount: 0, items: [] };
+                  const calc = calculateSettlementAmount(pt, a);
+                  acc[a].totalCount++;
+                  acc[a].items.push({ ptId: pt.id, siteName: pt.siteName, ptDate: pt.date, result: calc.result, amount: calc.amount, reason: calc.reason });
+                  if (['loss','vendor_self_pt','self_sales','draw_support_excluded','cancelled_notice'].includes(calc.reason)) {
+                    acc[a].excludedCount++;
+                    continue;
+                  }
+                  const needsReview = pt.kaptVerified?.status === 'needs_review' && !(pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0) && stl.manualVerified !== true;
+                  if (needsReview) acc[a].reviewCount++;
+                  acc[a].estimatedAmount += (calc.amount || 0);
+                  if (calc.result === '승') acc[a].winCount++;
+                  else if (calc.result === '무') acc[a].drawCount++;
+                  else if (calc.result === '지원') acc[a].supportCount++;
+                }
+              }
+              const totalEstimated = Object.values(acc).reduce((s, x) => s + x.estimatedAmount, 0);
+              const totalCount = Object.values(acc).reduce((s, x) => s + x.totalCount, 0);
+              const totalReview = Object.values(acc).reduce((s, x) => s + x.reviewCount, 0);
+              return { perAssignee: acc, totals: { quarterKey: reportQKey, totalAssignees: Object.keys(acc).length, totalCount, totalEstimated, totalReview, aggregationBasis: 'live(ptSchedules)' } };
+            })();
             const qPerAssignee = qSettlement?.perAssignee || {};
             const activeAssignees = Object.values(qPerAssignee).filter(a => (a?.totalCount || 0) > 0).map(a => a.assignee);
             const confMap = quarterConfirmations[reportQKey] || {};
