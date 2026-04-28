@@ -11791,7 +11791,12 @@ tr.suppressed td.fname{color:#64748b;}
                 const nowY = _adjYear;
                 const qStart = `${nowY}-${String((nowQ - 1) * 3 + 1).padStart(2, '0')}-01`;
                 const qEnd = `${nowY}-${String(nowQ * 3).padStart(2, '0')}-${nowQ === 1 || nowQ === 4 ? '31' : nowQ === 2 ? '30' : '30'}`;
-                const thisQuarterAmount = myPtSchedules.filter(s => s.date >= qStart && s.date <= qEnd).reduce((sum, s) => {
+                // 운영 룰 (OPERATIONS.md): 분기 귀속 = resultConfirmDate 기준 (분기정산 모달과 동일)
+                const _inQuarter = (s) => {
+                  const cd = getResultConfirmDate(s, viewingUser) || s.date;
+                  return cd && cd >= qStart && cd <= qEnd;
+                };
+                const thisQuarterAmount = myPtSchedules.filter(_inQuarter).reduce((sum, s) => {
                   const r = getMyResult(s);
                   if (!r || s.selfPT) return sum;
                   const stl = s.settlement?.[viewingUser] || {};
@@ -12080,8 +12085,8 @@ tr.suppressed td.fname{color:#64748b;}
                 const thisMonthPts = myPtSchedules.filter(s => s.date && s.date.startsWith(currentMonthStr));
                 const thisMonthWins = thisMonthPts.filter(s => getMyResult(s) === '승').length;
 
-                // ② UX 재설계 — 이번 분기 실적 요약 (qStart/qEnd 는 위에서 계산됨)
-                const thisQuarterPts = myPtSchedules.filter(s => s.date && s.date >= qStart && s.date <= qEnd);
+                // ② UX 재설계 — 이번 분기 실적 요약 (운영 룰: resultConfirmDate 기준)
+                const thisQuarterPts = myPtSchedules.filter(_inQuarter);
                 const qWins = thisQuarterPts.filter(s => getMyResult(s) === '승').length;
                 const qDraws = thisQuarterPts.filter(s => getMyResult(s) === '무').length;
                 const qLosses = thisQuarterPts.filter(s => getMyResult(s) === '패').length;
