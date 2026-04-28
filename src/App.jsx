@@ -6063,8 +6063,9 @@ const SETTLEMENT_BADGE_STYLE = {
                 >영업회의</button>
               )}
               {/* 피드백 버튼은 우측 하단 플로팅 FAB 로 이동 (아래 renderFeedbackFab 참조) */}
-              {currentUser?.isAdmin && (() => {
+              {(currentUser?.isAdmin || currentUser?.name === '한준엽') && (() => {
                 // === IT 팔레트 기반 관리자 버튼 토큰 ===
+                // (한준엽 = 팀장: 정산·전환로그·검증 관련 admin 도구 사용 가능)
                 //   brandPrimary:  Royal Blue  #0F4C75  (테두리·텍스트)
                 //   brandDark:     Deep Space  #1B262C
                 //   surfaceAccent: Soft Cloud  #BBE1FA  (강조 배경)
@@ -6260,11 +6261,11 @@ const SETTLEMENT_BADGE_STYLE = {
                   <span>미배정 <strong style={{ color: '#dc2626' }}>{allSchedules.filter(isUnassigned).length}</strong></span>
                 </div>
               )}
-              {currentUser?.isAdmin && (
+              {(currentUser?.isAdmin || currentUser?.name === '한준엽') && (
                 <button
                   onClick={() => { setShowMonthlySettlement(true); }}
                   style={{ background: '#0F4C75', color: 'white', border: 'none', padding: isMobile ? '8px 10px' : '10px 14px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '700', cursor: 'pointer' }}
-                  title="관리자 분기정산 — 담당자별 집계·확정"
+                  title="분기정산 — 담당자별 집계·확정 (admin + 팀장)"
                 >💰 분기정산</button>
               )}
               <button onClick={() => setShowSettings(true)} style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: isMobile ? '8px 10px' : '10px 14px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: '600', cursor: 'pointer' }}>설정</button>
@@ -10520,7 +10521,7 @@ tr.suppressed td.fname{color:#64748b;}
                                                       setDirtyScheduleIds(prev => new Set([...prev, card.id]));
                                                       setHasResultChanges(true);
                                                       setTimeout(() => persistSettlementDerived(card.id, assigneeName), 0);
-                                                    }} disabled={!currentUser?.isAdmin} style={{ width: '14px', height: '14px', cursor: currentUser?.isAdmin ? 'pointer' : 'not-allowed' }} /> 정산완료
+                                                    }} disabled={!currentUser?.isAdmin && currentUser?.name !== '한준엽'} style={{ width: '14px', height: '14px', cursor: (currentUser?.isAdmin || currentUser?.name === '한준엽') ? 'pointer' : 'not-allowed' }} /> 정산완료
                                                   </label>
                                                   <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer' }}>
                                                     <input type="checkbox" checked={!!aSettlement.selfSales} onChange={() => {
@@ -15396,8 +15397,8 @@ tr.suppressed td.fname{color:#64748b;}
             </div>
           ); })()}
 
-          {/* 관리자 분기정산 모달 (P7 — 월정산 → 분기정산 전환) */}
-          {showMonthlySettlement && currentUser?.isAdmin && (() => {
+          {/* 관리자 분기정산 모달 (P7 — 월정산 → 분기정산 전환) — admin + 한준엽(팀장) */}
+          {showMonthlySettlement && (currentUser?.isAdmin || currentUser?.name === '한준엽') && (() => {
             // 데이터 로드 — Firebase quarterlySettlements/{quarterKey}
             const loadData = async () => {
               const targetKey = monthlySettlementMonth;
@@ -18196,8 +18197,8 @@ tr.suppressed td.fname{color:#64748b;}
             );
           })()}
 
-          {/* Activity Log 모달 (관리자 전용) */}
-          {showActivityLog && currentUser?.isAdmin && (() => {
+          {/* Activity Log 모달 (전환 로그) — admin + 한준엽(팀장) */}
+          {showActivityLog && (currentUser?.isAdmin || currentUser?.name === '한준엽') && (() => {
             const eventLabel = {
               result_input: '📝 결과 입력',
               settlement_requested: '💰 정산요청',
