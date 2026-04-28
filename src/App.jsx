@@ -12264,6 +12264,187 @@ tr.suppressed td.fname{color:#64748b;}
                       })()}
                     </div>
 
+                    {/* ③ 신규 — 1분기 실적 확인 패널 (확인완료 / 검증요청 / 최종확정) */}
+                    {(() => {
+                      const qKey = `${nowY}-Q${nowQ}`;
+                      const myConfirmation = quarterConfirmations[qKey]?.[viewingUser] || {};
+                      const isConfirmed = myConfirmation.confirmed === true;
+                      const finalRequested = !!myConfirmation.finalRequestedAt;
+                      const isFinalConfirmed = myConfirmation.finalConfirmed === true;
+                      const reviewRequests = myConfirmation.reviewRequests || {};
+                      const reviewRequestArr = Object.entries(reviewRequests).map(([k, v]) => ({ id: k, ...v }));
+                      const deadlineStr = `${nowY}-${String(nowQ * 3 + 1).padStart(2, '0')}-24`; // 분기 종료 익월 24일
+
+                      const handleFinalConfirm = async () => {
+                        // 행동 강제력 — 리스크 미해결 상태에서 최종 확정 차단
+                        const blockingRisks = [];
+                        if (unverifiedRisk.length > 0) blockingRisks.push(`미검증 ${unverifiedRisk.length}건`);
+                        if (waitingSupport.length > 0) blockingRisks.push(`지원자 판정 대기 ${waitingSupport.length}건`);
+                        if (blockingRisks.length > 0) {
+                          alert(`⚠ 최종 확정 차단\n\n먼저 해결해야 할 리스크:\n  - ${blockingRisks.join('\n  - ')}\n\n리스크 카드 클릭해서 처리 후 다시 시도해주세요.`);
+                          return;
+                        }
+                        if (!window.confirm(`${qKey} 실적을 "최종 확정" 처리합니다.\n\n이후 김유림님에게 분기 보고서가 발송됩니다. 진행?`)) return;
+                        try {
+                          await database.ref(`quarterConfirmations/${qKey}/${viewingUser}`).update({
+                            finalConfirmed: true,
+                            finalConfirmedAt: new Date().toISOString(),
+                            finalConfirmedBy: currentUser?.name || viewingUser,
+                          });
+                          if (jandiUrl) {
+                            try {
+                              await fetch(jandiUrl, {
+                                method: 'POST', mode: 'no-cors',
+                                headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  body: `✅ ${qKey} 최종 확정 — ${viewingUser}`,
+                                  connectColor: '#7c3aed',
+                                  connectInfo: [{ title: '담당자 2라운드 최종 확정', description: `${viewingUser}님이 ${qKey} 실적을 최종 확정 처리했습니다.` }],
+                                }),
+                              });
+                            } catch {}
+                          }
+                          alert('✅ 최종 확정 완료');
+                        } catch (e) { alert('저장 실패: ' + e.message); }
+                      };
+                      const handleConfirm = async () => {
+                        if (!window.confirm(`${qKey} 실적을 "확인완료" 처리합니다.\n\n이후 수정이 필요하면 관리자에게 요청해야 합니다. 진행?`)) return;
+                        try {
+                          await database.ref(`quarterConfirmations/${qKey}/${viewingUser}`).update({
+                            confirmed: true,
+                            confirmedAt: new Date().toISOString(),
+                            confirmedBy: currentUser?.name || viewingUser,
+                          });
+                          // admin 채널로 알림
+                          if (jandiUrl) {
+                            try {
+                              await fetch(jandiUrl, {
+                                method: 'POST', mode: 'no-cors',
+                                headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  body: `✅ ${qKey} 실적 확인 완료 — ${viewingUser}`,
+                                  connectColor: '#16a34a',
+                                  connectInfo: [{ title: '담당자 자가 확인 완료', description: `${viewingUser}님이 ${qKey} 실적을 확인 완료 처리했습니다.` }],
+                                }),
+                              });
+                            } catch {}
+                          }
+                          alert('확인 완료되었습니다.');
+                        } catch (e) { alert('저장 실패: ' + e.message); }
+                      };
+                      const handleReviewRequest = async () => {
+                        const txt = window.prompt(`${qKey} 실적 중 수정/검증이 필요한 내용을 관리자에게 요청합니다.\n\n예시:\n- ○○단지 결과가 누락됨\n- △△단지 감리 건인데 일반으로 집계됨\n\n요청 내용:`);
+                        if (!txt || !txt.trim()) return;
+                        const trimmed = txt.trim();
+                        try {
+                          const ref = database.ref(`quarterConfirmations/${qKey}/${viewingUser}/reviewRequests`).push();
+                          await ref.set({
+                            text: trimmed,
+                            requestedAt: new Date().toISOString(),
+                            requestedBy: currentUser?.name || viewingUser,
+                            status: 'open',
+                          });
+                          // admin 채널 + 해당 담당자 개인 채널로도 알림
+                          if (jandiUrl) {
+                            try {
+                              await fetch(jandiUrl, {
+                                method: 'POST', mode: 'no-cors',
+                                headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  body: `⚠ ${qKey} 검증/수정 요청 — ${viewingUser}`,
+                                  connectColor: '#d97706',
+                                  connectInfo: [{ title: `${viewingUser}님의 요청`, description: trimmed }],
+                                }),
+                              });
+                            } catch {}
+                          }
+                          alert('검증 요청이 관리자에게 전달되었습니다.');
+                        } catch (e) { alert('저장 실패: ' + e.message); }
+                      };
+                      return (
+                        <div style={cardStyle}>
+                          <div style={{ padding: '16px 20px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>📋 {qKey} 실적 확인</span>
+                            <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 10, background: isFinalConfirmed ? '#ede9fe' : isConfirmed ? '#dcfce7' : '#fef3c7', color: isFinalConfirmed ? '#5b21b6' : isConfirmed ? '#166534' : '#92400e' }}>
+                              {isFinalConfirmed ? '✅ 최종확정' : finalRequested ? '📝 최종확정 대기' : isConfirmed ? '✅ 1차 확인완료' : '⏳ 확인 대기'}
+                            </span>
+                          </div>
+                          <div style={{ padding: '0 16px 14px' }}>
+                            {!isConfirmed && (
+                              <div style={{ padding: '10px 12px', background: '#fef3c7', borderRadius: 8, border: '1px solid #fde68a', fontSize: 11, color: '#92400e', lineHeight: 1.6, marginBottom: 10 }}>
+                                본인 {qKey} 실적을 [실적] 탭에서 확인 후 아래 버튼을 눌러주세요.<br />
+                                마감일: <b>{deadlineStr}</b> · 미확인 시 매일 2회 (09시·17시) 리마인드 발송
+                              </div>
+                            )}
+                            {isConfirmed && myConfirmation.confirmedAt && (
+                              <div style={{ padding: '10px 12px', background: '#ecfdf5', borderRadius: 8, border: '1px solid #a7f3d0', fontSize: 11, color: '#065f46', marginBottom: 10 }}>
+                                확인 완료: {(myConfirmation.confirmedAt || '').slice(0, 16).replace('T', ' ')}
+                                {myConfirmation.confirmedBy && myConfirmation.confirmedBy !== viewingUser ? ` (${myConfirmation.confirmedBy} 처리)` : ''}
+                              </div>
+                            )}
+                            {/* 이미 제출된 검증 요청 */}
+                            {reviewRequestArr.length > 0 && (
+                              <div style={{ padding: '8px 10px', background: '#fff7ed', borderRadius: 8, border: '1px solid #fed7aa', marginBottom: 10 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: '#9a3412', marginBottom: 4 }}>📌 제출된 검증/수정 요청 ({reviewRequestArr.length})</div>
+                                {reviewRequestArr.map(r => (
+                                  <div key={r.id} style={{ fontSize: 11, color: '#7c2d12', padding: '4px 0', borderTop: '1px dashed #fed7aa' }}>
+                                    <span style={{ fontWeight: 700, color: r.status === 'resolved' ? '#047857' : '#9a3412' }}>[{r.status === 'resolved' ? '처리완료' : '확인중'}]</span>{' '}
+                                    {r.text}
+                                    <span style={{ color: '#94a3b8', marginLeft: 4, fontSize: 10 }}>· {(r.requestedAt || '').slice(5, 16).replace('T', ' ')}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {/* 2라운드 최종확정 요청 배너 */}
+                            {finalRequested && !isFinalConfirmed && (
+                              <div style={{ padding: '12px 14px', background: '#ede9fe', border: '1.5px solid #c4b5fd', borderRadius: 10, marginBottom: 10 }}>
+                                <div style={{ fontSize: 12, fontWeight: 800, color: '#5b21b6', marginBottom: 4 }}>📝 관리자가 최종 확정을 요청했습니다</div>
+                                <div style={{ fontSize: 11, color: '#6d28d9', lineHeight: 1.6 }}>
+                                  검증/수정 요청이 모두 처리되었습니다. 아래 [최종 확정] 버튼을 눌러주세요.<br />
+                                  최종 확정 후 김유림님에게 분기 보고서가 자동 발송됩니다.
+                                </div>
+                              </div>
+                            )}
+                            {isFinalConfirmed && (
+                              <div style={{ padding: '10px 12px', background: '#ede9fe', borderRadius: 8, border: '1px solid #c4b5fd', fontSize: 11, color: '#5b21b6', marginBottom: 10 }}>
+                                ✅ 최종 확정 완료: {(myConfirmation.finalConfirmedAt || '').slice(0, 16).replace('T', ' ')}
+                              </div>
+                            )}
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              {!isConfirmed ? (
+                                <>
+                                  <button
+                                    onClick={handleConfirm}
+                                    style={{ flex: 1, padding: '10px', borderRadius: 8, border: 'none', background: '#16a34a', color: 'white', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                                  >✅ 이상없음 · 확인완료</button>
+                                  <button
+                                    onClick={handleReviewRequest}
+                                    style={{ flex: 1, padding: '10px', borderRadius: 8, border: '1px solid #d97706', background: '#fff7ed', color: '#9a3412', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                                  >⚠ 검증/수정 요청</button>
+                                </>
+                              ) : finalRequested && !isFinalConfirmed ? (
+                                <>
+                                  <button
+                                    onClick={handleFinalConfirm}
+                                    style={{ flex: 1, padding: '12px', borderRadius: 8, border: 'none', background: '#7c3aed', color: 'white', fontSize: 14, fontWeight: 800, cursor: 'pointer' }}
+                                  >📝 최종 확정</button>
+                                  <button
+                                    onClick={handleReviewRequest}
+                                    style={{ flex: '0 0 auto', padding: '12px 14px', borderRadius: 8, border: '1px solid #d97706', background: '#fff7ed', color: '#9a3412', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                                  >⚠ 추가 요청</button>
+                                </>
+                              ) : (
+                                <button
+                                  onClick={handleReviewRequest}
+                                  style={{ flex: 1, padding: '10px', borderRadius: 8, border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                                >추가 검증/수정 요청</button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {/* 컨트롤타워 — 이번 분기 예상 정산 (단색 다크네이비, 모노톤) */}
                     <div style={{ background: '#1e293b', borderRadius: 16, padding: '20px 22px', color: 'white', position: 'relative', overflow: 'hidden' }}>
                       <div style={{ fontSize: 11, opacity: 0.7, fontWeight: 600, letterSpacing: '0.1em' }}>{viewingUser}님 · 이번 분기 예상 정산 · {nowY}-Q{nowQ}</div>
@@ -12558,186 +12739,6 @@ tr.suppressed td.fname{color:#64748b;}
                       </div>
                     </div>
 
-                    {/* ③ 신규 — 1분기 실적 확인 패널 (확인완료 / 검증요청 / 최종확정) */}
-                    {(() => {
-                      const qKey = `${nowY}-Q${nowQ}`;
-                      const myConfirmation = quarterConfirmations[qKey]?.[viewingUser] || {};
-                      const isConfirmed = myConfirmation.confirmed === true;
-                      const finalRequested = !!myConfirmation.finalRequestedAt;
-                      const isFinalConfirmed = myConfirmation.finalConfirmed === true;
-                      const reviewRequests = myConfirmation.reviewRequests || {};
-                      const reviewRequestArr = Object.entries(reviewRequests).map(([k, v]) => ({ id: k, ...v }));
-                      const deadlineStr = `${nowY}-${String(nowQ * 3 + 1).padStart(2, '0')}-24`; // 분기 종료 익월 24일
-
-                      const handleFinalConfirm = async () => {
-                        // 행동 강제력 — 리스크 미해결 상태에서 최종 확정 차단
-                        const blockingRisks = [];
-                        if (unverifiedRisk.length > 0) blockingRisks.push(`미검증 ${unverifiedRisk.length}건`);
-                        if (waitingSupport.length > 0) blockingRisks.push(`지원자 판정 대기 ${waitingSupport.length}건`);
-                        if (blockingRisks.length > 0) {
-                          alert(`⚠ 최종 확정 차단\n\n먼저 해결해야 할 리스크:\n  - ${blockingRisks.join('\n  - ')}\n\n리스크 카드 클릭해서 처리 후 다시 시도해주세요.`);
-                          return;
-                        }
-                        if (!window.confirm(`${qKey} 실적을 "최종 확정" 처리합니다.\n\n이후 김유림님에게 분기 보고서가 발송됩니다. 진행?`)) return;
-                        try {
-                          await database.ref(`quarterConfirmations/${qKey}/${viewingUser}`).update({
-                            finalConfirmed: true,
-                            finalConfirmedAt: new Date().toISOString(),
-                            finalConfirmedBy: currentUser?.name || viewingUser,
-                          });
-                          if (jandiUrl) {
-                            try {
-                              await fetch(jandiUrl, {
-                                method: 'POST', mode: 'no-cors',
-                                headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  body: `✅ ${qKey} 최종 확정 — ${viewingUser}`,
-                                  connectColor: '#7c3aed',
-                                  connectInfo: [{ title: '담당자 2라운드 최종 확정', description: `${viewingUser}님이 ${qKey} 실적을 최종 확정 처리했습니다.` }],
-                                }),
-                              });
-                            } catch {}
-                          }
-                          alert('✅ 최종 확정 완료');
-                        } catch (e) { alert('저장 실패: ' + e.message); }
-                      };
-                      const handleConfirm = async () => {
-                        if (!window.confirm(`${qKey} 실적을 "확인완료" 처리합니다.\n\n이후 수정이 필요하면 관리자에게 요청해야 합니다. 진행?`)) return;
-                        try {
-                          await database.ref(`quarterConfirmations/${qKey}/${viewingUser}`).update({
-                            confirmed: true,
-                            confirmedAt: new Date().toISOString(),
-                            confirmedBy: currentUser?.name || viewingUser,
-                          });
-                          // admin 채널로 알림
-                          if (jandiUrl) {
-                            try {
-                              await fetch(jandiUrl, {
-                                method: 'POST', mode: 'no-cors',
-                                headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  body: `✅ ${qKey} 실적 확인 완료 — ${viewingUser}`,
-                                  connectColor: '#16a34a',
-                                  connectInfo: [{ title: '담당자 자가 확인 완료', description: `${viewingUser}님이 ${qKey} 실적을 확인 완료 처리했습니다.` }],
-                                }),
-                              });
-                            } catch {}
-                          }
-                          alert('확인 완료되었습니다.');
-                        } catch (e) { alert('저장 실패: ' + e.message); }
-                      };
-                      const handleReviewRequest = async () => {
-                        const txt = window.prompt(`${qKey} 실적 중 수정/검증이 필요한 내용을 관리자에게 요청합니다.\n\n예시:\n- ○○단지 결과가 누락됨\n- △△단지 감리 건인데 일반으로 집계됨\n\n요청 내용:`);
-                        if (!txt || !txt.trim()) return;
-                        const trimmed = txt.trim();
-                        try {
-                          const ref = database.ref(`quarterConfirmations/${qKey}/${viewingUser}/reviewRequests`).push();
-                          await ref.set({
-                            text: trimmed,
-                            requestedAt: new Date().toISOString(),
-                            requestedBy: currentUser?.name || viewingUser,
-                            status: 'open',
-                          });
-                          // admin 채널 + 해당 담당자 개인 채널로도 알림
-                          if (jandiUrl) {
-                            try {
-                              await fetch(jandiUrl, {
-                                method: 'POST', mode: 'no-cors',
-                                headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  body: `⚠ ${qKey} 검증/수정 요청 — ${viewingUser}`,
-                                  connectColor: '#d97706',
-                                  connectInfo: [{ title: `${viewingUser}님의 요청`, description: trimmed }],
-                                }),
-                              });
-                            } catch {}
-                          }
-                          alert('검증 요청이 관리자에게 전달되었습니다.');
-                        } catch (e) { alert('저장 실패: ' + e.message); }
-                      };
-                      return (
-                        <div style={cardStyle}>
-                          <div style={{ padding: '16px 20px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>📋 {qKey} 실적 확인</span>
-                            <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 10, background: isFinalConfirmed ? '#ede9fe' : isConfirmed ? '#dcfce7' : '#fef3c7', color: isFinalConfirmed ? '#5b21b6' : isConfirmed ? '#166534' : '#92400e' }}>
-                              {isFinalConfirmed ? '✅ 최종확정' : finalRequested ? '📝 최종확정 대기' : isConfirmed ? '✅ 1차 확인완료' : '⏳ 확인 대기'}
-                            </span>
-                          </div>
-                          <div style={{ padding: '0 16px 14px' }}>
-                            {!isConfirmed && (
-                              <div style={{ padding: '10px 12px', background: '#fef3c7', borderRadius: 8, border: '1px solid #fde68a', fontSize: 11, color: '#92400e', lineHeight: 1.6, marginBottom: 10 }}>
-                                본인 {qKey} 실적을 [실적] 탭에서 확인 후 아래 버튼을 눌러주세요.<br />
-                                마감일: <b>{deadlineStr}</b> · 미확인 시 매일 2회 (09시·17시) 리마인드 발송
-                              </div>
-                            )}
-                            {isConfirmed && myConfirmation.confirmedAt && (
-                              <div style={{ padding: '10px 12px', background: '#ecfdf5', borderRadius: 8, border: '1px solid #a7f3d0', fontSize: 11, color: '#065f46', marginBottom: 10 }}>
-                                확인 완료: {(myConfirmation.confirmedAt || '').slice(0, 16).replace('T', ' ')}
-                                {myConfirmation.confirmedBy && myConfirmation.confirmedBy !== viewingUser ? ` (${myConfirmation.confirmedBy} 처리)` : ''}
-                              </div>
-                            )}
-                            {/* 이미 제출된 검증 요청 */}
-                            {reviewRequestArr.length > 0 && (
-                              <div style={{ padding: '8px 10px', background: '#fff7ed', borderRadius: 8, border: '1px solid #fed7aa', marginBottom: 10 }}>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: '#9a3412', marginBottom: 4 }}>📌 제출된 검증/수정 요청 ({reviewRequestArr.length})</div>
-                                {reviewRequestArr.map(r => (
-                                  <div key={r.id} style={{ fontSize: 11, color: '#7c2d12', padding: '4px 0', borderTop: '1px dashed #fed7aa' }}>
-                                    <span style={{ fontWeight: 700, color: r.status === 'resolved' ? '#047857' : '#9a3412' }}>[{r.status === 'resolved' ? '처리완료' : '확인중'}]</span>{' '}
-                                    {r.text}
-                                    <span style={{ color: '#94a3b8', marginLeft: 4, fontSize: 10 }}>· {(r.requestedAt || '').slice(5, 16).replace('T', ' ')}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {/* 2라운드 최종확정 요청 배너 */}
-                            {finalRequested && !isFinalConfirmed && (
-                              <div style={{ padding: '12px 14px', background: '#ede9fe', border: '1.5px solid #c4b5fd', borderRadius: 10, marginBottom: 10 }}>
-                                <div style={{ fontSize: 12, fontWeight: 800, color: '#5b21b6', marginBottom: 4 }}>📝 관리자가 최종 확정을 요청했습니다</div>
-                                <div style={{ fontSize: 11, color: '#6d28d9', lineHeight: 1.6 }}>
-                                  검증/수정 요청이 모두 처리되었습니다. 아래 [최종 확정] 버튼을 눌러주세요.<br />
-                                  최종 확정 후 김유림님에게 분기 보고서가 자동 발송됩니다.
-                                </div>
-                              </div>
-                            )}
-                            {isFinalConfirmed && (
-                              <div style={{ padding: '10px 12px', background: '#ede9fe', borderRadius: 8, border: '1px solid #c4b5fd', fontSize: 11, color: '#5b21b6', marginBottom: 10 }}>
-                                ✅ 최종 확정 완료: {(myConfirmation.finalConfirmedAt || '').slice(0, 16).replace('T', ' ')}
-                              </div>
-                            )}
-                            <div style={{ display: 'flex', gap: 6 }}>
-                              {!isConfirmed ? (
-                                <>
-                                  <button
-                                    onClick={handleConfirm}
-                                    style={{ flex: 1, padding: '10px', borderRadius: 8, border: 'none', background: '#16a34a', color: 'white', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                                  >✅ 이상없음 · 확인완료</button>
-                                  <button
-                                    onClick={handleReviewRequest}
-                                    style={{ flex: 1, padding: '10px', borderRadius: 8, border: '1px solid #d97706', background: '#fff7ed', color: '#9a3412', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                                  >⚠ 검증/수정 요청</button>
-                                </>
-                              ) : finalRequested && !isFinalConfirmed ? (
-                                <>
-                                  <button
-                                    onClick={handleFinalConfirm}
-                                    style={{ flex: 1, padding: '12px', borderRadius: 8, border: 'none', background: '#7c3aed', color: 'white', fontSize: 14, fontWeight: 800, cursor: 'pointer' }}
-                                  >📝 최종 확정</button>
-                                  <button
-                                    onClick={handleReviewRequest}
-                                    style={{ flex: '0 0 auto', padding: '12px 14px', borderRadius: 8, border: '1px solid #d97706', background: '#fff7ed', color: '#9a3412', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
-                                  >⚠ 추가 요청</button>
-                                </>
-                              ) : (
-                                <button
-                                  onClick={handleReviewRequest}
-                                  style={{ flex: 1, padding: '10px', borderRadius: 8, border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                                >추가 검증/수정 요청</button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
 
                     {/* 분기 미확정 PT */}
                     {isAdmin && adminTotalUnconfirmed > 0 && (
