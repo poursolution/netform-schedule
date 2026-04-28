@@ -1985,6 +1985,8 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
       if (!(stl.requested === true || stl.manualVerified === true)) continue;
       // 이미 정산완료된 건은 다음 분기 들어가지 않게 제외
       if (stl.completed === true) continue;
+      // 중복 처리된(superseded) PT 도 분기 정산에서 빠짐
+      if (stl.superseded === true || stl.status === 'superseded') continue;
       const confirmDate = ptDate;
       const assigneeQK = quarterKey;
 
