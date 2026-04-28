@@ -9774,8 +9774,8 @@ const SETTLEMENT_BADGE_STYLE = {
                                 })}
                               </div>
 
-                              {/* 검토필요 묶음 처리 (admin only + unverified 탭일 때만) */}
-                              {siteListTab === 'unverified' && currentUser?.isAdmin && filteredRows.length > 0 && (
+                              {/* 검토필요 묶음 처리 (admin + 한준엽 + unverified 탭일 때만) */}
+                              {siteListTab === 'unverified' && (currentUser?.isAdmin || currentUser?.name === '한준엽') && filteredRows.length > 0 && (
                                 <div style={{ marginBottom: 12, padding: '12px 14px', background: '#fef2f2', border: '1.5px solid #fecaca', borderRadius: 10, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
                                   <div style={{ flex: 1, minWidth: 200, fontSize: 12, color: '#991b1b' }}>
                                     <div style={{ fontWeight: 700, marginBottom: 2 }}>🛠 관리자 묶음 처리 ({filteredRows.length}건)</div>
@@ -10504,9 +10504,9 @@ tr.suppressed td.fname{color:#64748b;}
                                                       }
                                                     }} style={{ width: '14px', height: '14px', cursor: 'pointer' }} /> 정산요청
                                                   </label>
-                                                  <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: currentUser?.isAdmin ? 'pointer' : 'not-allowed', opacity: currentUser?.isAdmin ? 1 : 0.6 }} title={currentUser?.isAdmin ? '' : '관리자만 변경 가능'}>
+                                                  <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: (currentUser?.isAdmin || currentUser?.name === '한준엽') ? 'pointer' : 'not-allowed', opacity: (currentUser?.isAdmin || currentUser?.name === '한준엽') ? 1 : 0.6 }} title={(currentUser?.isAdmin || currentUser?.name === '한준엽') ? '' : '관리자만 변경 가능'}>
                                                     <input type="checkbox" checked={!!aSettlement.completed} onChange={() => {
-                                                      if (!currentUser?.isAdmin) return;
+                                                      if (!currentUser?.isAdmin && currentUser?.name !== '한준엽') return;
                                                       const newVal = !aSettlement.completed;
                                                       const nowISO = new Date().toISOString();
                                                       setPtSchedules(prev => prev.map(ps => {
