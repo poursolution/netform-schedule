@@ -19341,9 +19341,55 @@ tr.suppressed td.fname{color:#64748b;}
                 setQuarterReportBusy(false);
               }
             };
-            const handleOpenMail = () => {
-              const link = buildMailtoLink(report, 'yurim@netformrnd.com');
-              window.location.href = link;
+            // 김유림에게 잔디 웹훅으로 분기보고서 요약 전송 (메일 대신)
+            const sendToYurimJandi = async () => {
+              const yurimHook = jandiUserWebhooks?.['김유림'];
+              if (!yurimHook?.url || yurimHook.enabled === false) {
+                alert('김유림 잔디 웹훅이 등록되지 않았거나 비활성 상태입니다.');
+                return false;
+              }
+              const totalAmt = (qSettlement?.totals?.totalEstimated || 0).toLocaleString('ko-KR');
+              const totalCnt = qSettlement?.totals?.totalCount || 0;
+              const perA = qSettlement?.perAssignee || {};
+              const perList = Object.values(perA)
+                .filter(a => (a?.totalCount || 0) > 0)
+                .sort((a, b) => (b.estimatedAmount || 0) - (a.estimatedAmount || 0))
+                .map(a => {
+                  const wd = (a.winCount || 0) + (a.drawCount || 0);
+                  const sup = a.supportCount || 0;
+                  const supLbl = sup > 0 ? ` + 지원${sup}` : '';
+                  return `  ${a.assignee}: ${wd}건${supLbl} · ${(a.estimatedAmount || 0).toLocaleString('ko-KR')}원`;
+                })
+                .join('\n');
+              try {
+                await fetch(yurimHook.url, {
+                  method: 'POST',
+                  mode: 'no-cors',
+                  headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    body: `📊 [${quarterReportYear}년 ${report.range.label} 분기 종합 보고서 — 김유림 발송]`,
+                    connectColor: '#7c3aed',
+                    connectInfo: [{
+                      title: `예상 정산 합계: ${totalAmt}원 · 총 ${totalCnt}건`,
+                      description: [
+                        '담당자별:',
+                        perList,
+                        '',
+                        '👉 첨부파일은 시스템에서 다운로드된 Excel + PDF 를 별도 잔디 메시지로 첨부해주세요.',
+                        `발송자: ${currentUser?.name || 'admin'} · ${new Date().toISOString().slice(0,16).replace('T',' ')}`,
+                      ].join('\n'),
+                    }],
+                  }),
+                });
+                return true;
+              } catch (e) {
+                alert('잔디 웹훅 전송 실패: ' + e.message);
+                return false;
+              }
+            };
+            const handleOpenMail = async () => {
+              await sendToYurimJandi();
+              alert('김유림 잔디 채널로 보고서 요약 전송됨. 다운로드된 Excel + PDF 파일을 잔디에 직접 첨부해주세요.');
             };
             const handlePreview = () => {
               // 새 창에 보고서 HTML 미리보기 (admin 확인용)
@@ -19362,7 +19408,7 @@ tr.suppressed td.fname{color:#64748b;}
               }
               const confirmMsg = hasSettlementData && !allFinalConfirmed
                 ? `⚠ 가드 우회 발송\n\n미확정 ${missingFinalConfirm.length}명 (${missingFinalConfirm.join(', ')}) 임에도 발송합니다.\n\n이후 재발송이 어려우므로 신중히 진행해주세요. 진행?`
-                : `"${quarterReportYear}년 ${report.range.label} 종합 보고서"를\n김유림(yurim@netformrnd.com)에게 발송하시겠습니까?\n\n승인 시:\n1) Excel + PDF 자동 다운로드\n2) 메일 작성 창 열림\n3) 다운로드된 파일 2개를 첨부하여 발송`;
+                : `"${quarterReportYear}년 ${report.range.label} 종합 보고서"를\n김유림 잔디 채널로 발송하시겠습니까?\n\n승인 시:\n1) Excel + PDF 자동 다운로드\n2) 김유림 잔디 채널에 보고 요약 자동 전송\n3) 다운로드된 파일 2개를 잔디에서 직접 첨부`;
               if (!window.confirm(confirmMsg)) return;
               setQuarterReportBusy(true);
               try {
@@ -19411,8 +19457,10 @@ tr.suppressed td.fname{color:#64748b;}
                     }
                   } catch (e) { console.warn('[quarter-report-sent] save failed', e); }
                 }
+                // 메일 대신 잔디 웹훅 발송 (김유림)
+                await sendToYurimJandi();
                 setTimeout(() => {
-                  window.location.href = buildMailtoLink(report, 'yurim@netformrnd.com');
+                  alert('✅ 김유림 잔디 채널에 보고 요약 전송됨\n\n다운로드된 Excel + PDF 파일을 김유림 잔디 채널에 직접 첨부해주세요.');
                 }, 500);
               } catch (e) {
                 alert('처리 실패: ' + e.message);
