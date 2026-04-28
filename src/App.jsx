@@ -11838,25 +11838,16 @@ tr.suppressed td.fname{color:#64748b;}
                   if (stl.superseded === true || stl.status === 'superseded') return false;
                   return true;
                 };
+                // 단일 source of truth: calculateSettlementAmount (모든 화면 동일 룰)
                 const thisQuarterAmount = myPtSchedules.filter(_inQuarter).reduce((sum, s) => {
-                  const r = getMyResult(s);
-                  if (!r || s.selfPT) return sum;
-                  const stl = s.settlement?.[viewingUser] || {};
-                  if (stl.selfSales) return sum;
-                  if (r === '승') return sum + 500000;
-                  if (r === '무' || r === '지원') return sum + 250000;
-                  return sum;
+                  return sum + (calculateSettlementAmount(s, viewingUser).amount || 0);
                 }, 0);
 
                 // 누적 수령 금액 (정산완료된 건만)
                 const paidAmount = myPtSchedules.reduce((sum, s) => {
-                  const r = getMyResult(s);
-                  if (!r || s.selfPT) return sum;
                   const stl = s.settlement?.[viewingUser] || {};
-                  if (stl.selfSales || !stl.completed) return sum;
-                  if (r === '승') return sum + 500000;
-                  if (r === '무' || r === '지원') return sum + 250000;
-                  return sum;
+                  if (!stl.completed) return sum;
+                  return sum + (calculateSettlementAmount(s, viewingUser).amount || 0);
                 }, 0);
 
                 // 미확정 PT 관리 데이터 — nowQ/nowY 와 동일 (grace period 보정값)
@@ -12141,16 +12132,12 @@ tr.suppressed td.fname{color:#64748b;}
                   return !stl.completed && !stl.selfSales;
                 }).length;
 
-                // 💰 컨트롤타워 — 분기 예상 정산 상태별 금액 분리
+                // 💰 컨트롤타워 — 단일 source of truth (calculateSettlementAmount) + 상태별 분리
                 const qMoney = thisQuarterPts.reduce((acc, s) => {
-                  if (s.selfPT) return acc;
-                  const r = getMyResult(s);
-                  if (!r || r === '패') return acc;
+                  const calc = calculateSettlementAmount(s, viewingUser);
+                  const amount = calc.amount || 0;
+                  if (amount <= 0) return acc;
                   const stl = s.settlement?.[viewingUser] || {};
-                  if (stl.selfSales) return acc;
-                  const isSup = /감리/.test((s.workType || '') + '|' + (s.siteName || ''));
-                  let amount = isSup ? 80000 : (r === '승' ? 500000 : 250000);
-                  if (s.kaptVerified?.status === 'cancelled') return acc;
                   acc.total += amount;
                   if (stl.completed) acc.completed += amount;
                   else if (stl.confirmed || stl.finalConfirmed) acc.confirmed += amount;
@@ -12165,13 +12152,9 @@ tr.suppressed td.fname{color:#64748b;}
                 const prevQStart = `${prevQY}-${String((prevQNum - 1) * 3 + 1).padStart(2, '0')}-01`;
                 const prevQEnd = `${prevQY}-${String(prevQNum * 3).padStart(2, '0')}-31`;
                 const prevQMoney = myPtSchedules.filter(s => s.date >= prevQStart && s.date <= prevQEnd).reduce((sum, s) => {
-                  if (s.selfPT) return sum;
-                  const r = getMyResult(s);
-                  if (!r || r === '패') return sum;
                   const stl = s.settlement?.[viewingUser] || {};
-                  if (stl.selfSales) return sum;
-                  const isSup = /감리/.test((s.workType || '') + '|' + (s.siteName || ''));
-                  const amt = isSup ? 80000 : (r === '승' ? 500000 : 250000);
+                  if (stl.superseded === true || stl.status === 'superseded') return sum;
+                  const amt = calculateSettlementAmount(s, viewingUser).amount || 0;
                   return sum + amt;
                 }, 0);
                 const qDelta = prevQMoney > 0 ? Math.round((qMoney.total - prevQMoney) / prevQMoney * 100) : 0;
@@ -12846,178 +12829,8 @@ tr.suppressed td.fname{color:#64748b;}
                       )}
                     </div>
 
-                    {/* ② 신규 — 이번 분기 실적·정산 요약 */}
-                    <div style={cardStyle}>
-                      <div style={{ padding: '16px 20px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: 15, fontWeight: 700, color: '#1e293b' }}>이번 분기 요약</span>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', background: '#f1f5f9', borderRadius: 10, padding: '2px 10px' }}>{nowY}-Q{nowQ}</span>
-                      </div>
-                      <div style={{ padding: '0 16px 14px' }}>
-                        {/* 실적 4박스 — 흰 카드 + 컬러 숫자만 */}
-                        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-                          <div style={{ flex: 1, padding: '10px 8px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0', textAlign: 'center' }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', marginBottom: 2 }}>승</div>
-                            <div style={{ fontSize: 18, fontWeight: 800, color: '#2563eb' }}>{qWins}</div>
-                          </div>
-                          <div style={{ flex: 1, padding: '10px 8px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0', textAlign: 'center' }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', marginBottom: 2 }}>무</div>
-                            <div style={{ fontSize: 18, fontWeight: 800, color: '#f59e0b' }}>{qDraws}</div>
-                          </div>
-                          <div style={{ flex: 1, padding: '10px 8px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0', textAlign: 'center' }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', marginBottom: 2 }}>패</div>
-                            <div style={{ fontSize: 18, fontWeight: 800, color: '#dc2626' }}>{qLosses}</div>
-                          </div>
-                          <div style={{ flex: 1, padding: '10px 8px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0', textAlign: 'center' }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', marginBottom: 2 }}>지원</div>
-                            <div style={{ fontSize: 18, fontWeight: 800, color: '#64748b' }}>{qSupports}</div>
-                          </div>
-                        </div>
-                        {/* 정산 블록 — 흰 배경 + 좌측 초록 컬러바 */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: '#ffffff', borderRadius: 10, border: '1px solid #e2e8f0', borderLeft: '4px solid #16a34a' }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', marginBottom: 2 }}>이번 분기 예상 정산금액</div>
-                            <div style={{ fontSize: 20, fontWeight: 800, color: '#16a34a' }}>{thisQuarterAmount.toLocaleString('ko-KR')}<span style={{ fontSize: 12, fontWeight: 600, marginLeft: 2, color: '#1e293b' }}>원</span></div>
-                          </div>
-                          <div style={{ textAlign: 'right' }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', marginBottom: 2 }}>미정산</div>
-                            <div style={{ fontSize: 16, fontWeight: 800, color: qUnsettledCount > 0 ? '#f59e0b' : '#64748b' }}>{qUnsettledCount}<span style={{ fontSize: 10, fontWeight: 600, marginLeft: 2 }}>건</span></div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
 
 
-                    {/* 분기 미확정 PT */}
-                    {isAdmin && adminTotalUnconfirmed > 0 && (
-                      <div style={cardStyle}>
-                        <div style={{ padding: '16px 20px 14px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>분기 미확정 PT</span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <span style={{ fontSize: 10, fontWeight: 600, color: '#94a3b8' }}>Q{currentQuarterNum}</span>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: 'white', background: '#f59e0b', borderRadius: 10, padding: '2px 8px', lineHeight: 1.4 }}>{adminTotalUnconfirmed}건</span>
-                            </div>
-                          </div>
-                          <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 3 }}>아직 최종 결과가 확정되지 않은 PT</div>
-                        </div>
-
-                        {/* 상태별 카운트 - 담당자 뷰 */}
-                        {!isAdmin && (
-                          <div style={{ padding: '0 16px 12px' }}>
-                            {[
-                              { status: '결과확인중', color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe' },
-                              { status: '연락없음', color: '#ef4444', bg: '#fef2f2', border: '#fecaca' },
-                              { status: '진행보류', color: '#f97316', bg: '#fff7ed', border: '#fed7aa' },
-                              { status: '진행중단', color: '#6b7280', bg: '#f9fafb', border: '#e5e7eb' },
-                            ].filter(item => unconfirmedByStatus[item.status] > 0).map(item => (
-                              <div key={item.status}
-                                onClick={() => { setUnconfirmedPtFilter(item.status); setUnconfirmedPtQuarter('all'); setUnconfirmedPtAssignee(viewingUser); setShowUnconfirmedPtModal(true); }}
-                                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 10, marginBottom: 4, cursor: 'pointer', background: item.bg, border: `1px solid ${item.border}`, transition: 'opacity 0.15s' }}
-                                onMouseOver={e => e.currentTarget.style.opacity = '0.8'}
-                                onMouseOut={e => e.currentTarget.style.opacity = '1'}>
-                                <div style={{ width: 4, height: 24, borderRadius: 2, background: item.color, flexShrink: 0 }} />
-                                <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: item.color }}>{item.status}</span>
-                                <span style={{ fontSize: 16, fontWeight: 800, color: item.color }}>{unconfirmedByStatus[item.status]}<span style={{ fontSize: 10, fontWeight: 600 }}>건</span></span>
-                                <span style={{ fontSize: 10, color: item.color, opacity: 0.5 }}>▸</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* 관리자 뷰 - 담당자별 */}
-                        {isAdmin && (
-                          <div style={{ padding: '0 16px 12px' }}>
-                            {/* 상태 요약 바 */}
-                            <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-                              {[
-                                { status: '결과확인중', color: '#3b82f6' },
-                                { status: '연락없음', color: '#ef4444' },
-                                { status: '진행보류', color: '#f97316' },
-                                { status: '진행중단', color: '#6b7280' },
-                              ].map(item => {
-                                const allCount = ptSchedules.filter(s => {
-                                  if (!s.date || s.dateType !== 'confirmed' || s.date >= todayStr) return false;
-                                  const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
-                                  return assignees.some(a => getPtTrackingStatus(s, a) === item.status);
-                                }).length;
-                                return allCount > 0 ? (
-                                  <span key={item.status} style={{ fontSize: 11, fontWeight: 600, color: item.color, background: `${item.color}14`, padding: '3px 8px', borderRadius: 6 }}>
-                                    {item.status} {allCount}건
-                                  </span>
-                                ) : null;
-                              })}
-                            </div>
-                            {/* 담당자별 그리드 */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
-                              {adminUnconfirmedByPerson.map(p => {
-                                const qcKey = `${currentYearNum}-Q${currentQuarterNum}`;
-                                const isQConfirmed = quarterConfirmations[qcKey]?.[p.name]?.confirmed === true;
-                                return (
-                                <div key={p.name}
-                                  onClick={() => { setUnconfirmedPtFilter('all'); setUnconfirmedPtQuarter('all'); setUnconfirmedPtAssignee(p.name); setShowUnconfirmedPtModal(true); }}
-                                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderRadius: 8, cursor: 'pointer', background: '#f8fafc', border: '1px solid #e2e8f0', transition: 'background 0.15s' }}
-                                  onMouseOver={e => e.currentTarget.style.background = '#f1f5f9'}
-                                  onMouseOut={e => e.currentTarget.style.background = '#f8fafc'}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    <span style={{ fontSize: 12, fontWeight: 600, color: '#1a1a2e' }}>{p.name}</span>
-                                    {isQConfirmed ? (
-                                      <span style={{ fontSize: 9, fontWeight: 700, color: '#059669', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 4, padding: '1px 5px' }}>&#10004;</span>
-                                    ) : (
-                                      <span style={{ fontSize: 9, fontWeight: 600, color: '#f59e0b', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 4, padding: '1px 5px' }}>미확인</span>
-                                    )}
-                                  </div>
-                                  <span style={{ fontSize: 13, fontWeight: 800, color: '#f59e0b' }}>{p.count}<span style={{ fontSize: 9, fontWeight: 600 }}>건</span></span>
-                                </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* 90일+ 경고 */}
-                        {criticalPts.length > 0 && (
-                          <div onClick={() => { setUnconfirmedPtFilter('all'); setUnconfirmedPtQuarter('all'); setUnconfirmedPtAssignee(isAdmin ? null : viewingUser); setShowUnconfirmedPtModal(true); }}
-                            style={{ margin: '0 16px 12px', padding: '8px 12px', borderRadius: 8, background: '#fef2f2', border: '1px solid #fecaca', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                            <span style={{ fontSize: 12 }}>⚠️</span>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: '#dc2626' }}>90일 이상 미확정 {criticalPts.length}건</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* 이번 주 일정 */}
-                    {thisWeekSchedules.length > 0 && (
-                      <div style={cardStyle}>
-                        {sectionTitle('이번 주 일정', `${thisWeekSchedules.length}건`)}
-                        {thisWeekSchedules.slice(0, 8).map((s, idx) => {
-                          const ts = getTypeStyle(s.type);
-                          const dateDisplay = (() => {
-                            if (s.dateType === 'confirmed' && s.date) {
-                              const parts = s.date.split('-');
-                              const d = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
-                              const days = ['\uC77C','\uC6D4','\uD654','\uC218','\uBAA9','\uAE08','\uD1A0'];
-                              return `${parseInt(parts[1])}/${parseInt(parts[2])}(${days[d.getDay()]})`;
-                            }
-                            return '';
-                          })();
-                          return (
-                            <div key={s.id || idx} onClick={() => handleEditClick(s)} style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, borderTop: '1px solid #f5f6f8', cursor: 'pointer', transition: 'background 0.15s' }}
-                              onMouseOver={e => e.currentTarget.style.background = '#f8f9fb'}
-                              onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
-                              <div style={{ width: 3, height: 24, borderRadius: 2, background: typeColorMap[s.type] || '#94a3b8', flexShrink: 0 }} />
-                              <div style={{ padding: '1px 5px', borderRadius: 3, background: `${typeColorMap[s.type] || '#94a3b8'}14`, fontSize: 8, fontWeight: 700, color: typeColorMap[s.type] || '#64748b', flexShrink: 0 }}>{ts.label}</div>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: '#1a1a2e', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.siteName || s.title || '-'}</div>
-                              </div>
-                              <div style={{ fontSize: 10, fontWeight: 600, color: '#8e99a4', flexShrink: 0 }}>{dateDisplay}</div>
-                            </div>
-                          );
-                        })}
-                        {thisWeekSchedules.length > 8 && (
-                          <div style={{ textAlign: 'center', fontSize: 10, color: '#8e99a4', padding: '8px 16px', borderTop: '1px solid #f5f6f8', fontWeight: 600 }}>+{thisWeekSchedules.length - 8}건 더보기</div>
-                        )}
-                      </div>
-                    )}
 
                     {/* 핵심 KPI section */}
                     <div style={cardStyle}>
