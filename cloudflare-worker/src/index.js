@@ -1988,8 +1988,14 @@ async function sendQuarterlyConfirmationReminders(env, opts = {}) {
   const deadlineLabel = deadline ? `${deadline.getUTCFullYear()}-${String(deadline.getUTCMonth() + 1).padStart(2, '0')}-${String(deadline.getUTCDate()).padStart(2, '0')}` : '-';
   const results = { sent: 0, skippedConfirmed: 0, skippedNoHook: 0, failed: 0, quarterKey, deadline: deadlineLabel, attempts: [] };
 
+  // 리마인더 제외 대상 (사용자 요청)
+  const REMINDER_EXCLUDED = ['조현식'];
+  // 입력/확인 페이지 — 알림 클릭 시 바로 진입
+  const HOMEPAGE_URL = env.HOMEPAGE_URL || 'https://schedules-cip.pages.dev';
+
   for (const [name, agg] of Object.entries(perAssignee)) {
     if (!agg || (agg.totalCount || 0) === 0) continue;
+    if (REMINDER_EXCLUDED.includes(name)) { results.attempts.push(`${name}: 리마인더 제외 대상 (스킵)`); continue; }
     const conf = confirmations[name] || {};
     if (conf.confirmed === true) { results.skippedConfirmed++; results.attempts.push(`${name}: 확인완료 (스킵)`); continue; }
     const hook = hooks[name];
@@ -2008,7 +2014,10 @@ async function sendQuarterlyConfirmationReminders(env, opts = {}) {
           `  승 ${agg.winCount || 0} / 무 ${agg.drawCount || 0} / 지원 ${agg.supportCount || 0}${agg.supervisionCount ? ` / 감리 ${agg.supervisionCount}` : ''}`,
           agg.reviewCount > 0 ? `  ⚠ 검토필요: ${agg.reviewCount}건` : '',
           '',
-          '👉 마이페이지에서 "이상없음·확인완료" 또는 "검증/수정 요청" 처리 부탁드립니다.',
+          '👉 입력하기 / 확인하기 :',
+          HOMEPAGE_URL,
+          '',
+          '마이페이지에서 "이상없음·확인완료" 또는 "검증/수정 요청" 처리 부탁드립니다.',
           firstDate !== '-' ? `처음 알림: ${firstDate}` : '',
         ].filter(Boolean).join('\n'),
       }],
