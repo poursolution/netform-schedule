@@ -10084,6 +10084,38 @@ const SETTLEMENT_BADGE_STYLE = {
                                                 🚫 취소공고
                                               </span>
                                             )}
+                                            {/* 미검증 탭 — 한준엽·admin 만 [✓ 확인 통과] 버튼: manualVerified=true 마킹 즉시 미검증에서 제외 */}
+                                            {siteListTab === 'unverified' && (currentUser?.isAdmin || currentUser?.name === '한준엽') && card.manager && (() => {
+                                              const stl = s?.settlement?.[card.manager] || {};
+                                              if (stl.manualVerified === true) return null; // 이미 통과
+                                              return (
+                                                <button
+                                                  onClick={async (e) => {
+                                                    e.stopPropagation();
+                                                    if (!firebaseEnabled || !database) return;
+                                                    if (!window.confirm(`${card.siteName} (${card.manager}) — 검증 통과로 처리합니다.\n\n이후 미검증에서 사라지고 정산 대상에 포함됩니다. 진행?`)) return;
+                                                    try {
+                                                      const nowISO = new Date().toISOString();
+                                                      const enc = encodeURIComponent(card.manager);
+                                                      const updates = {
+                                                        manualVerified: true,
+                                                        manualVerifiedAt: nowISO,
+                                                        manualVerifiedBy: currentUser?.name || 'admin',
+                                                        reviewBypassedBy: currentUser?.name || 'admin',
+                                                      };
+                                                      await database.ref(`pt/${card.id}/settlement/${card.manager}`).update(updates);
+                                                      // 로컬 state 즉시 갱신 → 카드 즉시 사라짐
+                                                      setPtSchedules(prev => prev.map(ps => ps.id === card.id ? ({
+                                                        ...ps,
+                                                        settlement: { ...(ps.settlement || {}), [card.manager]: { ...(ps.settlement?.[card.manager] || {}), ...updates } },
+                                                      }) : ps));
+                                                    } catch (err) { alert('저장 실패: ' + err.message); }
+                                                  }}
+                                                  title="확인 통과 처리 — manualVerified=true 마킹 후 즉시 미검증에서 제외"
+                                                  style={{ fontSize: '10px', fontWeight: '800', padding: '2px 10px', borderRadius: '10px', background: '#16a34a', color: 'white', border: 'none', cursor: 'pointer', letterSpacing: '0.02em' }}
+                                                >✓ 확인 통과</button>
+                                              );
+                                            })()}
                                             {currentResult && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: ss.badge, color: ss.text }}>{ss.label}</span>}
                                             {card._type === 'inProgress' && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: '#dbeafe', color: '#1d4ed8' }}>진행중</span>}
                                             {/* PT 리스크 뱃지 (진행중 PT 승률 예측 35% 미만) */}
