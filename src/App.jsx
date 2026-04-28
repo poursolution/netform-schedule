@@ -15964,20 +15964,20 @@ tr.suppressed td.fname{color:#64748b;}
                                   </td>
                                   <td style={{ padding: '8px', textAlign: 'center' }}>
                                     <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                                      {/* 담당자 실적으로 바로가기 — 미확정 PT 모달을 분기·담당자 필터로 오픈 */}
+                                      {/* 담당자 실적으로 바로가기 — 실적 페이지에서 해당 담당자·분기·승리 필터로 표시 */}
                                       <button
                                         onClick={() => {
-                                          // monthlySettlementMonth 는 "2026-Q1" 형태 → quarterRanges 키('1'~'4')로 변환
+                                          // monthlySettlementMonth "2026-Q1" → '1분기' 형태로 변환
                                           const qNumMatch = String(monthlySettlementMonth || '').match(/Q(\d)/);
-                                          const qKey = qNumMatch ? qNumMatch[1] : 'all';
+                                          const qLabel = qNumMatch ? `${qNumMatch[1]}분기` : 'all';
                                           setShowMonthlySettlement(false);
-                                          setUnconfirmedPtFilter('all');
-                                          setUnconfirmedPtQuarter(qKey);
-                                          setUnconfirmedPtAssignee(r.assignee);
-                                          setShowUnconfirmedPtModal(true);
+                                          setShowPerformance(true);
+                                          setSelectedAssignee(r.assignee);
+                                          setExportQuarter(qLabel);
+                                          setSiteListTab('win'); // 승리 PT 검증 우선
                                         }}
                                         style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', background: '#f8fafc', color: '#1e293b', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
-                                        title={`${r.assignee} ${monthlySettlementMonth} PT 실적 보기 — 검토필요·미검증 직접 판단·관리`}
+                                        title={`${r.assignee} ${monthlySettlementMonth} 승리 PT 보기 — 실적 페이지로 이동, 검증 직접 판단·관리`}
                                       >📋 실적보기</button>
                                       {r.status === 'draft' && (
                                         <button onClick={() => updateRowStatus(r.assignee, 'confirmed')} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #93c5fd', background: '#eff6ff', color: '#1e40af', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>확정</button>
