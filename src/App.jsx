@@ -623,6 +623,8 @@ const SETTLEMENT_BADGE_STYLE = {
       const [showMeetingView, setShowMeetingView] = useState(false);
       const [showMyPage, setShowMyPage] = useState(false);
       const [myPageUser, setMyPageUser] = useState(null);
+      // 마이페이지 분기 선택 (null=현재 grace-adjusted 분기, 그 외 "2025-Q4" 같은 키)
+      const [myPageQKey, setMyPageQKey] = useState(null);
       const [myPageTab, setMyPageTab] = useState('overview');
       const [myPageOpenStage, setMyPageOpenStage] = useState(null);
 
@@ -12266,13 +12268,24 @@ tr.suppressed td.fname{color:#64748b;}
                       })()}
                     </div>
 
-                    {/* ③ 신규 — 분기 실적 확인 패널 (확인완료 / 검증요청 / 최종확정)
-                        qKey 는 grace period 보정된 currentYearNum/currentQuarterNum 사용:
-                        - 4월 (Q1 마감 진행 중) + 본인 Q1 finalConfirm 안됨 → Q1 표시
-                        - 4월 + 본인 Q1 finalConfirm 완료 → Q2 표시
-                        - 5월부터 자연스럽게 Q2 표시 */}
+                    {/* ③ 신규 — 분기 실적 확인 패널 (분기 선택 dropdown 포함, 2025년 등 과거 분기 확인 가능)
+                        - 기본: grace period 보정된 현재 분기
+                        - 사용자가 dropdown 으로 다른 분기 선택 시 그 분기 표시 */}
                     {(() => {
-                      const qKey = `${currentYearNum}-Q${currentQuarterNum}`;
+                      const _defaultQKey = `${currentYearNum}-Q${currentQuarterNum}`;
+                      const qKey = myPageQKey || _defaultQKey;
+                      // 분기 선택 옵션 — 최근 8 분기 (2년치)
+                      const _quarterOptions = [];
+                      {
+                        const _today = new Date();
+                        let _y = _today.getFullYear();
+                        let _q = Math.ceil((_today.getMonth() + 1) / 3);
+                        for (let i = 0; i < 8; i++) {
+                          _quarterOptions.push(`${_y}-Q${_q}`);
+                          _q -= 1;
+                          if (_q < 1) { _q = 4; _y -= 1; }
+                        }
+                      }
                       const myConfirmation = quarterConfirmations[qKey]?.[viewingUser] || {};
                       const isConfirmed = myConfirmation.confirmed === true;
                       const finalRequested = !!myConfirmation.finalRequestedAt;
@@ -12373,8 +12386,20 @@ tr.suppressed td.fname{color:#64748b;}
                       };
                       return (
                         <div style={cardStyle}>
-                          <div style={{ padding: '16px 20px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>📋 {qKey} 실적 확인</span>
+                          <div style={{ padding: '16px 20px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>📋 분기 실적 확인</span>
+                              {/* 분기 선택 dropdown — 과거 분기 확인 가능 (2025-Q4 등) */}
+                              <select
+                                value={qKey}
+                                onChange={(e) => setMyPageQKey(e.target.value === _defaultQKey ? null : e.target.value)}
+                                style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 12, fontWeight: 700, color: '#1e293b', background: 'white', cursor: 'pointer' }}
+                              >
+                                {_quarterOptions.map(opt => (
+                                  <option key={opt} value={opt}>{opt}{opt === _defaultQKey ? ' (현재)' : ''}</option>
+                                ))}
+                              </select>
+                            </div>
                             <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 10, background: isFinalConfirmed ? '#ede9fe' : isConfirmed ? '#dcfce7' : '#fef3c7', color: isFinalConfirmed ? '#5b21b6' : isConfirmed ? '#166534' : '#92400e' }}>
                               {isFinalConfirmed ? '✅ 최종확정' : finalRequested ? '📝 최종확정 대기' : isConfirmed ? '✅ 1차 확인완료' : '⏳ 확인 대기'}
                             </span>
