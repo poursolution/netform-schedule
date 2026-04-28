@@ -11731,9 +11731,21 @@ tr.suppressed td.fname{color:#64748b;}
                 }, 0);
 
                 // 미확정 PT 관리 데이터
-                const currentQMonth = new Date().getMonth() + 1;
+                // 분기 마감 grace period 보정:
+                //   분기 첫달(1, 4, 7, 10) 30일 이전 → 직전 분기 (마감일 ~ 다음달 30일까지 직전 분기 확인 진행 중)
+                //   예: 4월 1~30일 → Q1 표시, 5월 → Q2 표시
+                const _now = new Date();
+                const _m = _now.getMonth() + 1;
+                const _d = _now.getDate();
+                let _displayMonth = _m;
+                let _displayYear = _now.getFullYear();
+                if ([1, 4, 7, 10].includes(_m) && _d <= 30) {
+                  _displayMonth = _m - 3;
+                  if (_displayMonth < 1) { _displayMonth += 12; _displayYear -= 1; }
+                }
+                const currentQMonth = _displayMonth;
                 const currentQuarterNum = Math.ceil(currentQMonth / 3);
-                const currentYearNum = new Date().getFullYear();
+                const currentYearNum = _displayYear;
 
                 // 분기 미확정 PT: 최종 결과가 아직 확정되지 않은 모든 PT
                 // 결과확인중(본인PT 포함) + 연락없음 + 진행보류 + 진행중단
