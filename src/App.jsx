@@ -1182,9 +1182,19 @@ const SETTLEMENT_BADGE_STYLE = {
 
       // 관리자 분기정산 모달 (P7 — 월정산 → 분기정산 전환)
       const [showMonthlySettlement, setShowMonthlySettlement] = useState(false);
-      const [monthlySettlementMonth, setMonthlySettlementMonth] = useState(() => {
-        const d = new Date(); return `${d.getFullYear()}-Q${Math.ceil((d.getMonth() + 1) / 3)}`;
-      });
+      // grace-adjusted 분기 — 4월 30일 이전이면 Q1, 5월부터 Q2 (운영 룰)
+      // 옛 PT 는 이 default 분기에만 합산 → 다음 분기에 안 합쳐짐
+      const _gracingAdjustedQuarter = () => {
+        const d = new Date();
+        let m = d.getMonth() + 1;
+        let y = d.getFullYear();
+        if ([1, 4, 7, 10].includes(m) && d.getDate() <= 30) {
+          m -= 3;
+          if (m < 1) { m += 12; y -= 1; }
+        }
+        return `${y}-Q${Math.ceil(m / 3)}`;
+      };
+      const [monthlySettlementMonth, setMonthlySettlementMonth] = useState(() => _gracingAdjustedQuarter());
       const [monthlySettlementData, setMonthlySettlementData] = useState(null);
       const [monthlySettlementLoading, setMonthlySettlementLoading] = useState(false);
       const [monthlySettlementStatusFilter, setMonthlySettlementStatusFilter] = useState('all'); // all | draft | confirmed | completed
@@ -11872,13 +11882,20 @@ tr.suppressed td.fname{color:#64748b;}
                 const qStart = `${nowY}-${String((nowQ - 1) * 3 + 1).padStart(2, '0')}-01`;
                 const qEnd = `${nowY}-${String(nowQ * 3).padStart(2, '0')}-${nowQ === 1 || nowQ === 4 ? '31' : nowQ === 2 ? '30' : '30'}`;
                 // 사용자 룰: 분기 귀속 = pt.date 기준
-                // 분기정산 모달과 동일 룰: pt.date <= 분기 종료일 + requested(or mv) + !completed + !superseded
+                // 분기정산 모달과 동일 룰:
+                //  pt.date 가 분기 안 → 그 분기
+                //  옛 PT (pt.date < qStart) → grace-current(home) 분기에만 합산
+                const _myPageHomeQ = `${currentYearNum}-Q${currentQuarterNum}`;
+                const _myDisplayQ = `${nowY}-Q${nowQ}`;
                 const _inQuarter = (s) => {
-                  if (!s.date || s.date > qEnd) return false;
+                  if (!s.date) return false;
                   const stl = s.settlement?.[viewingUser] || {};
                   if (!(stl.requested === true || stl.manualVerified === true)) return false;
                   if (stl.completed === true) return false;
                   if (stl.superseded === true || stl.status === 'superseded') return false;
+                  const inR = s.date >= qStart && s.date <= qEnd;
+                  const isOld = s.date < qStart;
+                  if (!inR && !(isOld && _myDisplayQ === _myPageHomeQ)) return false;
                   return true;
                 };
                 // 단일 source of truth: calculateSettlementAmount (모든 화면 동일 룰)
@@ -15440,14 +15457,21 @@ tr.suppressed td.fname{color:#64748b;}
               if (!qParse) return null;
               const yr = parseInt(qParse[1], 10);
               const qn = parseInt(qParse[2], 10);
+              const qStartMonth = (qn - 1) * 3 + 1;
+              const qStart = `${yr}-${String(qStartMonth).padStart(2,'0')}-01`;
               const qEndMonth = qn * 3;
               const qEndDay = qEndMonth === 3 || qEndMonth === 12 ? 31 : 30;
               const qEnd = `${yr}-${String(qEndMonth).padStart(2,'0')}-${String(qEndDay).padStart(2,'0')}`;
+              const homeQ = _gracingAdjustedQuarter();
               const VALID = new Set(['한준엽','조재연','정정훈','김성민','이필선','한인규','황윤선','이승우','부산지사']);
               const acc = {};
               for (const pt of ptSchedules) {
                 if (!pt || pt.selfPT) continue;
-                if (!pt.date || pt.date > qEnd) continue;
+                if (!pt.date) continue;
+                // 룰: pt.date 가 분기 안에 있으면 그 분기 / 옛 PT 는 grace-current(home) 분기에만 합산
+                const inRange = pt.date >= qStart && pt.date <= qEnd;
+                const isOlder = pt.date < qStart;
+                if (!inRange && !(isOlder && qm === homeQ)) continue;
                 const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
                 for (const a of tokens) {
                   if (!VALID.has(a)) continue;
@@ -19443,14 +19467,21 @@ tr.suppressed td.fname{color:#64748b;}
               if (!qParse) return null;
               const yr = parseInt(qParse[1], 10);
               const qn = parseInt(qParse[2], 10);
+              const qStartMonth = (qn - 1) * 3 + 1;
+              const qStart = `${yr}-${String(qStartMonth).padStart(2,'0')}-01`;
               const qEndMonth = qn * 3;
               const qEndDay = qEndMonth === 3 || qEndMonth === 12 ? 31 : 30;
               const qEnd = `${yr}-${String(qEndMonth).padStart(2,'0')}-${String(qEndDay).padStart(2,'0')}`;
+              const homeQ = _gracingAdjustedQuarter();
               const VALID = new Set(['한준엽','조재연','정정훈','김성민','이필선','한인규','황윤선','이승우','부산지사']);
               const acc = {};
               for (const pt of ptSchedules) {
                 if (!pt || pt.selfPT) continue;
-                if (!pt.date || pt.date > qEnd) continue;
+                if (!pt.date) continue;
+                // 룰: pt.date 가 분기 안 → 그 분기 / 옛 PT 는 grace-current(home) 분기에만
+                const inRange = pt.date >= qStart && pt.date <= qEnd;
+                const isOlder = pt.date < qStart;
+                if (!inRange && !(isOlder && reportQKey === homeQ)) continue;
                 const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
                 for (const a of tokens) {
                   if (!VALID.has(a)) continue;
