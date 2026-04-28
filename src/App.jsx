@@ -36,6 +36,7 @@ import {
 } from './utils/exceptions.js';
 import { sendJandiNotification } from './utils/jandi.js';
 import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculateSettlementAmount, EXCLUSION_REASONS, shouldAutoTransitionToTarget, buildAutoTransitionPatch, AUTO_TRANSITION_START } from './utils/settlement.js';
+import { buildVerificationOnResultClick, VERIFICATION_STATUS } from './utils/verification.js';
 
 // 패배 사유 분류기 (대표 보고용 분석 리포트)
 //   resultReasons.{assignee}.reason 자유 텍스트 → 카테고리 매핑
@@ -2705,7 +2706,7 @@ const SETTLEMENT_BADGE_STYLE = {
       };
 
       // 실적 사유 저장
-      const saveResultWithReason = () => {
+      const saveResultWithReason = async () => {
         const { scheduleId, assignee, result, reason, selectedCompetitors, customCompetitor } = resultReasonData;
         if (!scheduleId || !result) return;
         
@@ -2801,6 +2802,53 @@ const SETTLEMENT_BADGE_STYLE = {
         // Activity log — 결과 입력 이벤트
         if (result && targetAssignee) {
           logActivity('result_input', { ptId: scheduleId, siteName: updatedSchedule.siteName, assignee: targetAssignee, result });
+        }
+
+        // === [신규] PT 실적 승·무·패 검증 시스템 — 결과 입력 즉시 자동 진행 ===
+        // 승 + 잔디 evidence/K-APT 근거 충분 → auto_win_checked → verified_win
+        // 그 외 → need_review (수동 검증 페이지에서 처리)
+        // 정산·보고서는 verification.status === verified_* 일 때만 최종 반영 (4차 단계에서 통합)
+        if (result && targetAssignee) {
+          try {
+            const ver = buildVerificationOnResultClick(updatedSchedule, targetAssignee, result, {
+              byUserName: currentUser?.name || targetAssignee,
+            });
+            if (ver?.patch && Object.keys(ver.patch).length > 0 && firebaseEnabled && database) {
+              const histPath = `pt/${scheduleId}/verification/${targetAssignee}/history`;
+              const histRef = database.ref(histPath).push();
+              const auxHistRef = ver.auxHistory ? database.ref(histPath).push() : null;
+              const verPatch = {};
+              for (const [k, v] of Object.entries(ver.patch)) {
+                if (v !== undefined) verPatch[k] = v;
+              }
+              if (ver.history) verPatch[`${histPath}/${histRef.key}`] = ver.history;
+              if (ver.auxHistory && auxHistRef) verPatch[`${histPath}/${auxHistRef.key}`] = ver.auxHistory;
+              await database.ref().update(verPatch);
+              // 로컬 state 동기화
+              setPtSchedules(prev => prev.map(s => s.id === scheduleId ? ({
+                ...s,
+                verification: {
+                  ...(s.verification || {}),
+                  [targetAssignee]: {
+                    ...(s.verification?.[targetAssignee] || {}),
+                    status: ver.status,
+                    selfCheckedValue: result,
+                    ...(ver.autoSource ? { autoSource: ver.autoSource } : {}),
+                    updatedAt: new Date().toISOString(),
+                  },
+                },
+              }) : s));
+              // activityLog
+              try {
+                database.ref('activityLog').push({
+                  event: 'verification_self_check', at: new Date().toISOString(),
+                  by: currentUser?.name || targetAssignee, ptId: scheduleId, assignee: targetAssignee,
+                  selfCheckedValue: result, finalStatus: ver.status,
+                  autoSource: ver.autoSource ? { type: ver.autoSource.type, confidence: ver.autoSource.confidence } : null,
+                });
+              } catch (_) {}
+            }
+          } catch (e) { console.warn('[verification] auto progress failed', e); }
         }
 
         // === 결과 = 승 → 정산 프로세스 (스펙 #9, #10) ===
@@ -3359,6 +3407,29 @@ const SETTLEMENT_BADGE_STYLE = {
 
           // 로컬 상태 업데이트
           setPtSchedules(prev => prev.map(s => s.id === schedule.id ? { ...s, results: newResults, inProgress: false } : s));
+
+          // [신규] verification 자동 진행 — 지원도 self_checked 기록 (자동 승리는 안 함)
+          try {
+            const updatedSchedule = { ...schedule, results: newResults };
+            const ver = buildVerificationOnResultClick(updatedSchedule, assignee, result, {
+              byUserName: currentUser?.name || assignee,
+            });
+            if (ver?.patch && Object.keys(ver.patch).length > 0 && database) {
+              const histPath = `pt/${schedule.id}/verification/${assignee}/history`;
+              const histRef = database.ref(histPath).push();
+              const verPatch = {};
+              for (const [k, v] of Object.entries(ver.patch)) { if (v !== undefined) verPatch[k] = v; }
+              if (ver.history) verPatch[`${histPath}/${histRef.key}`] = ver.history;
+              database.ref().update(verPatch);
+              setPtSchedules(prev => prev.map(s => s.id === schedule.id ? ({
+                ...s,
+                verification: {
+                  ...(s.verification || {}),
+                  [assignee]: { ...(s.verification?.[assignee] || {}), status: ver.status, selfCheckedValue: result, updatedAt: new Date().toISOString() },
+                },
+              }) : s));
+            }
+          } catch (e) { console.warn('[verification] support auto progress failed', e); }
 
           // 지원 결과 시 정산요청 확인
           if (result === '지원' && assignee) {
