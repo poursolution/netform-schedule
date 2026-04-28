@@ -1845,9 +1845,15 @@ function calcAmountWorker(pt, assignee) {
   if (pt.selfPT) return { amount: 0, result: '제외', reason: 'vendor_self_pt' };
   const stl = pt.settlement?.[assignee] || {};
   if (stl.selfSales) return { amount: 0, result: '제외', reason: 'self_sales' };
-  // 감리는 결과·증빙 무관 건당 80K (selfPT/selfSales 만 제외 — 위에서 이미 처리)
+  // 감리: 자동 80K 제거 — settlement.{a}.manualAmount 가 있으면 그 값, 없으면 0 (담당자 입력 대기)
   const isSupervision = /감리/.test((pt.workType || '') + '|' + (pt.siteName || ''));
-  if (isSupervision) return { amount: SETTLEMENT_AMOUNTS.SUPERVISION, result: '감리', reason: null };
+  if (isSupervision) {
+    const manualAmt = stl.manualAmount;
+    if (typeof manualAmt === 'number' && manualAmt >= 0) {
+      return { amount: manualAmt, result: '감리', reason: null };
+    }
+    return { amount: 0, result: '감리', reason: 'supervision_pending_input' };
+  }
   const result = deriveResultWorker(pt, assignee);
   if (!result) return { amount: 0, result: null, reason: null };
   if (result === '제외') return { amount: 0, result: '제외', reason: 'draw_support_excluded' };
@@ -1912,10 +1918,18 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
 
   // 2) 담당자별 집계 — assignee 단위로 실적확정일 기준 분기 귀속 판별
   //    같은 PT 라도 담당자별 확정일이 다를 수 있으므로 (assignee 별 settlement.requestedAt)
+  // 우리 회사 영업담당자 화이트리스트 — 자체PT/협약사 entries 제외 + 조현식 정산 제외
+  const VALID_ASSIGNEES = new Set([
+    '한준엽', '조재연', '정정훈', '김성민', '이필선', '한인규', '황윤선',
+    '이승우', '부산지사',
+  ]);
   const perAssignee = {};
   for (const pt of allPts) {
+    if (pt.selfPT) continue; // 협약사 자체PT 통째 제외
     const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
     for (const assignee of tokens) {
+      // 화이트리스트에 없는 이름 (자체PT 라벨, 협약사 직원명 등) 제외
+      if (!VALID_ASSIGNEES.has(assignee)) continue;
       const confirmDate = getResultConfirmDateWorker(pt, assignee);
       const assigneeQK = getQuarterKeyByConfirmDate(confirmDate);
       if (assigneeQK !== quarterKey) continue;

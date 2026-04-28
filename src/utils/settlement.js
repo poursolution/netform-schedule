@@ -112,11 +112,15 @@ export function calculateSettlementAmount(pt, assignee, opts = {}) {
   }
 
   // 3) 감리 건 — 결과 무관 건당 80k
-  //    ※ selfPT/selfSales 는 위에서 이미 제외됨. 이 시점에 감리면 결과 입력 여부와 무관하게 80K 지급.
-  //    스펙: "감리 공종 - 건당 80,000원 (지역/결과 무관)"
+  //    감리: 자동 80K 제거 — settlement.{a}.manualAmount 가 있으면 그 값 사용, 없으면 0 (한준엽 직접 입력 대기)
   const isSupervision = /감리/.test((pt.workType || '') + '|' + (pt.siteName || ''));
   if (isSupervision) {
-    return { amount: SETTLEMENT_AMOUNTS.SUPERVISION, reason: null, result: '감리' };
+    const stl = pt.settlement?.[assignee] || {};
+    const manualAmt = stl.manualAmount;
+    if (typeof manualAmt === 'number' && manualAmt >= 0) {
+      return { amount: manualAmt, reason: null, result: '감리' };
+    }
+    return { amount: 0, reason: 'supervision_pending_input', result: '감리' };
   }
 
   // 4) 파생 결과 (감리 아닐 때만)

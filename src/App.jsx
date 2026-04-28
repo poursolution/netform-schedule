@@ -62,6 +62,7 @@ const EXCLUSION_REASON_LABEL = {
   [EXCLUSION_REASONS.DRAW_SUPPORT_EXCLUDED]: '주담무승부',
   [EXCLUSION_REASONS.LOSS]: '패배',
   [EXCLUSION_REASONS.CANCELLED_NOTICE]: '취소공고',
+  supervision_pending_input: '감리·금액 입력 대기',
 };
 import { normalizeApartmentName, addApartmentAlias } from './utils/apartmentMatch.js';
 import * as theme from './utils/theme.js';
@@ -10485,6 +10486,56 @@ tr.suppressed td.fname{color:#64748b;}
                                                   제외: {exclusionLabel}
                                                 </span>
                                               )}
+                                              {/* 감리 PT 수동 금액 입력 — 한준엽·관리자만 편집 가능 */}
+                                              {(() => {
+                                                const isSupervisionPt = /감리/.test((card.workType || '') + '|' + (card.siteName || ''));
+                                                if (!isSupervisionPt || isSelfPT) return null;
+                                                const canEditAmt = currentUser?.isAdmin || currentUser?.name === '한준엽';
+                                                const curAmt = aSettlement.manualAmount;
+                                                const editKey = `mamt_${card.id}_${assigneeName}`;
+                                                const editing = editingResults.hasOwnProperty(editKey) ? editingResults[editKey] : null;
+                                                const display = editing !== null ? editing : (typeof curAmt === 'number' ? String(curAmt) : '');
+                                                return (
+                                                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '11px', color: '#7c3aed', whiteSpace: 'nowrap', padding: '2px 6px', borderRadius: '6px', background: '#faf5ff', border: '1px solid #e9d5ff' }}>
+                                                    <span style={{ fontWeight: 700 }}>감리 금액</span>
+                                                    <input
+                                                      type="number"
+                                                      min="0"
+                                                      step="10000"
+                                                      value={display}
+                                                      placeholder="0"
+                                                      disabled={!canEditAmt}
+                                                      title={canEditAmt ? '감리 정산 금액 입력 후 [저장]' : '한준엽·관리자만 입력 가능'}
+                                                      onChange={(e) => setEditingResults(prev => ({ ...prev, [editKey]: e.target.value }))}
+                                                      style={{ width: 90, padding: '2px 6px', fontSize: 11, border: '1px solid #d8b4fe', borderRadius: 4, textAlign: 'right', background: canEditAmt ? 'white' : '#f3f4f6', color: '#1e293b', fontWeight: 700 }}
+                                                    />
+                                                    <span style={{ color: '#7c3aed' }}>원</span>
+                                                    {canEditAmt && editing !== null && (
+                                                      <button
+                                                        onClick={async () => {
+                                                          const v = parseInt(editing, 10);
+                                                          if (!Number.isFinite(v) || v < 0) { alert('숫자만 입력 가능합니다.'); return; }
+                                                          try {
+                                                            if (firebaseEnabled && database) {
+                                                              await database.ref(`pt/${card.id}/settlement/${assigneeName}/manualAmount`).set(v);
+                                                              await database.ref(`pt/${card.id}/settlement/${assigneeName}/manualAmountAt`).set(new Date().toISOString());
+                                                              await database.ref(`pt/${card.id}/settlement/${assigneeName}/manualAmountBy`).set(currentUser?.name || 'admin');
+                                                            }
+                                                            setPtSchedules(prev => prev.map(ps => {
+                                                              if (ps.id !== card.id) return ps;
+                                                              const cur = ps.settlement?.[assigneeName] || {};
+                                                              return { ...ps, settlement: { ...(ps.settlement || {}), [assigneeName]: { ...cur, manualAmount: v } } };
+                                                            }));
+                                                            setEditingResults(prev => { const c = { ...prev }; delete c[editKey]; return c; });
+                                                            setTimeout(() => persistSettlementDerived(card.id, assigneeName), 0);
+                                                          } catch (e) { alert('저장 실패: ' + e.message); }
+                                                        }}
+                                                        style={{ padding: '2px 8px', fontSize: 10, fontWeight: 700, border: 'none', background: '#7c3aed', color: 'white', borderRadius: 4, cursor: 'pointer' }}
+                                                      >저장</button>
+                                                    )}
+                                                  </span>
+                                                );
+                                              })()}
                                               {/* 정산 체크박스 (승/무/지원만) - 자체PT는 정산 제외 */}
                                               {!isSelfPT && aResult && aResult !== '패' && (
                                                 <div style={{ display: 'flex', gap: '10px', fontSize: '11px', color: '#64748b', marginLeft: isMobile ? '0' : '8px', alignItems: 'center', paddingLeft: isMobile ? '0' : '10px', borderLeft: isMobile ? 'none' : '1px solid #e2e8f0' }}>
