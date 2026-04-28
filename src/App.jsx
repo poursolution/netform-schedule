@@ -15388,7 +15388,54 @@ tr.suppressed td.fname{color:#64748b;}
                 setMonthlySettlementLoadedFor(targetKey);
               }
             };
-            const data = monthlySettlementData;
+            // 실시간 계산: ptSchedules state 에서 직접 perAssignee 산출 (worker 캐시 의존 X)
+            //   결과 수정 즉시 모달 갱신 — 사용자: "금액 수정하면 실시간으로 반영"
+            //   같은 룰: pt.date <= 분기 종료일 + requested(or mv) + !completed + !superseded
+            const _liveData = (() => {
+              const qm = monthlySettlementMonth || '';
+              const qParse = qm.match(/^(\d{4})-Q([1-4])/);
+              if (!qParse) return null;
+              const yr = parseInt(qParse[1], 10);
+              const qn = parseInt(qParse[2], 10);
+              const qEndMonth = qn * 3;
+              const qEndDay = qEndMonth === 3 || qEndMonth === 12 ? 31 : 30;
+              const qEnd = `${yr}-${String(qEndMonth).padStart(2,'0')}-${String(qEndDay).padStart(2,'0')}`;
+              const VALID = new Set(['한준엽','조재연','정정훈','김성민','이필선','한인규','황윤선','이승우','부산지사']);
+              const acc = {};
+              for (const pt of ptSchedules) {
+                if (!pt || pt.selfPT) continue;
+                if (!pt.date || pt.date > qEnd) continue;
+                const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+                for (const a of tokens) {
+                  if (!VALID.has(a)) continue;
+                  const stl = pt.settlement?.[a] || {};
+                  if (!(stl.requested === true || stl.manualVerified === true)) continue;
+                  if (stl.completed === true) continue;
+                  if (stl.superseded === true || stl.status === 'superseded') continue;
+                  if (!acc[a]) acc[a] = { assignee: a, quarterKey: qm, totalCount: 0, winCount: 0, drawCount: 0, supportCount: 0, excludedCount: 0, reviewCount: 0, estimatedAmount: 0, status: 'draft', items: [] };
+                  const calc = calculateSettlementAmount(pt, a);
+                  const r = calc.result;
+                  acc[a].totalCount++;
+                  acc[a].items.push({ ptId: pt.id, siteName: pt.siteName, ptDate: pt.date, result: r, amount: calc.amount, reason: calc.reason });
+                  if (calc.reason === 'loss' || calc.reason === 'vendor_self_pt' || calc.reason === 'self_sales' || calc.reason === 'draw_support_excluded' || calc.reason === 'cancelled_notice') {
+                    acc[a].excludedCount++;
+                    continue;
+                  }
+                  const needsReview = pt.kaptVerified?.status === 'needs_review' && !(pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0) && stl.manualVerified !== true;
+                  if (needsReview) acc[a].reviewCount++;
+                  acc[a].estimatedAmount += (calc.amount || 0);
+                  if (r === '승') acc[a].winCount++;
+                  else if (r === '무') acc[a].drawCount++;
+                  else if (r === '지원') acc[a].supportCount++;
+                }
+              }
+              const totalEstimated = Object.values(acc).reduce((s, x) => s + x.estimatedAmount, 0);
+              const totalCount = Object.values(acc).reduce((s, x) => s + x.totalCount, 0);
+              const totalReview = Object.values(acc).reduce((s, x) => s + x.reviewCount, 0);
+              return { perAssignee: acc, totals: { quarterKey: qm, totalAssignees: Object.keys(acc).length, totalCount, totalEstimated, totalReview, aggregationBasis: 'live(ptSchedules)' } };
+            })();
+            // 우선순위: live 계산 (state 변경 즉시 갱신) > Firebase 캐시
+            const data = _liveData || monthlySettlementData;
             const perAssignee = data?.perAssignee || {};
             const totals = data?.totals || null;
             // 담당자 확인 상태 + reviewRequests 주입 (quarterConfirmations 에서)
