@@ -15992,12 +15992,21 @@ tr.suppressed td.fname{color:#64748b;}
                                           const qMatch = String(monthlySettlementMonth || '').match(/Q(\d)/);
                                           const yLabel = yMatch ? yMatch[1] : 'all';
                                           const qLabel = qMatch ? `${qMatch[1]}분기` : 'all';
+                                          // 모달 닫기
                                           setShowMonthlySettlement(false);
+                                          // 다른 뷰 모두 끄고 실적만 켜기 (라우팅 충돌 방지)
+                                          setShowMyPage(false);
+                                          setShowDashboard(false);
+                                          setShowMeetingView(false);
+                                          setShowSalesView(false);
                                           setShowPerformance(true);
+                                          // 담당자·분기·년·승리 탭 필터
                                           setSelectedAssignee(r.assignee);
+                                          setPreviewAssignee(r.assignee);
                                           setExportYear(yLabel);
                                           setExportQuarter(qLabel);
-                                          setSiteListTab('win'); // 승리 PT 검증 탭으로 이동
+                                          setSiteListTab('win');
+                                          setSettlementFilter('all');
                                         }}
                                         style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #16a34a', background: '#f0fdf4', color: '#166534', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
                                         title={`${r.assignee} · ${monthlySettlementMonth} · 승리 PT 검증으로 이동`}
