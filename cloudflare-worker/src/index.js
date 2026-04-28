@@ -411,6 +411,38 @@ Rules:
       return jsonResponse(bid || { error: 'not found' }, env);
     }
 
+    // 잔디 채널 sync (백필용): POST /jandi-sync
+    //   Body: { channelName?, monthsBack?, maxFiles?, maxScrolls?, forceReupload? }
+    //   playwright-server /admin/jandi-channel-sync 로 passthrough
+    if (url.pathname === '/jandi-sync' && request.method === 'POST') {
+      if (!env.VPS_URL || !env.VPS_AUTH_TOKEN) {
+        return jsonResponse({ status: 'error', error: 'VPS_URL/VPS_AUTH_TOKEN 미설정' }, env, 500);
+      }
+      try {
+        const body = await request.json().catch(() => ({}));
+        const r = await fetch(`${env.VPS_URL}/admin/jandi-channel-sync`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${env.VPS_AUTH_TOKEN}`,
+          },
+          body: JSON.stringify({
+            channelName: '입찰 공고(POUR공법)',
+            monthsBack: 12,
+            maxFiles: 1000,
+            maxScrolls: 1000,
+            ...body,
+          }),
+        });
+        const text = await r.text();
+        let data; try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 500) }; }
+        return jsonResponse({ status: r.ok ? 'ok' : 'error', httpStatus: r.status, ...data }, env, r.ok ? 200 : 502);
+      } catch (e) {
+        console.error('[jandi-sync] error', e);
+        return jsonResponse({ status: 'error', error: e.message }, env, 500);
+      }
+    }
+
     // 잔디 PT 자동 매칭 강제 실행: POST /jandi-rematch
     //   Body: { limit?, includeUnverified?, ptIds? }
     //   playwright-server /admin/jandi-pt-match 로 passthrough (VPS_AUTH_TOKEN 자동 첨부)
