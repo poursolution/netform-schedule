@@ -12106,14 +12106,14 @@ tr.suppressed td.fname{color:#64748b;}
                       })()}
                     </div>
 
-                    {/* 컨트롤타워 — 이번 분기 예상 정산 (단색 다크네이비) */}
+                    {/* 컨트롤타워 — 이번 분기 예상 정산 (단색 다크네이비, 모노톤) */}
                     <div style={{ background: '#1e293b', borderRadius: 16, padding: '20px 22px', color: 'white', position: 'relative', overflow: 'hidden' }}>
                       <div style={{ fontSize: 11, opacity: 0.7, fontWeight: 600, letterSpacing: '0.1em' }}>{viewingUser}님 · 이번 분기 예상 정산 · {nowY}-Q{nowQ}</div>
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 6 }}>
-                        <div style={{ fontSize: 32, fontWeight: 800, color: '#22c55e', letterSpacing: -1 }}>{qMoney.total.toLocaleString('ko-KR')}</div>
+                        <div style={{ fontSize: 32, fontWeight: 800, color: '#ffffff', letterSpacing: -1 }}>{qMoney.total.toLocaleString('ko-KR')}</div>
                         <div style={{ fontSize: 14, opacity: 0.7 }}>원</div>
                         {prevQMoney > 0 && (
-                          <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: qDelta >= 0 ? '#22c55e' : '#94a3b8' }}>
+                          <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: 'rgba(255,255,255,0.7)' }}>
                             전분기 대비 {qDelta >= 0 ? '+' : ''}{qDelta}%
                           </span>
                         )}
@@ -12123,7 +12123,7 @@ tr.suppressed td.fname{color:#64748b;}
                         <div style={{ fontSize: 10, opacity: 0.75, marginTop: 4, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                           {changeReasons.length > 0 && <span>사유: {changeReasons.join(' · ')}</span>}
                           {teamAvg > 0 && (
-                            <span style={{ marginLeft: 'auto', color: avgDelta >= 0 ? '#22c55e' : '#94a3b8', fontWeight: 700 }}>
+                            <span style={{ marginLeft: 'auto', color: 'rgba(255,255,255,0.85)', fontWeight: 700 }}>
                               팀 평균({teamAvg.toLocaleString('ko-KR')}원) 대비 {avgDelta >= 0 ? '+' : ''}{avgDelta}%
                             </span>
                           )}
@@ -12132,7 +12132,7 @@ tr.suppressed td.fname{color:#64748b;}
                       <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
                         <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 10px' }}>
                           <div style={{ fontSize: 9, opacity: 0.7, fontWeight: 600 }}>완료</div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: '#22c55e', marginTop: 2 }}>{qMoney.completed.toLocaleString('ko-KR')}</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,0.95)', marginTop: 2 }}>{qMoney.completed.toLocaleString('ko-KR')}</div>
                         </div>
                         <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 10px' }}>
                           <div style={{ fontSize: 9, opacity: 0.7, fontWeight: 600 }}>확정</div>
@@ -12147,23 +12147,23 @@ tr.suppressed td.fname{color:#64748b;}
                           <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>{qMoney.review.toLocaleString('ko-KR')}</div>
                         </div>
                       </div>
-                      {/* 정산 진행률 바 — 단색 */}
+                      {/* 정산 진행률 바 — 모노톤 */}
                       {qMoney.total > 0 && (
                         <div style={{ marginTop: 12 }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, opacity: 0.75, marginBottom: 4 }}>
                             <span>정산 진행률 (완료+확정)</span>
-                            <span style={{ fontWeight: 700, color: qProgress >= 80 ? '#22c55e' : qProgress >= 50 ? '#f59e0b' : '#94a3b8' }}>{qProgress}%</span>
+                            <span style={{ fontWeight: 700, color: 'rgba(255,255,255,0.95)' }}>{qProgress}%</span>
                           </div>
                           <div style={{ width: '100%', height: 6, background: 'rgba(255,255,255,0.15)', borderRadius: 3, overflow: 'hidden' }}>
-                            <div style={{ width: `${qProgress}%`, height: '100%', background: '#22c55e', transition: 'width 0.3s' }} />
+                            <div style={{ width: `${qProgress}%`, height: '100%', background: 'rgba(255,255,255,0.7)', transition: 'width 0.3s' }} />
                           </div>
                         </div>
                       )}
-                      {/* 개인 인사이트 (강점/약점 공종) — 이모지 제거 */}
+                      {/* 개인 인사이트 (강점/약점 공종) — 모노톤 */}
                       {(strongWT || weakWT) && (
                         <div style={{ marginTop: 12, padding: '8px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: 8, fontSize: 11, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-                          {strongWT && <span>강점 공종: <b style={{ color: '#22c55e' }}>{strongWT.cat}</b> 승률 {strongWT.rate}% ({strongWT.win}/{strongWT.total})</span>}
-                          {weakWT && <span>약점 공종: <b style={{ color: '#94a3b8' }}>{weakWT.cat}</b> 승률 {weakWT.rate}% ({weakWT.win}/{weakWT.total})</span>}
+                          {strongWT && <span>강점 공종: <b style={{ color: 'rgba(255,255,255,0.95)' }}>{strongWT.cat}</b> 승률 {strongWT.rate}% ({strongWT.win}/{strongWT.total})</span>}
+                          {weakWT && <span>약점 공종: <b style={{ color: 'rgba(255,255,255,0.6)' }}>{weakWT.cat}</b> 승률 {weakWT.rate}% ({weakWT.win}/{weakWT.total})</span>}
                         </div>
                       )}
                     </div>
