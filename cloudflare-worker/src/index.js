@@ -1916,8 +1916,9 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
   const ptData = await ptResp.json();
   const allPts = ptData ? Object.entries(ptData).map(([id, pt]) => ({ id, ...pt })) : [];
 
-  // 2) 담당자별 집계 — assignee 단위로 실적확정일 기준 분기 귀속 판별
-  //    같은 PT 라도 담당자별 확정일이 다를 수 있으므로 (assignee 별 settlement.requestedAt)
+  // 2) 담당자별 집계 — 운영 룰 (OPERATIONS.md): 결과 확정일(resultConfirmDate) 기준
+  //    Q1 = 결과 확정일이 4월 30일(다음달 30일 = grace period) 이전인 PT
+  //    우선순위: finalConfirmedAt > requestedAt > pt.resultConfirmDate[a] > pt.date (fallback)
   // 우리 회사 영업담당자 화이트리스트 — 자체PT/협약사 entries 제외 + 조현식 정산 제외
   const VALID_ASSIGNEES = new Set([
     '한준엽', '조재연', '정정훈', '김성민', '이필선', '한인규', '황윤선',
