@@ -9791,7 +9791,14 @@ const SETTLEMENT_BADGE_STYLE = {
                                   const isSettled = !isSelfPT && (!!settlement.completed || !!settlement.selfSales);
                                   // 중복 PT 구버전 판별 (최신 PT가 따로 있음)
                                   const supersededInfo = supersededMap.get(card.id);
-                                  const isSuperseded = !isSelfPT && !!supersededInfo;
+                                  // RTDB settlement.{a}.superseded 플래그도 체크 (worker auto-supersede 결과 인식)
+                                  const supersededByDb = !!(s?.settlement && Object.values(s.settlement).some(stl => stl?.superseded === true || stl?.supersededBy));
+                                  const isSuperseded = !isSelfPT && (!!supersededInfo || supersededByDb);
+                                  // RTDB superseded 인데 supersededInfo 없으면 즉석 fallback 정보 생성
+                                  const dbSupersededBy = supersededByDb && !supersededInfo
+                                    ? Object.values(s.settlement).find(stl => stl?.supersededBy)?.supersededBy
+                                    : null;
+                                  const supersededDisplayInfo = supersededInfo || (dbSupersededBy ? { latestDate: (ptSchedules.find(p => p.id === dbSupersededBy)?.date) || '' } : null);
                                   // 정산 상태별 카드 배경 — 한눈에 구분
                                   const isUnsettled = !isSelfPT && !isSuperseded && currentResult && currentResult !== '패' && !settlement.completed && !settlement.selfSales && !settlement.requested;
                                   const isRequested = !isSelfPT && !isSuperseded && currentResult && currentResult !== '패' && !settlement.completed && !settlement.selfSales && !!settlement.requested;
@@ -9911,8 +9918,8 @@ const SETTLEMENT_BADGE_STYLE = {
                                             {isSelfPT && <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#f3e8ff', color: '#7c3aed' }}>협약사자체PT</span>}
                                             {/* 정산 상태 배지 + 분기 라벨 (본인영업도 정산완료 처리) - 자체PT·중복구버전 제외 */}
                                             {isSuperseded && (
-                                              <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#e2e8f0', color: '#475569' }} title={`최종 PT: ${supersededInfo.latestDate}`}>
-                                                🔁 중복 제외 (최종 {supersededInfo.latestDate})
+                                              <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: '#e2e8f0', color: '#475569' }} title={`최종 PT: ${supersededDisplayInfo?.latestDate || '-'}`}>
+                                                중복 제외{supersededDisplayInfo?.latestDate ? ` (최종 ${supersededDisplayInfo.latestDate})` : ''}
                                               </span>
                                             )}
                                             {!isSelfPT && !isSuperseded && currentResult && currentResult !== '패' && (() => {
