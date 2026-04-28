@@ -35,7 +35,7 @@ import {
   buildExceptionResultMessage,
 } from './utils/exceptions.js';
 import { sendJandiNotification } from './utils/jandi.js';
-import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculateSettlementAmount, EXCLUSION_REASONS, shouldAutoTransitionToTarget, buildAutoTransitionPatch, AUTO_TRANSITION_START } from './utils/settlement.js';
+import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculateSettlementAmount, EXCLUSION_REASONS, shouldAutoTransitionToTarget, buildAutoTransitionPatch, AUTO_TRANSITION_START, getResultConfirmDate } from './utils/settlement.js';
 import { buildVerificationOnResultClick, VERIFICATION_STATUS } from './utils/verification.js';
 
 // 패배 사유 분류기 (대표 보고용 분석 리포트)
@@ -3558,14 +3558,20 @@ const SETTLEMENT_BADGE_STYLE = {
         const range = skipDateFilter ? null : getDateRangeForStats(yearFilter, quarterFilter);
 
         // 담당자 이름이 포함된 일정 필터 (복수 담당자 지원: "정정훈/김성민", "정정훈,김성민" 등)
+        // 운영 룰 (OPERATIONS.md): 분기 귀속은 PT 진행일이 아니라 "실적 확정일(resultConfirmDate)" 기준
+        //   우선순위: finalConfirmedAt > requestedAt > pt.resultConfirmDate[a] > pt.date (fallback)
+        //   → 분기정산 모달과 동일한 룰로 통일
         const list = ptSchedules.filter(s => {
-          if (!s.date || !s.ptAssignee) return false;
+          if (!s.ptAssignee) return false;
           if (s.selfPT) return false; // 협약사자체PT 제외
-          // 날짜 필터 적용
-          if (!skipDateFilter && (s.date < range.start || s.date > range.end)) return false;
           // 구분자로 분리: /, ,, +, & 등
           const assignees = s.ptAssignee.split(/[\/,+&]/).map(a => a.trim());
-          return assignees.includes(assignee);
+          if (!assignees.includes(assignee)) return false;
+          // 분기 귀속 판단: resultConfirmDate 기준 (없으면 pt.date fallback)
+          const cd = getResultConfirmDate(s, assignee) || s.date;
+          if (!cd) return false;
+          if (!skipDateFilter && (cd < range.start || cd > range.end)) return false;
+          return true;
         });
         
         // 개별 담당자 결과 (지원 규칙 종속: util deriveAssigneeResult 위임)
@@ -3693,13 +3699,17 @@ const SETTLEMENT_BADGE_STYLE = {
         const skipDateFilter = !yearFilter || yearFilter === 'all';
         const range = skipDateFilter ? null : getDateRange(yearFilter, quarterFilter);
 
+        // 운영 룰: 분기 귀속은 resultConfirmDate 기준 (분기정산 모달과 동일)
         const filtered = filteredPtList.filter(s => {
-          if (!s.date || !s.ptAssignee) return false;
-          if (!skipDateFilter && (s.date < range.start || s.date > range.end)) return false;
+          if (!s.ptAssignee) return false;
           if (assigneeFilter !== 'all') {
             const assignees = s.ptAssignee.split(/[\/,+&]/).map(a => a.trim());
             if (!assignees.includes(assigneeFilter)) return false;
           }
+          // 분기 필터 적용 — resultConfirmDate 우선
+          const cd = (assigneeFilter !== 'all' ? getResultConfirmDate(s, assigneeFilter) : null) || s.date;
+          if (!cd) return false;
+          if (!skipDateFilter && (cd < range.start || cd > range.end)) return false;
           return true;
         });
 
@@ -3789,14 +3799,18 @@ const SETTLEMENT_BADGE_STYLE = {
         const skipYearFilter = !yearFilter || yearFilter === 'all';
         const range = skipYearFilter ? null : getDateRange(yearFilter, quarterFilter);
 
+        // 운영 룰: 분기 귀속은 resultConfirmDate 기준 (분기정산 모달과 동일)
         const filtered = filteredPtList.filter(s => {
-          if (!s.date || !s.ptAssignee) return false;
+          if (!s.ptAssignee) return false;
           if (s.selfPT) return false; // 협약사자체PT 제외
-          if (!skipYearFilter && (s.date < range.start || s.date > range.end)) return false;
           if (assigneeFilter) {
             const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim());
             if (!assignees.includes(assigneeFilter)) return false;
           }
+          // 분기 필터 — resultConfirmDate 우선
+          const cd = (assigneeFilter ? getResultConfirmDate(s, assigneeFilter) : null) || s.date;
+          if (!cd) return false;
+          if (!skipYearFilter && (cd < range.start || cd > range.end)) return false;
           return true;
         });
 
