@@ -2544,41 +2544,97 @@ const SETTLEMENT_BADGE_STYLE = {
       };
       
       // 내 비밀번호 변경
-      const handleChangeMyPassword = () => {
-        // 현재 비밀번호 확인
-        if (userAccounts[currentUser.id].password !== currentPassword) {
-          setPasswordError('현재 비밀번호가 올바르지 않습니다.');
-          return;
+      const handleChangeMyPassword = async () => {
+        try {
+          setPasswordError('');
+
+          // 0) 현재 사용자 정보 가드
+          if (!currentUser?.id) {
+            setPasswordError('로그인 정보가 유효하지 않습니다. 다시 로그인해주세요.');
+            return;
+          }
+          const myId = currentUser.id;
+
+          // 1) 입력 검증
+          if (!currentPassword) {
+            setPasswordError('현재 비밀번호를 입력하세요.');
+            return;
+          }
+          if (newPassword.length < 4) {
+            setPasswordError('새 비밀번호는 4자 이상이어야 합니다.');
+            return;
+          }
+          if (newPassword !== confirmPassword) {
+            setPasswordError('새 비밀번호가 일치하지 않습니다.');
+            return;
+          }
+          if (newPassword === currentPassword) {
+            setPasswordError('새 비밀번호가 현재 비밀번호와 동일합니다.');
+            return;
+          }
+
+          // 2) 현재 비밀번호 확인 — Firebase 에서 최신값 직접 조회 (stale state 방지)
+          let storedPassword = null;
+          if (firebaseEnabled && database) {
+            try {
+              const snap = await database.ref(`users/${myId}/password`).once('value');
+              storedPassword = snap.val();
+            } catch (_) {
+              // Firebase 조회 실패 시 로컬 state fallback
+              storedPassword = userAccounts[myId]?.password;
+            }
+          } else {
+            storedPassword = userAccounts[myId]?.password;
+          }
+          if (storedPassword == null) {
+            setPasswordError('계정 정보를 찾을 수 없습니다. 관리자에게 문의하세요.');
+            return;
+          }
+          if (String(storedPassword) !== String(currentPassword)) {
+            setPasswordError('현재 비밀번호가 올바르지 않습니다.');
+            return;
+          }
+
+          // 3) 비밀번호 변경 — 본인 password 필드만 update (users 노드 전체 set 금지)
+          if (firebaseEnabled && database) {
+            await database.ref(`users/${myId}/password`).set(newPassword);
+            setLastSaved(new Date().toLocaleTimeString());
+          }
+          // 로컬 state 동기화
+          setUserAccounts(prev => ({ ...prev, [myId]: { ...(prev[myId] || {}), password: newPassword } }));
+
+          // 4) localStorage 의 자동 로그인 정보도 갱신 (다음 새로고침에 다시 로그인 안 하도록)
+          try {
+            const savedLogin = localStorage.getItem('savedLogin');
+            if (savedLogin) {
+              const parsed = JSON.parse(savedLogin);
+              if (parsed?.id === myId) {
+                localStorage.setItem('savedLogin', JSON.stringify({ ...parsed, password: newPassword }));
+              }
+            }
+          } catch (_) {}
+
+          // 5) activityLog
+          try {
+            if (firebaseEnabled && database) {
+              database.ref('activityLog').push({
+                event: 'password_changed', at: new Date().toISOString(),
+                by: myId, name: currentUser.name || myId,
+              });
+            }
+          } catch (_) {}
+
+          // 초기화
+          setCurrentPassword('');
+          setNewPassword('');
+          setConfirmPassword('');
+          setPasswordError('');
+          setShowMyPasswordModal(false);
+          alert('비밀번호가 변경되었습니다.');
+        } catch (e) {
+          console.error('[changeMyPassword] failed', e);
+          setPasswordError('변경 실패: ' + (e?.message || '알 수 없는 오류'));
         }
-        
-        // 새 비밀번호 확인
-        if (newPassword.length < 4) {
-          setPasswordError('새 비밀번호는 4자 이상이어야 합니다.');
-          return;
-        }
-        
-        if (newPassword !== confirmPassword) {
-          setPasswordError('새 비밀번호가 일치하지 않습니다.');
-          return;
-        }
-        
-        // 비밀번호 변경
-        const updated = { ...userAccounts };
-        updated[currentUser.id] = { ...updated[currentUser.id], password: newPassword };
-        setUserAccounts(updated);
-        
-        if (database) {
-          database.ref('users').set(updated);
-          setLastSaved(new Date().toLocaleTimeString());
-        }
-        
-        // 초기화
-        setCurrentPassword('');
-        setNewPassword('');
-        setConfirmPassword('');
-        setPasswordError('');
-        setShowMyPasswordModal(false);
-        alert('비밀번호가 변경되었습니다!');
       };
 
       // 계정 추가 (admin 전용)
@@ -12039,11 +12095,22 @@ tr.suppressed td.fname{color:#64748b;}
                           </div>
                           <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2, fontWeight: 500 }}>{getTeamName(viewingUser)}</div>
                         </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                          {/* 본인 비밀번호 변경 — 내 마이페이지일 때만 노출 */}
+                          {currentUser?.name === viewingUser && (
+                            <button
+                              onClick={() => setShowMyPasswordModal(true)}
+                              title="비밀번호 변경"
+                              style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 12, fontWeight: 600, color: '#475569', background: '#ffffff', cursor: 'pointer' }}>
+                              비밀번호 변경
+                            </button>
+                          )}
                         {isAdmin && (
                           <select value={viewingUser} onChange={(e) => setMyPageUser(e.target.value)} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 12, background: '#f8fafc', fontWeight: 600, color: '#1a1a2e', outline: 'none' }}>
                             {allMembers.map(name => <option key={name} value={name}>{name}</option>)}
                           </select>
                         )}
+                        </div>
                       </div>
                       {/* Action summary banner */}
                       <div style={{ marginTop: 12, background: '#eff6ff', borderRadius: 10, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
