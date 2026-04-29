@@ -11882,20 +11882,14 @@ tr.suppressed td.fname{color:#64748b;}
                 const qStart = `${nowY}-${String((nowQ - 1) * 3 + 1).padStart(2, '0')}-01`;
                 const qEnd = `${nowY}-${String(nowQ * 3).padStart(2, '0')}-${nowQ === 1 || nowQ === 4 ? '31' : nowQ === 2 ? '30' : '30'}`;
                 // 사용자 룰: 분기 귀속 = pt.date 기준
-                // 분기정산 모달과 동일 룰:
-                //  pt.date 가 분기 안 → 그 분기
-                //  옛 PT (pt.date < qStart) → grace-current(home) 분기에만 합산
-                const _myPageHomeQ = `${currentYearNum}-Q${currentQuarterNum}`;
-                const _myDisplayQ = `${nowY}-Q${nowQ}`;
+                // 마이페이지는 항상 grace-adjusted 현재 분기 = home 분기 → 옛 PT 자연 포함
+                // 룰: pt.date <= 분기 종료일 + requested + !completed + !superseded
                 const _inQuarter = (s) => {
-                  if (!s.date) return false;
+                  if (!s.date || s.date > qEnd) return false;
                   const stl = s.settlement?.[viewingUser] || {};
                   if (!(stl.requested === true || stl.manualVerified === true)) return false;
                   if (stl.completed === true) return false;
                   if (stl.superseded === true || stl.status === 'superseded') return false;
-                  const inR = s.date >= qStart && s.date <= qEnd;
-                  const isOld = s.date < qStart;
-                  if (!inR && !(isOld && _myDisplayQ === _myPageHomeQ)) return false;
                   return true;
                 };
                 // 단일 source of truth: calculateSettlementAmount (모든 화면 동일 룰)
