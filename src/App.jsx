@@ -646,6 +646,9 @@ const SETTLEMENT_BADGE_STYLE = {
       const [quarterReportBusy, setQuarterReportBusy] = useState(false);
       const [quarterReportOverrideGuard, setQuarterReportOverrideGuard] = useState(false);  // Phase 5 — 전원 최종확정 우회
       const [quarterReportSentHistory, setQuarterReportSentHistory] = useState({});  // { [qKey]: { sentAt, sentBy, ... } }
+      // 김유림 보고서용 — 해당 분기 마감 메타 (quarterlySettlements/{qKey}/totals.{closed,closedAt,closedBy})
+      // 분기 마감/해제 시 즉시 반영되도록 모달 열림 + 분기 변경 시 재조회.
+      const [quarterReportClosure, setQuarterReportClosure] = useState(null);
 
       // UAT (실운영 시나리오 테스트) — 운영 투입 전 검증
       const [showUATModal, setShowUATModal] = useState(false);
@@ -779,6 +782,27 @@ const SETTLEMENT_BADGE_STYLE = {
         document.addEventListener('click', onClick);
         return () => document.removeEventListener('click', onClick);
       }, [adminMenu]);
+
+      // 김유림 분기보고서 모달 — 해당 분기 마감 메타 실시간 구독
+      //   분기정산 모달과 다른 모달이라 monthlySettlementData 와 별도로 로드 필요.
+      //   on('value') 으로 mark 후 마감/해제 시 즉시 보고서 배너·웹훅 페이로드 갱신.
+      useEffect(() => {
+        if (!showQuarterReportModal) { setQuarterReportClosure(null); return; }
+        if (typeof database === 'undefined' || !database?.ref) return;
+        const qKey = `${quarterReportYear}-Q${quarterReportQuarter}`;
+        const ref = database.ref(`quarterlySettlements/${qKey}/totals`);
+        const handler = ref.on('value', (snap) => {
+          const t = snap.val() || {};
+          setQuarterReportClosure({
+            closed: t.closed === true,
+            closedAt: t.closedAt || null,
+            closedBy: t.closedBy || null,
+            reopenedAt: t.reopenedAt || null,
+            reopenedBy: t.reopenedBy || null,
+          });
+        });
+        return () => { try { ref.off('value', handler); } catch {} };
+      }, [showQuarterReportModal, quarterReportYear, quarterReportQuarter]);
       
       // 실적 내보내기 필터
       const [exportYear, setExportYear] = useState('all');
@@ -19558,6 +19582,16 @@ tr.suppressed td.fname{color:#64748b;}
                   return `  ${a.assignee}: ${wd}건${supLbl} · ${(a.estimatedAmount || 0).toLocaleString('ko-KR')}원`;
                 })
                 .join('\n');
+              // 분기 마감 상태 — 김유림 보고서에 마감완료 명시 (확정 데이터임을 알림)
+              const isClosed = quarterReportClosure?.closed === true;
+              const closedAtKST = quarterReportClosure?.closedAt
+                ? new Date(quarterReportClosure.closedAt).toISOString().slice(0,16).replace('T',' ')
+                : null;
+              const closedBy = quarterReportClosure?.closedBy || null;
+              const titleBadge = isClosed ? '🔒 마감완료 · ' : '';
+              const closureLine = isClosed
+                ? `🔒 분기 마감완료 — ${closedAtKST || ''}${closedBy ? ` · 처리자 ${closedBy}` : ''} (확정 데이터)`
+                : '⚠ 분기 미마감 — 잠정 데이터 (마감 후 재발송 권장)';
               try {
                 await fetch(yurimHook.url, {
                   method: 'POST',
@@ -19565,10 +19599,12 @@ tr.suppressed td.fname{color:#64748b;}
                   headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     body: `📊 [${quarterReportYear}년 ${report.range.label} 분기 종합 보고서 — 김유림 발송]`,
-                    connectColor: '#7c3aed',
+                    connectColor: isClosed ? '#16a34a' : '#7c3aed',
                     connectInfo: [{
-                      title: `예상 정산 합계: ${totalAmt}원 · 총 ${totalCnt}건`,
+                      title: `${titleBadge}예상 정산 합계: ${totalAmt}원 · 총 ${totalCnt}건`,
                       description: [
+                        closureLine,
+                        '',
                         '담당자별:',
                         perList,
                         '',
@@ -19681,12 +19717,22 @@ tr.suppressed td.fname{color:#64748b;}
                     <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>
                       수신: <strong>yurim@netformrnd.com</strong> · 주말출근(1.5배) + PT(검증통과) + 일정 통합
                     </div>
-                    {/* 분기 메타 배너 — 집계기준·마감일·급여반영월 */}
+                    {/* 분기 메타 배너 — 집계기준·마감일·급여반영월 + 분기 마감 상태 */}
                     {qSettlement?.totals && (
                       <div style={{ marginTop: 10, padding: '10px 12px', background: 'linear-gradient(135deg, #eff6ff 0%, #f0f9ff 100%)', border: '1px solid #bfdbfe', borderRadius: 6, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11, color: '#1e40af' }}>
                         <span><b>집계기준:</b> {qSettlement.totals.aggregationBasis === 'resultConfirmDate' ? '실적확정일 (finalConfirmedAt > requestedAt > PT일)' : 'PT일자'}</span>
                         {qSettlement.totals.closingDate && <span><b>마감일:</b> <span style={{ color: '#dc2626', fontWeight: 700 }}>{qSettlement.totals.closingDate}</span></span>}
                         {qSettlement.totals.payrollMonth && <span><b>급여 반영월:</b> <span style={{ color: '#16a34a', fontWeight: 700 }}>{qSettlement.totals.payrollMonth}</span></span>}
+                        {/* 분기 마감 상태 — 김유림 보고서에 그대로 반영됨 */}
+                        {quarterReportClosure?.closed === true ? (
+                          <span style={{ color: '#16a34a', fontWeight: 700 }}>
+                            🔒 마감완료
+                            {quarterReportClosure.closedAt && ` · ${new Date(quarterReportClosure.closedAt).toISOString().slice(0,16).replace('T',' ')}`}
+                            {quarterReportClosure.closedBy && ` · ${quarterReportClosure.closedBy}`}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#dc2626', fontWeight: 700 }}>⚠ 분기 미마감 (잠정)</span>
+                        )}
                       </div>
                     )}
                   </div>
