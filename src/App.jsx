@@ -10634,6 +10634,14 @@ tr.suppressed td.fname{color:#64748b;}
                                                   <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer' }}>
                                                     <input type="checkbox" checked={!!aSettlement.requested} onChange={() => {
                                                       const newVal = !aSettlement.requested;
+                                                      // 해제(체크 → 해제) 시 확인 — 정산요청 탭에서 즉시 사라지는 UX 방지
+                                                      if (!newVal) {
+                                                        const isCancelled = card.kaptVerified?.status === 'cancelled';
+                                                        const msg = isCancelled
+                                                          ? `🚫 취소공고 — ${assigneeName}님의 정산요청을 해제하시겠습니까?\n\n해제 시 정산요청 목록에서 즉시 사라집니다.`
+                                                          : `${assigneeName}님의 정산요청을 해제하시겠습니까?\n\n해제 시 정산요청 목록에서 즉시 사라집니다.`;
+                                                        if (!window.confirm(msg)) return;
+                                                      }
                                                       const nowISO = new Date().toISOString();
                                                       setPtSchedules(prev => prev.map(ps => {
                                                         if (ps.id !== card.id) return ps;
