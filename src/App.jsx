@@ -18945,21 +18945,29 @@ tr.suppressed td.fname{color:#64748b;}
                   <section className="ed-section" style={{ padding: '36px 40px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 44 }}>
                     {/* 담당자 */}
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 20 }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
                         <span style={{ ...F_DISP, fontSize: 22, fontWeight: 700, color: C.ink, letterSpacing: '-0.02em' }}>담당자별 성과</span>
+                      </div>
+                      {/* 컬럼 헤더 */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '74px 1fr 64px 86px 110px', gap: 14, alignItems: 'baseline', padding: '8px 0 10px', borderBottom: `2px solid ${C.ink}` }}>
+                        <span style={{ fontSize: 12, color: C.meta, fontWeight: 700 }}>이름</span>
+                        <span style={{ fontSize: 12, color: C.meta, fontWeight: 700 }}>승률 막대</span>
+                        <span style={{ fontSize: 12, color: C.meta, fontWeight: 700, textAlign: 'right' }}>승률</span>
+                        <span style={{ fontSize: 12, color: C.meta, fontWeight: 700, textAlign: 'right' }}>승·패</span>
+                        <span style={{ fontSize: 12, color: C.meta, fontWeight: 700, textAlign: 'right' }}>예상 정산금</span>
                       </div>
                       {assigneeRanked.length > 0 ? assigneeRanked.map(r => {
                         const barColor = r.winRate >= 60 ? C.ink : r.winRate >= 40 ? C.inkSoft : C.accent;
                         const amt = byAssignee[r.name]?.amount || 0;
                         return (
-                          <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '74px 1fr 64px 86px 100px', gap: 14, alignItems: 'center', padding: '14px 0', borderTop: `1px solid ${C.rule}` }}>
+                          <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '74px 1fr 64px 86px 110px', gap: 14, alignItems: 'center', padding: '14px 0', borderTop: `1px solid ${C.rule}` }}>
                             <span style={{ ...F_DISP, fontSize: 19, fontWeight: 700, color: C.ink, letterSpacing: '-0.012em' }}>{r.name}</span>
                             <div className="ed-bar-track" style={{ height: 6 }}>
                               <div className="ed-bar-fill" style={{ width: `${r.winRate}%`, background: barColor }} />
                             </div>
                             <span style={{ ...F_DISP, fontSize: 19, fontWeight: 800, color: barColor, textAlign: 'right' }}>{r.winRate}%</span>
                             <span className="ed-num-tabular" style={{ fontSize: 14, color: C.inkSoft, textAlign: 'right', fontWeight: 600 }}>{r.win}승·{r.lose}패</span>
-                            <span className="ed-num-tabular" style={{ fontSize: 15, color: amt > 0 ? C.ink : C.meta, textAlign: 'right', fontWeight: 700 }}>{amt > 0 ? `${(amt/10000).toLocaleString('ko-KR')}만` : '—'}</span>
+                            <span className="ed-num-tabular" style={{ fontSize: 15, color: amt > 0 ? C.ink : C.meta, textAlign: 'right', fontWeight: 700 }}>{amt > 0 ? `${(amt/10000).toLocaleString('ko-KR')}만원` : '—'}</span>
                           </div>
                         );
                       }) : <div style={{ color: C.meta, fontSize: 14, padding: '12px 0' }}>데이터 없음</div>}
@@ -19027,37 +19035,47 @@ tr.suppressed td.fname{color:#64748b;}
                     </div>
                     {/* 협약사 */}
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 18 }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
                         <span style={{ ...F_DISP, fontSize: 22, fontWeight: 700, color: C.ink, letterSpacing: '-0.02em' }}>협약사 / 요청사</span>
+                        <span style={{ fontSize: 13, color: C.meta, fontWeight: 500 }}>· PT 의뢰 빈도와 결과</span>
                       </div>
                       {(() => {
                         const reqList = Object.values(cur.byRequester || {})
                           .sort((a, b) => b.total - a.total).slice(0, 5);
                         if (reqList.length === 0) return <div style={{ color: C.meta, fontSize: 14, padding: '12px 0' }}>요청사 정보 없음</div>;
-                        return reqList.map((r, i) => {
-                          const winRate = (r.win + r.draw + r.lose) > 0 ? Math.round(r.win / (r.win + r.draw + r.lose) * 100) : 0;
-                          const winRateColor = winRate >= 60 ? C.ink : winRate >= 40 ? C.inkSoft : C.accent;
-                          const amt = r.amount || 0;
-                          const variantCount = r.originals?.size || 1;
-                          const isAptOffice = r.key === APT_OFFICE_KEY;
-                          return (
-                            <div key={r.key || r.name} title={variantCount > 1 ? `통합 표기 ${variantCount}개: ${[...(r.originals || [])].slice(0, 6).join(', ')}${variantCount > 6 ? ' …' : ''}` : undefined}
-                              style={{ display: 'grid', gridTemplateColumns: '24px 1fr auto 64px 92px', gap: 12, padding: '14px 4px', alignItems: 'center', borderTop: `1px solid ${C.rule}` }}>
-                              <span style={{ fontSize: 13, color: C.meta, fontWeight: 700 }}>{i+1}</span>
-                              <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0, flexWrap: 'wrap' }}>
-                                <span style={{ ...F_DISP, fontSize: 17, fontWeight: i < 3 ? 700 : 600, color: C.ink, letterSpacing: '-0.012em' }}>{r.name}</span>
-                                {(variantCount > 1 || isAptOffice) && (
-                                  <span style={{ fontSize: 11, color: C.meta, fontWeight: 600, background: C.surfaceSoft, padding: '2px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                                    {isAptOffice ? `${variantCount}개 단지` : `${variantCount}개 표기`}
-                                  </span>
-                                )}
-                              </span>
-                              <span className="ed-num-tabular" style={{ fontSize: 13, color: C.inkSoft, fontWeight: 600 }}>{r.total}건 · {r.win}승 {r.lose}패</span>
-                              <span style={{ ...F_DISP, fontSize: 19, fontWeight: 800, color: winRateColor, textAlign: 'right' }}>{winRate}%</span>
-                              <span className="ed-num-tabular" style={{ fontSize: 14, color: amt > 0 ? C.ink : C.meta, textAlign: 'right', fontWeight: 700 }}>{amt > 0 ? `${(amt/10000).toLocaleString('ko-KR')}만` : '—'}</span>
+                        return (
+                          <>
+                            {/* 컬럼 헤더 */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '24px 1fr 110px 80px', gap: 12, alignItems: 'baseline', padding: '8px 4px 10px', borderBottom: `2px solid ${C.ink}` }}>
+                              <span style={{ fontSize: 12, color: C.meta, fontWeight: 700 }}>#</span>
+                              <span style={{ fontSize: 12, color: C.meta, fontWeight: 700 }}>협약사</span>
+                              <span style={{ fontSize: 12, color: C.meta, fontWeight: 700, textAlign: 'right' }}>건수·승패</span>
+                              <span style={{ fontSize: 12, color: C.meta, fontWeight: 700, textAlign: 'right' }}>승률</span>
                             </div>
-                          );
-                        });
+                            {reqList.map((r, i) => {
+                              const winRate = (r.win + r.draw + r.lose) > 0 ? Math.round(r.win / (r.win + r.draw + r.lose) * 100) : 0;
+                              const winRateColor = winRate >= 60 ? C.ink : winRate >= 40 ? C.inkSoft : C.accent;
+                              const variantCount = r.originals?.size || 1;
+                              const isAptOffice = r.key === APT_OFFICE_KEY;
+                              return (
+                                <div key={r.key || r.name} title={variantCount > 1 ? `통합 표기 ${variantCount}개: ${[...(r.originals || [])].slice(0, 6).join(', ')}${variantCount > 6 ? ' …' : ''}` : undefined}
+                                  style={{ display: 'grid', gridTemplateColumns: '24px 1fr 110px 80px', gap: 12, padding: '14px 4px', alignItems: 'center', borderTop: `1px solid ${C.rule}` }}>
+                                  <span style={{ fontSize: 13, color: C.meta, fontWeight: 700 }}>{i+1}</span>
+                                  <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0, flexWrap: 'wrap' }}>
+                                    <span style={{ ...F_DISP, fontSize: 17, fontWeight: i < 3 ? 700 : 600, color: C.ink, letterSpacing: '-0.012em' }}>{r.name}</span>
+                                    {(variantCount > 1 || isAptOffice) && (
+                                      <span style={{ fontSize: 11, color: C.meta, fontWeight: 600, background: C.surfaceSoft, padding: '2px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                        {isAptOffice ? `${variantCount}개 단지` : `${variantCount}개 표기`}
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span className="ed-num-tabular" style={{ fontSize: 13, color: C.inkSoft, fontWeight: 600, textAlign: 'right' }}>{r.total}건 · {r.win}승 {r.lose}패</span>
+                                  <span style={{ ...F_DISP, fontSize: 19, fontWeight: 800, color: winRateColor, textAlign: 'right' }}>{winRate}%</span>
+                                </div>
+                              );
+                            })}
+                          </>
+                        );
                       })()}
                     </div>
                   </section>
