@@ -15489,7 +15489,8 @@ tr.suppressed td.fname{color:#64748b;}
               const qEndDay = qEndMonth === 3 || qEndMonth === 12 ? 31 : 30;
               const qEnd = `${yr}-${String(qEndMonth).padStart(2,'0')}-${String(qEndDay).padStart(2,'0')}`;
               const homeQ = _gracingAdjustedQuarter();
-              const VALID = new Set(['한준엽','조재연','정정훈','김성민','이필선','한인규','황윤선','이승우','부산지사']);
+              // 한인규 제외 (별도 정산 처리) · 조현식 제외 (정산 비대상)
+              const VALID = new Set(['한준엽','조재연','정정훈','김성민','이필선','황윤선','이승우','부산지사']);
               const acc = {};
               for (const pt of ptSchedules) {
                 if (!pt || pt.selfPT) continue;
@@ -18520,7 +18521,7 @@ tr.suppressed td.fname{color:#64748b;}
               return '기타';
             };
 
-            const VALID_TEAM = ['한준엽','조재연','정정훈','김성민','이필선','한인규','황윤선']; // 조현식 정산 제외
+            const VALID_TEAM = ['한준엽','조재연','정정훈','김성민','이필선','황윤선']; // 조현식 · 한인규 보고서 제외 (한인규는 별도 처리)
 
             // 기간별 집계 함수 (현재 분기 + 전 분기 비교용)
             const aggregateForPeriod = (yy, qq) => {
@@ -18689,191 +18690,317 @@ tr.suppressed td.fname{color:#64748b;}
               return ins;
             })();
 
+            // ═════════════════════════════════════════════════════════════
+            //  EDITORIAL DESIGN TOKENS — 에디토리얼·미니멀 시스템
+            //  Paper(크림) + Ink(블랙) + Crimson 단일 액센트. 라운드 0,
+            //  Fraunces 디스플레이 세리프 (이탤릭 numerals), Pretendard 본문,
+            //  JetBrains Mono 데이터 라벨. 강한 그리드, 대담한 타이포그래피.
+            // ═════════════════════════════════════════════════════════════
+            const C = {
+              paper: '#FAFAF5', paperDark: '#F0EFE7', ink: '#0A0A0A',
+              rule: '#0A0A0A', ruleSoft: '#C8C5B8', meta: '#6B6862',
+              accent: '#B91C1C',
+            };
+            const F_DISP = { fontFamily: "'Fraunces', 'Times New Roman', serif", letterSpacing: '-0.02em' };
+            const F_MONO = { fontFamily: "'JetBrains Mono', ui-monospace, monospace" };
+            const issueNo = String(((yKey - 2024) * 4 + qN)).padStart(2, '0');
+            const todayD = new Date();
+            const todayStr = `${todayD.getFullYear()}.${String(todayD.getMonth()+1).padStart(2,'0')}.${String(todayD.getDate()).padStart(2,'0')}`;
+
+            // 섹션 헤더 컴포넌트 — NO.XX · English (Italic) · 한글 라벨
+            const SectionHeader = ({ no, en, ko }) => (
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 18, paddingBottom: 14, marginBottom: 28, borderBottom: `1px solid ${C.ink}`, flexWrap: 'wrap' }}>
+                <span className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.18em', color: C.meta, fontWeight: 700 }}>NO.{no}</span>
+                <span style={{ ...F_DISP, fontSize: 32, fontWeight: 600, fontStyle: 'italic', lineHeight: 1, color: C.ink }}>{en}</span>
+                <span style={{ fontSize: 13, fontWeight: 500, color: C.meta }}>{ko}</span>
+              </div>
+            );
+
             return (
-              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 10300, padding: '20px 0', overflowY: 'auto' }}
+              <div className="ed-modal"
+                style={{ position: 'fixed', inset: 0, background: 'rgba(10,10,10,0.78)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 10300, padding: '32px 16px', overflowY: 'auto' }}
                 onClick={(e) => { if (e.target === e.currentTarget) setShowAnalysisReport(false); }}>
-                <div style={{ background: 'white', borderRadius: '14px', padding: '24px', width: '1000px', maxWidth: '95%', margin: 'auto' }} onClick={e => e.stopPropagation()}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
-                    <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', letterSpacing: '0.05em' }}>대표 보고용 분석 리포트</div>
-                      <h2 style={{ fontSize: 20, fontWeight: 800, margin: '4px 0 0 0', color: '#0f172a' }}>📈 {qKey} 영업 분석</h2>
-                    </div>
-                    <button onClick={() => setShowAnalysisReport(false)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#94a3b8' }}>×</button>
-                  </div>
+                <div style={{ background: C.paper, width: 1180, maxWidth: '100%', position: 'relative', boxShadow: '0 24px 80px rgba(0,0,0,0.45)' }} onClick={e => e.stopPropagation()}>
 
-                  {/* 기간 선택 */}
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
-                    <label style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>연도:</label>
-                    <select value={yKey} onChange={e => setAnalysisReportYear(parseInt(e.target.value))} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 12 }}>
-                      {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
-                    </select>
-                    <label style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>분기:</label>
-                    <select value={qN} onChange={e => setAnalysisReportQuarter(parseInt(e.target.value))} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 12 }}>
-                      {[1,2,3,4].map(q => <option key={q} value={q}>Q{q}</option>)}
-                    </select>
-                    <span style={{ marginLeft: 'auto', fontSize: 11, color: '#64748b' }}>집계 기준: 실적확정일 · 활동자 {assigneeRanked.length}명 · 총 {totalWin + totalDraw + totalLose + totalSupport}건</span>
-                  </div>
+                  {/* ─── Close ─── */}
+                  <button onClick={() => setShowAnalysisReport(false)}
+                    style={{ ...F_MONO, position: 'absolute', top: 28, right: 28, width: 38, height: 38, border: `1px solid ${C.ink}`, background: 'transparent', cursor: 'pointer', fontSize: 16, color: C.ink, zIndex: 5, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = C.ink; e.currentTarget.style.color = C.paper; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = C.ink; }}>×</button>
 
-                  {/* 1. 전체 실적 요약 + 전 분기 대비 */}
-                  <div style={{ padding: '12px 14px', background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: 'white', borderRadius: 10, marginBottom: 14, display: 'flex', justifyContent: 'space-around', gap: 10, alignItems: 'center' }}>
-                    <div style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: 10, opacity: 0.7 }}>승</div>
-                      <div style={{ fontSize: 22, fontWeight: 800, color: '#60a5fa' }}>{totalWin}</div>
-                      {prev.totalWin > 0 && <div style={{ fontSize: 9, color: winDelta >= 0 ? '#34d399' : '#f87171', marginTop: 1 }}>{winDelta >= 0 ? '▲' : '▼'} {Math.abs(winDelta)}</div>}
+                  {/* ════════════════════ MASTHEAD ════════════════════ */}
+                  <header style={{ padding: '64px 64px 36px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 72, flexWrap: 'wrap', gap: 12 }}>
+                      <div className="ed-mono" style={{ fontSize: 11, letterSpacing: '0.20em', color: C.ink, fontWeight: 700 }}>POUR / SALES OPERATIONS</div>
+                      <div className="ed-mono" style={{ fontSize: 11, letterSpacing: '0.16em', color: C.meta }}>ISSUE №{issueNo} · {yKey}.{String(startMonth).padStart(2,'0')}–{String(endMonth).padStart(2,'0')}</div>
                     </div>
-                    <div style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: 10, opacity: 0.7 }}>무</div>
-                      <div style={{ fontSize: 22, fontWeight: 800, color: '#fbbf24' }}>{totalDraw}</div>
+
+                    <h1 style={{ ...F_DISP, fontSize: 'clamp(64px, 10vw, 132px)', fontWeight: 300, fontStyle: 'italic', lineHeight: 0.92, margin: 0, color: C.ink, letterSpacing: '-0.045em' }}>
+                      Quarterly<br />
+                      Performance<br />
+                      <span style={{ fontWeight: 700, fontStyle: 'italic' }}>Report.</span>
+                    </h1>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 56, paddingBottom: 22, borderBottom: `1px solid ${C.ink}`, flexWrap: 'wrap', gap: 18 }}>
+                      <div>
+                        <div style={{ fontSize: 19, fontWeight: 600, color: C.ink, marginBottom: 4, letterSpacing: '-0.005em' }}>분기 영업 분석 리포트</div>
+                        <div className="ed-mono" style={{ fontSize: 11, letterSpacing: '0.10em', color: C.meta }}>{yKey}년 · {qN}분기 · {String(startMonth).padStart(2,'0')}—{String(endMonth).padStart(2,'0')}월</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.16em', color: C.meta, marginBottom: 4, fontWeight: 600 }}>PREPARED</div>
+                        <div className="ed-mono" style={{ fontSize: 11, color: C.ink }}>{todayStr} · {currentUser?.name || 'admin'}</div>
+                      </div>
                     </div>
-                    <div style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: 10, opacity: 0.7 }}>패</div>
-                      <div style={{ fontSize: 22, fontWeight: 800, color: '#f87171' }}>{totalLose}</div>
-                      {prev.totalLose > 0 && <div style={{ fontSize: 9, color: loseDelta <= 0 ? '#34d399' : '#f87171', marginTop: 1 }}>{loseDelta >= 0 ? '▲' : '▼'} {Math.abs(loseDelta)}</div>}
+                  </header>
+
+                  {/* ════════════════════ CONTROLS — Period selector ════════════════════ */}
+                  <section style={{ padding: '20px 64px', borderBottom: `1px solid ${C.ruleSoft}`, display: 'flex', gap: 18, alignItems: 'center', flexWrap: 'wrap', background: C.paper }}>
+                    <span className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.18em', color: C.meta, fontWeight: 600 }}>SELECT</span>
+                    <div style={{ display: 'flex', gap: 0 }}>
+                      {[2024, 2025, 2026, 2027].map((y, i) => (
+                        <button key={y} className={`ed-pickbtn ${y === yKey ? 'is-active' : ''}`} onClick={() => setAnalysisReportYear(y)}
+                          style={{ marginLeft: i === 0 ? 0 : -1 }}>{y}</button>
+                      ))}
                     </div>
-                    <div style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: 10, opacity: 0.7 }}>지원</div>
-                      <div style={{ fontSize: 22, fontWeight: 800, color: '#c084fc' }}>{totalSupport}</div>
+                    <div style={{ display: 'flex', gap: 0 }}>
+                      {[1,2,3,4].map((q, i) => (
+                        <button key={q} className={`ed-pickbtn ${q === qN ? 'is-active' : ''}`} onClick={() => setAnalysisReportQuarter(q)}
+                          style={{ marginLeft: i === 0 ? 0 : -1 }}>Q{q}</button>
+                      ))}
                     </div>
-                    <div style={{ textAlign: 'center', borderLeft: '1px solid rgba(255,255,255,0.2)', paddingLeft: 20 }}>
-                      <div style={{ fontSize: 10, opacity: 0.7 }}>승률</div>
-                      <div style={{ fontSize: 22, fontWeight: 800, color: '#34d399' }}>{curRate}%</div>
-                      {prevTotal > 0 && (
-                        <div style={{ fontSize: 9, color: rateDelta >= 0 ? '#34d399' : '#f87171', marginTop: 1 }} title={`전분기(${prevQKey}): ${prevRate}%`}>
-                          {rateDelta >= 0 ? '▲' : '▼'} {Math.abs(rateDelta)}%p
+                    <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+                      <div className="ed-mono" style={{ fontSize: 9, letterSpacing: '0.16em', color: C.meta, fontWeight: 600 }}>BASIS</div>
+                      <div className="ed-mono" style={{ fontSize: 11, color: C.ink }}>실적확정일 · {assigneeRanked.length}명 · {totalWin+totalDraw+totalLose+totalSupport}건</div>
+                    </div>
+                  </section>
+
+                  {/* ════════════════════ HERO METRIC — WIN RATE ════════════════════ */}
+                  <section className="ed-section" style={{ padding: '76px 64px 60px', borderBottom: `1px solid ${C.ink}` }}>
+                    <div className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.20em', color: C.meta, marginBottom: 16, fontWeight: 700 }}>HERO METRIC · 분기 종합 승률</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'baseline', gap: 36, alignContent: 'end' }}>
+                      <div style={{ ...F_DISP, fontSize: 'clamp(120px, 16vw, 220px)', fontWeight: 300, fontStyle: 'italic', lineHeight: 0.85, color: C.ink, letterSpacing: '-0.055em' }}>
+                        {curRate}<span style={{ fontSize: '50%', fontWeight: 300, color: C.meta, marginLeft: -8 }}>%</span>
+                      </div>
+                      <div style={{ borderLeft: `1px solid ${C.ruleSoft}`, paddingLeft: 32, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', paddingBottom: 18 }}>
+                        <div className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.18em', color: C.meta, marginBottom: 10, fontWeight: 700 }}>WIN RATE</div>
+                        {prevTotal > 0 ? (
+                          <>
+                            <div style={{ ...F_DISP, fontSize: 36, fontWeight: 600, fontStyle: 'italic', color: rateDelta >= 0 ? C.ink : C.accent, lineHeight: 1, marginBottom: 8 }}>
+                              {rateDelta >= 0 ? '▲' : '▼'} {Math.abs(rateDelta)}<span style={{ fontSize: '55%', color: C.meta, marginLeft: 4 }}>pp</span>
+                            </div>
+                            <div className="ed-mono" style={{ fontSize: 11, color: C.meta, letterSpacing: '0.06em' }}>vs {prevQKey} · {prevRate}% ({prev.totalWin}W / {prevTotal} cases)</div>
+                          </>
+                        ) : (
+                          <div className="ed-mono" style={{ fontSize: 11, color: C.meta }}>전 분기 데이터 없음</div>
+                        )}
+                      </div>
+                      <div style={{ textAlign: 'right', alignSelf: 'flex-end', paddingBottom: 18 }}>
+                        <div className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.18em', color: C.meta, marginBottom: 8, fontWeight: 700 }}>VOLUME</div>
+                        <div style={{ ...F_DISP, fontSize: 56, fontWeight: 600, fontStyle: 'italic', color: C.ink, lineHeight: 1 }}>{curTotal}</div>
+                        <div className="ed-mono" style={{ fontSize: 10, color: C.meta, marginTop: 6, letterSpacing: '0.10em' }}>TOTAL CASES</div>
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* ════════════════════ KPI QUADRANT ════════════════════ */}
+                  <section className="ed-section" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', borderBottom: `1px solid ${C.ink}` }}>
+                    {[
+                      { label: 'WINS',    ko: '승',    value: totalWin,     delta: winDelta,                       prevValue: prev.totalWin,    accent: false, invert: false },
+                      { label: 'DRAWS',   ko: '무',    value: totalDraw,    delta: totalDraw - prev.totalDraw,     prevValue: prev.totalDraw,   accent: false, invert: false },
+                      { label: 'LOSSES',  ko: '패',    value: totalLose,    delta: loseDelta,                      prevValue: prev.totalLose,   accent: true,  invert: true  },
+                      { label: 'SUPPORT', ko: '지원',  value: totalSupport, delta: totalSupport - prev.totalSupport, prevValue: prev.totalSupport, accent: false, invert: false },
+                    ].map((m, i) => (
+                      <div key={m.label} style={{ padding: '44px 32px 38px', borderRight: i < 3 ? `1px solid ${C.ink}` : 'none' }}>
+                        <div className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.20em', color: C.meta, marginBottom: 14, fontWeight: 700 }}>{m.label}</div>
+                        <div style={{ ...F_DISP, fontSize: 92, fontWeight: m.accent ? 600 : 400, fontStyle: 'italic', lineHeight: 0.95, color: m.accent ? C.accent : C.ink, letterSpacing: '-0.045em' }}>{m.value}</div>
+                        <div style={{ marginTop: 16, display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>{m.ko}</span>
+                          {m.prevValue > 0 ? (() => {
+                            if (m.delta === 0) return <span className="ed-mono" style={{ fontSize: 11, color: C.meta, letterSpacing: '0.04em' }}>— UNCHANGED</span>;
+                            const isGood = m.invert ? m.delta < 0 : m.delta > 0;
+                            return (
+                              <span className="ed-mono" style={{ fontSize: 11, color: isGood ? C.ink : C.accent, letterSpacing: '0.04em', fontWeight: 600 }}>
+                                {m.delta > 0 ? '▲' : '▼'} {Math.abs(m.delta)} <span style={{ color: C.meta, fontWeight: 400 }}>vs {prevQKey}</span>
+                              </span>
+                            );
+                          })() : (
+                            <span className="ed-mono" style={{ fontSize: 10, color: C.meta, letterSpacing: '0.10em' }}>NEW PERIOD</span>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  </div>
+                      </div>
+                    ))}
+                  </section>
 
-                  {/* 전 분기 대비 요약 배너 */}
-                  {prevTotal > 0 && (
-                    <div style={{ padding: '8px 12px', background: '#f1f5f9', borderRadius: 8, marginBottom: 14, fontSize: 11, color: '#475569', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-                      <span><b>전분기 {prevQKey}:</b> 승 {prev.totalWin} · 무 {prev.totalDraw} · 패 {prev.totalLose} · 승률 {prevRate}%</span>
-                      <span style={{ marginLeft: 'auto', color: rateDelta >= 0 ? '#16a34a' : '#dc2626', fontWeight: 700 }}>
-                        승률 {rateDelta >= 0 ? '상승' : '하락'} {Math.abs(rateDelta)}%p · 건수 {curTotal - prevTotal >= 0 ? '+' : ''}{curTotal - prevTotal}
-                      </span>
-                    </div>
+                  {/* ════════════════════ INSIGHTS ════════════════════ */}
+                  {insights.length > 0 && (
+                    <section className="ed-section" style={{ padding: '60px 64px' }}>
+                      <SectionHeader no="01" en="Insights" ko="자동 감지된 분기 패턴" />
+                      <div>
+                        {insights.map((ins, i) => {
+                          const tag = ins.type === 'good' ? 'STRENGTH' : ins.type === 'bad' ? 'CONCERN' : 'NOTE';
+                          const tagColor = ins.type === 'bad' ? C.accent : ins.type === 'good' ? C.ink : C.meta;
+                          const isAccent = ins.type === 'bad';
+                          return (
+                            <div key={i} style={{ display: 'grid', gridTemplateColumns: '60px 110px 1fr', gap: 24, padding: '22px 0', borderBottom: i === insights.length - 1 ? 'none' : `1px solid ${C.ruleSoft}`, alignItems: 'baseline' }}>
+                              <span className="ed-mono" style={{ fontSize: 11, color: C.meta, letterSpacing: '0.08em', fontWeight: 700 }}>{String(i+1).padStart(2,'0')} /</span>
+                              <span className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.20em', color: tagColor, fontWeight: 700 }}>{tag}</span>
+                              <span style={{ fontSize: 16, lineHeight: 1.55, color: isAccent ? C.accent : C.ink, fontWeight: isAccent ? 600 : 500, letterSpacing: '-0.005em' }}>{ins.text}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="ed-mono" style={{ fontSize: 9, color: C.meta, marginTop: 18, letterSpacing: '0.10em' }}>※ RULE-BASED · 승률 ±5%P · 공종 40·70% · 담당자 평균 ±20%P · 공법 50·75% · 사유 40%</div>
+                    </section>
                   )}
 
-                  {/* 🤖 자동 인사이트 — 데이터 기반 해석 */}
-                  {insights.length > 0 && (
-                    <div style={{ marginBottom: 16, padding: 14, background: 'linear-gradient(135deg, #f8fafc 0%, #ecfdf5 100%)', border: '1.5px solid #a7f3d0', borderRadius: 10 }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: '#065f46', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span>🤖 자동 인사이트</span>
-                        <span style={{ fontSize: 10, fontWeight: 600, color: '#6b7280' }}>({insights.length}개 감지)</span>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {insights.map((ins, i) => (
-                          <div key={i} style={{ padding: '6px 10px', background: 'white', borderRadius: 6, borderLeft: `3px solid ${ins.type === 'good' ? '#16a34a' : ins.type === 'bad' ? '#dc2626' : '#64748b'}`, fontSize: 11, color: '#1e293b' }}>
-                            <span style={{ marginRight: 6 }}>{ins.type === 'good' ? '🟢' : ins.type === 'bad' ? '🔴' : '🔵'}</span>
-                            {ins.text}
+                  {/* ════════════════════ TEAM ════════════════════ */}
+                  <section className="ed-section" style={{ padding: '60px 64px', background: C.paperDark }}>
+                    <SectionHeader no="02" en="Team" ko="담당자별 성과" />
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr>
+                          {[
+                            { h: 'NAME', t: 'left', w: 'auto' },
+                            { h: 'WINS', t: 'right', w: 80 },
+                            { h: 'DRAWS', t: 'right', w: 80 },
+                            { h: 'LOSSES', t: 'right', w: 80 },
+                            { h: 'SUPPORT', t: 'right', w: 80 },
+                            { h: 'WIN RATE', t: 'right', w: 200 },
+                          ].map((c, i) => (
+                            <th key={i} className="ed-mono" style={{ textAlign: c.t, padding: '14px 16px 14px 0', fontSize: 10, letterSpacing: '0.16em', color: C.meta, fontWeight: 700, borderBottom: `1px solid ${C.ink}`, width: c.w }}>{c.h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {assigneeRanked.map((r) => (
+                          <tr key={r.name} style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
+                            <td style={{ padding: '20px 16px 20px 0' }}>
+                              <span style={{ ...F_DISP, fontSize: 24, fontStyle: 'italic', fontWeight: 500, color: C.ink, letterSpacing: '-0.015em' }}>{r.name}</span>
+                            </td>
+                            <td className="ed-mono ed-num-tabular" style={{ textAlign: 'right', padding: '20px 16px 20px 0', fontSize: 18, fontWeight: 600, color: C.ink }}>{r.win}</td>
+                            <td className="ed-mono ed-num-tabular" style={{ textAlign: 'right', padding: '20px 16px 20px 0', fontSize: 15, color: C.meta }}>{r.draw}</td>
+                            <td className="ed-mono ed-num-tabular" style={{ textAlign: 'right', padding: '20px 16px 20px 0', fontSize: 15, color: r.lose > 0 ? C.accent : C.meta }}>{r.lose}</td>
+                            <td className="ed-mono ed-num-tabular" style={{ textAlign: 'right', padding: '20px 16px 20px 0', fontSize: 15, color: C.meta }}>{r.support}</td>
+                            <td style={{ textAlign: 'right', padding: '20px 0' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 14, justifyContent: 'flex-end' }}>
+                                <div style={{ width: 100, height: 4, background: '#E0DDD0', position: 'relative' }}>
+                                  <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${r.winRate}%`, background: r.winRate >= 60 ? C.ink : r.winRate >= 40 ? C.meta : C.accent }} />
+                                </div>
+                                <span style={{ ...F_DISP, fontSize: 22, fontStyle: 'italic', fontWeight: 600, color: C.ink, minWidth: 60, textAlign: 'right' }}>{r.winRate}%</span>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </section>
+
+                  {/* ════════════════════ CATEGORIES ════════════════════ */}
+                  <section className="ed-section" style={{ padding: '60px 64px' }}>
+                    <SectionHeader no="03" en="Categories" ko="공종별 승률 — 강·약 영역" />
+                    {workTypeRanked.length > 0 ? (
+                      <div>
+                        {workTypeRanked.map((w, i) => (
+                          <div key={w.cat} style={{ display: 'grid', gridTemplateColumns: '200px 1fr 240px', gap: 32, alignItems: 'center', padding: '24px 0', borderBottom: i === workTypeRanked.length - 1 ? `1px solid ${C.ink}` : `1px solid ${C.ruleSoft}` }}>
+                            <div>
+                              <div style={{ ...F_DISP, fontSize: 26, fontStyle: 'italic', fontWeight: 500, color: C.ink, lineHeight: 1, letterSpacing: '-0.015em' }}>{w.cat}</div>
+                              <div className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.10em', color: C.meta, marginTop: 6, fontWeight: 600 }}>{w.total} CASES</div>
+                            </div>
+                            <div style={{ height: 10, background: '#E0DDD0', position: 'relative', overflow: 'hidden', display: 'flex' }}>
+                              <div style={{ height: '100%', width: `${(w.win/w.total)*100}%`, background: C.ink }} />
+                              <div style={{ height: '100%', width: `${(w.draw/w.total)*100}%`, background: C.meta }} />
+                              <div style={{ height: '100%', width: `${(w.lose/w.total)*100}%`, background: C.accent }} />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, justifyContent: 'flex-end' }}>
+                              <span className="ed-mono" style={{ fontSize: 11, color: C.meta, letterSpacing: '0.04em' }}>{w.win}W · {w.draw}D · {w.lose}L</span>
+                              <span style={{ ...F_DISP, fontSize: 36, fontStyle: 'italic', fontWeight: 600, color: w.winRate >= 60 ? C.ink : w.winRate >= 40 ? C.meta : C.accent, minWidth: 70, textAlign: 'right', lineHeight: 1 }}>{w.winRate}%</span>
+                            </div>
                           </div>
                         ))}
-                      </div>
-                      <div style={{ fontSize: 10, color: '#6b7280', marginTop: 8 }}>
-                        ※ 규칙 기반 자동 감지 (승률 ±5%p · 공종 승률 40·70% · 담당자 평균 ±20%p · 공법 50·75% · 패배 사유 40% 기준)
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 2. 담당자별 성과 */}
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>📊 담당자별 성과</div>
-                    <div style={{ overflowX: 'auto' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                        <thead>
-                          <tr style={{ background: '#f1f5f9' }}>
-                            <th style={{ padding: 8, textAlign: 'left', color: '#475569' }}>담당자</th>
-                            <th style={{ padding: 8, textAlign: 'right', color: '#475569' }}>승</th>
-                            <th style={{ padding: 8, textAlign: 'right', color: '#475569' }}>무</th>
-                            <th style={{ padding: 8, textAlign: 'right', color: '#475569' }}>패</th>
-                            <th style={{ padding: 8, textAlign: 'right', color: '#475569' }}>지원</th>
-                            <th style={{ padding: 8, textAlign: 'right', color: '#475569' }}>승률</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {assigneeRanked.map(r => (
-                            <tr key={r.name} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                              <td style={{ padding: 8, fontWeight: 700 }}>{r.name}</td>
-                              <td style={{ padding: 8, textAlign: 'right', color: '#2563eb', fontWeight: 700 }}>{r.win}</td>
-                              <td style={{ padding: 8, textAlign: 'right', color: '#d97706' }}>{r.draw}</td>
-                              <td style={{ padding: 8, textAlign: 'right', color: '#dc2626' }}>{r.lose}</td>
-                              <td style={{ padding: 8, textAlign: 'right', color: '#7c3aed' }}>{r.support}</td>
-                              <td style={{ padding: 8, textAlign: 'right', fontWeight: 700, color: r.winRate >= 60 ? '#16a34a' : r.winRate >= 40 ? '#d97706' : '#dc2626' }}>{r.winRate}%</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {/* 3. 공종별 승률 */}
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>🏗 공종별 승률 (강·약 영역)</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {workTypeRanked.map(w => (
-                        <div key={w.cat} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: '#1e293b', minWidth: 70 }}>{w.cat}</div>
-                          <div style={{ flex: 1, height: 8, background: '#e2e8f0', borderRadius: 4, overflow: 'hidden', display: 'flex' }}>
-                            <div style={{ height: '100%', width: `${w.total > 0 ? w.win / w.total * 100 : 0}%`, background: '#2563eb' }} />
-                            <div style={{ height: '100%', width: `${w.total > 0 ? w.draw / w.total * 100 : 0}%`, background: '#f59e0b' }} />
-                            <div style={{ height: '100%', width: `${w.total > 0 ? w.lose / w.total * 100 : 0}%`, background: '#dc2626' }} />
-                          </div>
-                          <div style={{ fontSize: 11, color: '#475569', minWidth: 150, textAlign: 'right' }}>승 {w.win} · 무 {w.draw} · 패 {w.lose} · <b style={{ color: w.winRate >= 60 ? '#16a34a' : w.winRate >= 40 ? '#d97706' : '#dc2626' }}>{w.winRate}%</b></div>
+                        <div style={{ display: 'flex', gap: 22, marginTop: 18, alignItems: 'center' }}>
+                          <span className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.16em', color: C.meta, fontWeight: 700 }}>LEGEND</span>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11, color: C.ink }}><span style={{ width: 22, height: 6, background: C.ink, display: 'inline-block' }} /> 승</span>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11, color: C.meta }}><span style={{ width: 22, height: 6, background: C.meta, display: 'inline-block' }} /> 무</span>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11, color: C.accent }}><span style={{ width: 22, height: 6, background: C.accent, display: 'inline-block' }} /> 패</span>
                         </div>
-                      ))}
-                      {workTypeRanked.length === 0 && <div style={{ color: '#94a3b8', fontSize: 12, padding: 12 }}>데이터 없음</div>}
-                    </div>
-                  </div>
+                      </div>
+                    ) : (
+                      <div style={{ padding: '40px 0', color: C.meta, fontSize: 13, textAlign: 'center' }}>데이터 없음</div>
+                    )}
+                  </section>
 
-                  {/* 4. 공법 경쟁 분석 */}
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>⚔ 공법 경쟁 분석 (우리 공법별 승패)</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
-                      {Object.entries(byOurTech).map(([tag, v]) => {
-                        const done = v.win + v.lose;
-                        const rate = done > 0 ? Math.round(v.win / done * 100) : 0;
-                        return (
-                          <div key={tag} style={{ padding: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
-                            <div style={{ fontSize: 14, fontWeight: 800, color: '#0f172a', marginBottom: 4 }}>{tag}</div>
-                            <div style={{ fontSize: 11, color: '#475569' }}>승 <b style={{ color: '#2563eb' }}>{v.win}</b> / 패 <b style={{ color: '#dc2626' }}>{v.lose}</b></div>
-                            <div style={{ fontSize: 18, fontWeight: 800, color: rate >= 60 ? '#16a34a' : rate >= 40 ? '#d97706' : '#dc2626', marginTop: 4 }}>{rate}%</div>
-                          </div>
-                        );
-                      })}
-                      {Object.keys(byOurTech).length === 0 && <div style={{ color: '#94a3b8', fontSize: 12 }}>데이터 없음</div>}
-                    </div>
-                    <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 6 }}>※ announcementMethods/workType 에서 POUR·CNC 언급 기준 추정</div>
-                  </div>
+                  {/* ════════════════════ TECHNOLOGIES ════════════════════ */}
+                  <section className="ed-section" style={{ padding: '60px 64px', background: C.paperDark }}>
+                    <SectionHeader no="04" en="Technologies" ko="공법 경쟁 — 우리 공법별 승패" />
+                    {Object.keys(byOurTech).length > 0 ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(Object.keys(byOurTech).length, 1)}, 1fr)`, borderTop: `1px solid ${C.ink}`, borderBottom: `1px solid ${C.ink}` }}>
+                        {Object.entries(byOurTech).map(([tag, v], i, arr) => {
+                          const done = v.win + v.lose;
+                          const rate = done > 0 ? Math.round(v.win / done * 100) : 0;
+                          return (
+                            <div key={tag} style={{ padding: '40px 28px', borderRight: i < arr.length - 1 ? `1px solid ${C.ink}` : 'none' }}>
+                              <div className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.20em', color: C.meta, fontWeight: 700, marginBottom: 10 }}>TECHNOLOGY</div>
+                              <div style={{ ...F_DISP, fontSize: 52, fontStyle: 'italic', fontWeight: 700, color: C.ink, letterSpacing: '-0.035em', lineHeight: 1, marginBottom: 28 }}>{tag}</div>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
+                                <div>
+                                  <div className="ed-mono" style={{ fontSize: 9, letterSpacing: '0.18em', color: C.meta, marginBottom: 6, fontWeight: 600 }}>WIN</div>
+                                  <div style={{ ...F_DISP, fontSize: 40, fontStyle: 'italic', fontWeight: 600, color: C.ink, lineHeight: 1 }}>{v.win}</div>
+                                </div>
+                                <div>
+                                  <div className="ed-mono" style={{ fontSize: 9, letterSpacing: '0.18em', color: C.meta, marginBottom: 6, fontWeight: 600 }}>LOSE</div>
+                                  <div style={{ ...F_DISP, fontSize: 40, fontStyle: 'italic', fontWeight: 600, color: v.lose > 0 ? C.accent : C.ink, lineHeight: 1 }}>{v.lose}</div>
+                                </div>
+                              </div>
+                              <hr className="ed-rule-soft" style={{ marginTop: 22, marginBottom: 16 }} />
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                                <span className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.16em', color: C.meta, fontWeight: 600 }}>WIN RATE</span>
+                                <span style={{ ...F_DISP, fontSize: 30, fontStyle: 'italic', fontWeight: 600, color: rate >= 60 ? C.ink : rate >= 40 ? C.meta : C.accent }}>{rate}%</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ padding: '40px 0', color: C.meta, fontSize: 13, textAlign: 'center' }}>데이터 없음</div>
+                    )}
+                    <div className="ed-mono" style={{ fontSize: 9, color: C.meta, marginTop: 14, letterSpacing: '0.08em' }}>※ ANNOUNCEMENT METHODS / WORKTYPE 에서 POUR · CNC 언급 기준 추정</div>
+                  </section>
 
-                  {/* 5. 패배 원인 TOP — 클릭 시 PT 상세·사유 펼침 */}
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>💔 패배 원인 분석 (클릭 시 현장·사유·분석 펼침)</div>
+                  {/* ════════════════════ LOSS ANALYSIS ════════════════════ */}
+                  <section className="ed-section" style={{ padding: '60px 64px' }}>
+                    <SectionHeader no="05" en="Loss Analysis" ko="패배 원인 — 클릭 시 현장·사유 펼침" />
                     {lossReasonRanked.length > 0 ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div>
                         {lossReasonRanked.map((l, i) => {
                           const isExpanded = expandedAnalysisLossReason === l.reason;
                           const reasonPts = (cur.lossReasonPtList?.[l.reason]) || [];
+                          const isTop = i === 0;
                           return (
                             <div key={l.reason}>
-                              <div onClick={() => setExpandedAnalysisLossReason(isExpanded ? null : l.reason)}
-                                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: i === 0 ? '#fef2f2' : '#f8fafc', borderRadius: 8, border: `1px solid ${i === 0 ? '#fecaca' : '#e2e8f0'}`, cursor: 'pointer', userSelect: 'none' }}>
-                                <span style={{ fontSize: 16, fontWeight: 800, color: i === 0 ? '#991b1b' : '#64748b', minWidth: 24 }}>{i + 1}</span>
-                                <span style={{ flex: 1, fontSize: 12, color: '#1e293b', fontWeight: 600 }}>{l.reason}</span>
-                                <span style={{ fontSize: 12, fontWeight: 800, color: '#dc2626' }}>{l.count}건 ({l.pct}%)</span>
-                                <span style={{ fontSize: 10, color: '#64748b' }}>{isExpanded ? '▲' : '▼'}</span>
+                              <div className="ed-row-toggle" onClick={() => setExpandedAnalysisLossReason(isExpanded ? null : l.reason)}
+                                style={{ display: 'grid', gridTemplateColumns: '52px 1fr auto auto 28px', gap: 24, padding: '24px 16px', alignItems: 'center', borderTop: i === 0 ? `1px solid ${C.ink}` : `1px solid ${C.ruleSoft}` }}>
+                                <span className="ed-mono" style={{ fontSize: 11, color: C.meta, letterSpacing: '0.08em', fontWeight: 700 }}>{String(i+1).padStart(2,'0')}.</span>
+                                <span style={{ fontSize: isTop ? 18 : 16, fontWeight: isTop ? 600 : 500, color: isTop ? C.accent : C.ink, letterSpacing: '-0.005em' }}>{l.reason}</span>
+                                <span style={{ ...F_DISP, fontSize: 26, fontStyle: 'italic', fontWeight: 600, color: isTop ? C.accent : C.ink, lineHeight: 1 }}>{l.count}</span>
+                                <span className="ed-mono ed-num-tabular" style={{ fontSize: 13, color: C.meta, minWidth: 50, textAlign: 'right' }}>{l.pct}%</span>
+                                <span className="ed-mono" style={{ fontSize: 11, color: C.meta, textAlign: 'right' }}>{isExpanded ? '−' : '+'}</span>
                               </div>
                               {isExpanded && reasonPts.length > 0 && (
-                                <div style={{ marginTop: 6, padding: '10px 14px', background: '#fffaf0', borderRadius: 8, border: '1px dashed #fde68a' }}>
-                                  <div style={{ fontSize: 11, fontWeight: 700, color: '#92400e', marginBottom: 6 }}>📋 해당 패배 PT 상세 ({reasonPts.length}건)</div>
+                                <div style={{ background: C.paperDark, padding: '28px 32px', borderTop: `1px solid ${C.ruleSoft}` }}>
+                                  <div className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.18em', color: C.meta, marginBottom: 20, fontWeight: 700 }}>{reasonPts.length} CASE FILES</div>
                                   {reasonPts.map((p, idx) => (
-                                    <div key={p.ptId + idx} style={{ padding: '8px 0', borderTop: idx === 0 ? 'none' : '1px dashed #fde68a', fontSize: 11 }}>
-                                      <div style={{ fontWeight: 700, color: '#1e293b', marginBottom: 2 }}>{p.siteName} <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 400 }}>· {p.date} · {p.assignee} · {p.workType}</span></div>
-                                      {p.requester && <div style={{ fontSize: 10, color: '#64748b' }}>요청사: {p.requester}</div>}
-                                      <div style={{ fontSize: 11, color: '#7c2d12', marginTop: 3, lineHeight: 1.5 }}>
-                                        <b>📝 사유:</b> {p.reasonText || '(미입력)'}
+                                    <div key={p.ptId + idx} style={{ display: 'grid', gridTemplateColumns: '36px 1fr auto', gap: 18, padding: '16px 0', borderTop: idx === 0 ? 'none' : `1px solid ${C.ruleSoft}`, alignItems: 'baseline' }}>
+                                      <span className="ed-mono" style={{ fontSize: 10, color: C.meta, letterSpacing: '0.06em' }}>{String(idx+1).padStart(2,'0')}</span>
+                                      <div>
+                                        <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 6, letterSpacing: '-0.005em' }}>{p.siteName}</div>
+                                        <div className="ed-mono" style={{ fontSize: 10, color: C.meta, letterSpacing: '0.06em', marginBottom: 12 }}>{p.date} · {p.assignee} · {p.workType || '미입력'}{p.requester ? ` · 요청 ${p.requester}` : ''}</div>
+                                        <div style={{ fontSize: 13, color: C.ink, lineHeight: 1.55, paddingLeft: 14, borderLeft: `2px solid ${C.accent}` }}>
+                                          <span className="ed-mono" style={{ fontSize: 9, letterSpacing: '0.18em', color: C.meta, marginRight: 10, fontWeight: 700 }}>REASON</span>
+                                          {p.reasonText || <span style={{ color: C.meta, fontStyle: 'italic' }}>(미입력)</span>}
+                                        </div>
+                                        {p.competitor && <div className="ed-mono" style={{ fontSize: 11, color: C.accent, marginTop: 10, letterSpacing: '0.06em', fontWeight: 600 }}>COMPETITOR · {p.competitor}</div>}
                                       </div>
-                                      {p.competitor && <div style={{ fontSize: 10, color: '#dc2626', marginTop: 2 }}>💢 경쟁사: {p.competitor}</div>}
+                                      <span className="ed-mono" style={{ fontSize: 9, letterSpacing: '0.14em', color: C.meta, alignSelf: 'flex-start', fontWeight: 600 }}>{p.category}</span>
                                     </div>
                                   ))}
                                 </div>
@@ -18881,17 +19008,18 @@ tr.suppressed td.fname{color:#64748b;}
                             </div>
                           );
                         })}
+                        <div style={{ borderBottom: `1px solid ${C.ink}` }} />
                       </div>
                     ) : (
-                      <div style={{ color: '#94a3b8', fontSize: 12, padding: 12 }}>패배 사유 텍스트 없음</div>
+                      <div style={{ padding: '40px 0', color: C.meta, fontSize: 13, textAlign: 'center' }}>패배 사유 텍스트 없음</div>
                     )}
-                  </div>
+                  </section>
 
-                  {/* 6. 담당자별 아파트 리스트 — 클릭 시 PT 리스트 펼침 (대표 보고용) */}
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>👥 담당자별 아파트 리스트 (클릭 시 펼침)</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {VALID_TEAM.map(name => {
+                  {/* ════════════════════ CASE FILES — Assignee PT lists ════════════════════ */}
+                  <section className="ed-section" style={{ padding: '60px 64px', background: C.paperDark }}>
+                    <SectionHeader no="06" en="Case Files" ko="담당자별 PT 리스트 — 클릭 시 펼침" />
+                    <div>
+                      {VALID_TEAM.map((name, i) => {
                         const ptList = (cur.byAssigneePtList?.[name]) || [];
                         if (ptList.length === 0) return null;
                         const isExpanded = expandedAnalysisAssignee === name;
@@ -18901,21 +19029,22 @@ tr.suppressed td.fname{color:#64748b;}
                         const sups = byAssignee[name]?.support || 0;
                         return (
                           <div key={name}>
-                            <div onClick={() => setExpandedAnalysisAssignee(isExpanded ? null : name)}
-                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#eff6ff', borderRadius: 8, border: '1px solid #bfdbfe', cursor: 'pointer', userSelect: 'none' }}>
-                              <span style={{ fontSize: 13, fontWeight: 800, color: '#1e40af', minWidth: 70 }}>{name}</span>
-                              <span style={{ flex: 1, fontSize: 11, color: '#475569' }}>총 {ptList.length}건 · 승{wins} 무{draws} 패{losses} 지원{sups}</span>
-                              <span style={{ fontSize: 10, color: '#64748b' }}>{isExpanded ? '▲' : '▼'}</span>
+                            <div className="ed-row-toggle" onClick={() => setExpandedAnalysisAssignee(isExpanded ? null : name)}
+                              style={{ display: 'grid', gridTemplateColumns: '1fr auto auto 28px', gap: 24, padding: '24px 16px', alignItems: 'center', borderTop: i === 0 ? `1px solid ${C.ink}` : `1px solid ${C.ruleSoft}` }}>
+                              <span style={{ ...F_DISP, fontSize: 26, fontStyle: 'italic', fontWeight: 500, color: C.ink, letterSpacing: '-0.015em', lineHeight: 1 }}>{name}</span>
+                              <span className="ed-mono" style={{ fontSize: 11, color: C.meta, letterSpacing: '0.04em' }}>승{wins} · 무{draws} · 패{losses}{sups > 0 ? ` · 지원${sups}` : ''}</span>
+                              <span style={{ ...F_DISP, fontSize: 26, fontStyle: 'italic', fontWeight: 600, color: C.ink, minWidth: 56, textAlign: 'right', lineHeight: 1 }}>{ptList.length}</span>
+                              <span className="ed-mono" style={{ fontSize: 11, color: C.meta, textAlign: 'right' }}>{isExpanded ? '−' : '+'}</span>
                             </div>
                             {isExpanded && (
-                              <div style={{ marginTop: 6, padding: '10px 14px', background: '#f8fafc', borderRadius: 8, border: '1px dashed #cbd5e1' }}>
-                                {ptList.sort((a, b) => (b.date || '').localeCompare(a.date || '')).map((p, idx) => {
-                                  const rc = p.result === '승' ? '#16a34a' : p.result === '무' ? '#f59e0b' : p.result === '패' ? '#dc2626' : '#64748b';
+                              <div style={{ background: C.paper, padding: '20px 32px', borderTop: `1px solid ${C.ruleSoft}` }}>
+                                {ptList.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')).map((p, idx) => {
+                                  const rColor = p.result === '승' ? C.ink : p.result === '패' ? C.accent : C.meta;
                                   return (
-                                    <div key={p.ptId + idx} style={{ padding: '6px 0', borderTop: idx === 0 ? 'none' : '1px dashed #e2e8f0', fontSize: 11, display: 'flex', alignItems: 'center', gap: 10 }}>
-                                      <span style={{ fontWeight: 700, color: rc, minWidth: 32 }}>{p.result}</span>
-                                      <span style={{ flex: 1, color: '#1e293b' }}>{p.siteName}</span>
-                                      <span style={{ fontSize: 10, color: '#94a3b8' }}>{p.date} · {p.category}</span>
+                                    <div key={p.ptId + idx} style={{ display: 'grid', gridTemplateColumns: '46px 1fr auto', gap: 18, padding: '13px 0', borderTop: idx === 0 ? 'none' : `1px solid ${C.ruleSoft}`, alignItems: 'baseline' }}>
+                                      <span className="ed-mono" style={{ fontSize: 13, fontWeight: 700, color: rColor, letterSpacing: '0.04em' }}>{p.result}</span>
+                                      <span style={{ fontSize: 14, color: C.ink, fontWeight: 500, letterSpacing: '-0.005em' }}>{p.siteName}</span>
+                                      <span className="ed-mono" style={{ fontSize: 10, color: C.meta, letterSpacing: '0.06em' }}>{p.date} · {p.category}</span>
                                     </div>
                                   );
                                 })}
@@ -18924,42 +19053,74 @@ tr.suppressed td.fname{color:#64748b;}
                           </div>
                         );
                       })}
+                      <div style={{ borderBottom: `1px solid ${C.ink}` }} />
                     </div>
-                  </div>
+                  </section>
 
-                  {/* 7. 업체(요청사)별 현황 — 어느 업체가 많이 요청했고 결과 분석 */}
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 8 }}>🏢 업체(요청사)별 현황 — 분기 요청 빈도 + 승/패/무</div>
+                  {/* ════════════════════ CLIENTS ════════════════════ */}
+                  <section className="ed-section" style={{ padding: '60px 64px' }}>
+                    <SectionHeader no="07" en="Clients" ko="업체(요청사)별 현황 — 분기 요청 빈도와 결과" />
                     {(() => {
                       const reqList = Object.entries(cur.byRequester || {}).map(([name, v]) => ({ ...v, name }))
                         .sort((a, b) => b.total - a.total);
-                      if (reqList.length === 0) return <div style={{ color: '#94a3b8', fontSize: 12, padding: 12 }}>요청사 정보 없음</div>;
+                      if (reqList.length === 0) return <div style={{ padding: '40px 0', color: C.meta, fontSize: 13, textAlign: 'center' }}>요청사 정보 없음</div>;
                       return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {reqList.map((r, i) => {
-                            const winRate = (r.win + r.draw + r.lose) > 0 ? Math.round(r.win / (r.win + r.draw + r.lose) * 100) : 0;
-                            const winRateColor = winRate >= 70 ? '#16a34a' : winRate >= 40 ? '#f59e0b' : '#dc2626';
-                            return (
-                              <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: i < 3 ? '#f0fdf4' : '#f8fafc', borderRadius: 8, border: `1px solid ${i < 3 ? '#bbf7d0' : '#e2e8f0'}` }}>
-                                <span style={{ fontSize: 14, fontWeight: 800, color: i < 3 ? '#15803d' : '#64748b', minWidth: 24 }}>{i + 1}</span>
-                                <span style={{ flex: 1, fontSize: 12, color: '#1e293b', fontWeight: 700 }}>{r.name}</span>
-                                <span style={{ fontSize: 11, color: '#64748b' }}>{r.total}건</span>
-                                <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 700 }}>승 {r.win}</span>
-                                <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 700 }}>무 {r.draw}</span>
-                                <span style={{ fontSize: 11, color: '#dc2626', fontWeight: 700 }}>패 {r.lose}</span>
-                                {r.support > 0 && <span style={{ fontSize: 11, color: '#7c3aed', fontWeight: 700 }}>지원 {r.support}</span>}
-                                <span style={{ fontSize: 11, color: winRateColor, fontWeight: 800, minWidth: 50, textAlign: 'right' }}>승률 {winRate}%</span>
-                              </div>
-                            );
-                          })}
-                        </div>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr>
+                              {[
+                                { h: '#',        t: 'left',  w: 52  },
+                                { h: 'CLIENT',   t: 'left',  w: 'auto' },
+                                { h: 'TOTAL',    t: 'right', w: 80 },
+                                { h: 'WINS',     t: 'right', w: 80 },
+                                { h: 'DRAWS',    t: 'right', w: 80 },
+                                { h: 'LOSSES',   t: 'right', w: 80 },
+                                { h: 'WIN RATE', t: 'right', w: 130 },
+                              ].map((c, i) => (
+                                <th key={i} className="ed-mono" style={{ textAlign: c.t, padding: '14px 16px 14px 0', fontSize: 10, letterSpacing: '0.16em', color: C.meta, fontWeight: 700, borderBottom: `1px solid ${C.ink}`, width: c.w }}>{c.h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reqList.map((r, i) => {
+                              const winRate = (r.win + r.draw + r.lose) > 0 ? Math.round(r.win / (r.win + r.draw + r.lose) * 100) : 0;
+                              const isTop3 = i < 3;
+                              return (
+                                <tr key={r.name} style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
+                                  <td className="ed-mono" style={{ padding: '20px 16px 20px 0', fontSize: 11, color: isTop3 ? C.ink : C.meta, letterSpacing: '0.06em', fontWeight: isTop3 ? 700 : 400 }}>{String(i+1).padStart(2,'0')}.</td>
+                                  <td style={{ padding: '20px 16px 20px 0' }}>
+                                    <span style={{ ...F_DISP, fontSize: isTop3 ? 20 : 18, fontStyle: 'italic', fontWeight: isTop3 ? 600 : 500, color: C.ink, letterSpacing: '-0.01em' }}>{r.name}</span>
+                                  </td>
+                                  <td className="ed-mono ed-num-tabular" style={{ textAlign: 'right', padding: '20px 16px 20px 0', fontSize: 16, fontWeight: 600, color: C.ink }}>{r.total}</td>
+                                  <td className="ed-mono ed-num-tabular" style={{ textAlign: 'right', padding: '20px 16px 20px 0', fontSize: 13, color: C.ink }}>{r.win}</td>
+                                  <td className="ed-mono ed-num-tabular" style={{ textAlign: 'right', padding: '20px 16px 20px 0', fontSize: 13, color: C.meta }}>{r.draw}</td>
+                                  <td className="ed-mono ed-num-tabular" style={{ textAlign: 'right', padding: '20px 16px 20px 0', fontSize: 13, color: r.lose > 0 ? C.accent : C.meta }}>{r.lose}</td>
+                                  <td style={{ textAlign: 'right', padding: '20px 0' }}>
+                                    <span style={{ ...F_DISP, fontSize: 22, fontStyle: 'italic', fontWeight: 600, color: winRate >= 60 ? C.ink : winRate >= 40 ? C.meta : C.accent }}>{winRate}%</span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       );
                     })()}
-                  </div>
+                  </section>
 
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
-                    <button onClick={() => setShowAnalysisReport(false)} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>닫기</button>
-                  </div>
+                  {/* ════════════════════ COLOPHON ════════════════════ */}
+                  <footer style={{ padding: '44px 64px', background: C.ink, color: C.paper }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 24 }}>
+                      <div>
+                        <div className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.20em', opacity: 0.55, marginBottom: 10, fontWeight: 700 }}>POUR / SALES OPERATIONS</div>
+                        <div style={{ ...F_DISP, fontSize: 30, fontStyle: 'italic', fontWeight: 500, letterSpacing: '-0.02em', lineHeight: 1 }}>Q{qN} {yKey} · Performance Report.</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.16em', opacity: 0.55, marginBottom: 6, fontWeight: 600 }}>CONFIDENTIAL — INTERNAL USE ONLY</div>
+                        <div className="ed-mono" style={{ fontSize: 11, opacity: 0.45 }}>Generated {todayStr} · {currentUser?.name || 'admin'}</div>
+                      </div>
+                    </div>
+                  </footer>
+
                 </div>
               </div>
             );
@@ -19499,7 +19660,8 @@ tr.suppressed td.fname{color:#64748b;}
               const qEndDay = qEndMonth === 3 || qEndMonth === 12 ? 31 : 30;
               const qEnd = `${yr}-${String(qEndMonth).padStart(2,'0')}-${String(qEndDay).padStart(2,'0')}`;
               const homeQ = _gracingAdjustedQuarter();
-              const VALID = new Set(['한준엽','조재연','정정훈','김성민','이필선','한인규','황윤선','이승우','부산지사']);
+              // 한인규 제외 (별도 정산 처리) — 김유림 분기보고서에도 미반영
+              const VALID = new Set(['한준엽','조재연','정정훈','김성민','이필선','황윤선','이승우','부산지사']);
               const acc = {};
               for (const pt of ptSchedules) {
                 if (!pt || pt.selfPT) continue;

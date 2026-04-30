@@ -11,10 +11,10 @@
 import * as XLSX from 'xlsx';
 import { isExceptionApproved, EXCEPTION_TYPES } from './exceptions.js';
 
-// 정산 대상 담당자 (7명)
+// 정산 대상 담당자 (6명) — 한인규 제외 (별도 정산 처리)
 // 이 명단에 포함된 담당자의 데이터만 보고서 집계에 사용
 export const SETTLEMENT_ASSIGNEES = [
-  '황윤선', '이필선', '한준엽', '한인규', '조재연', '정정훈', '김성민',
+  '황윤선', '이필선', '한준엽', '조재연', '정정훈', '김성민',
 ];
 const SETTLEMENT_ASSIGNEES_SET = new Set(SETTLEMENT_ASSIGNEES);
 
@@ -171,15 +171,29 @@ function getSettlementAmount(s, assignee, overrideResult = null) {
   return 0;
 }
 
-// === PT 검증 게이트 (감리는 공고문 요구 제외) ===
+// === PT 검증 게이트 ===
+// OPERATIONS.md §7 룰: 다음 중 하나 만족 시 검증완료
+//   1) selfPT / 감리 / 패 → 검증 불필요
+//   2) kaptVerified.status === 'verified' (K-APT 자동검증 통과)
+//   3) settlement.{a}.manualVerified === true (관리자 수동승인)
+//   4) evidenceFiles 1개 이상 (잔디 공고문 첨부)
+//   5) bidNo 입력 (공고번호 텍스트만 채워도 인정 — legacy)
+//   6) kaptVerified.status === 'cancelled' 은 별도 처리(취소공고) — 위에서 skip
 function isPtVerified(s, assignee) {
   if (s.selfPT) return true;
   if (isSupervision(s)) return true;
   const r = getPtResult(s, assignee);
   if (!r) return false;
   if (r === '패') return true;
-  if (!s.bidNo || !String(s.bidNo).trim()) return false;
-  return true;
+  // K-APT 자동검증 통과
+  if (s.kaptVerified?.status === 'verified') return true;
+  // 관리자 수동검증 (분기정산 모달 체크박스)
+  if (s.settlement?.[assignee]?.manualVerified === true) return true;
+  // 잔디 공고문 증빙
+  if (s.evidenceFiles && Object.keys(s.evidenceFiles).length > 0) return true;
+  // 공고번호 텍스트 입력 (legacy 호환)
+  if (s.bidNo && String(s.bidNo).trim()) return true;
+  return false;
 }
 
 function getVerifyReason(s, assignee) {
@@ -188,8 +202,11 @@ function getVerifyReason(s, assignee) {
   const r = getPtResult(s, assignee);
   if (!r) return '결과 미입력';
   if (r === '패') return '';
-  if (!s.bidNo || !String(s.bidNo).trim()) return '공고번호 미입력';
-  return '';
+  if (s.kaptVerified?.status === 'verified') return '';
+  if (s.settlement?.[assignee]?.manualVerified === true) return '';
+  if (s.evidenceFiles && Object.keys(s.evidenceFiles).length > 0) return '';
+  if (s.bidNo && String(s.bidNo).trim()) return '';
+  return '미검증 (K-APT 미통과 · 증빙 없음 · 공고번호 미입력)';
 }
 
 // === 확정일 추출 (우선순위 fallback) ===

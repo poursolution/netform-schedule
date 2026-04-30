@@ -26,10 +26,34 @@
   
   <!-- html2canvas -->
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-  
+
+  <!-- Editorial fonts for executive report (Fraunces 디스플레이 세리프 · Pretendard 한글 본문 · JetBrains Mono 데이터 라벨) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..900;1,9..144,400..900&family=JetBrains+Mono:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+
   <style>
     .spinner { width: 40px; height: 40px; border: 4px solid #e2e8f0; border-top-color: #2563eb; border-radius: 50%; animation: spin 1s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Executive Report Editorial Theme ─── */
+    .ed-modal { font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif; color: #0A0A0A; }
+    .ed-modal *::selection { background: #0A0A0A; color: #FAFAF5; }
+    .ed-display { font-family: 'Fraunces', 'Times New Roman', serif; font-feature-settings: 'ss01', 'ss02'; letter-spacing: -0.02em; }
+    .ed-mono { font-family: 'JetBrains Mono', ui-monospace, 'Courier New', monospace; }
+    .ed-rule { border: 0; border-top: 1px solid #0A0A0A; margin: 0; }
+    .ed-rule-soft { border: 0; border-top: 1px solid #C8C5B8; margin: 0; }
+    .ed-num-tabular { font-variant-numeric: tabular-nums; }
+    .ed-pickbtn { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 7px 14px; border: 1px solid #0A0A0A; background: transparent; cursor: pointer; color: #0A0A0A; transition: all .15s; }
+    .ed-pickbtn:hover { background: #0A0A0A; color: #FAFAF5; }
+    .ed-pickbtn.is-active { background: #0A0A0A; color: #FAFAF5; }
+    .ed-row-toggle { cursor: pointer; transition: background .15s; }
+    .ed-row-toggle:hover { background: #F0EFE7; }
+    .ed-bar-track { background: #E8E5D8; height: 6px; position: relative; overflow: hidden; }
+    .ed-bar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: #0A0A0A; transition: width .3s ease-out; }
+    @keyframes ed-fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .ed-section { animation: ed-fadein .4s ease-out both; }
   </style>
 </head>
 <body>
