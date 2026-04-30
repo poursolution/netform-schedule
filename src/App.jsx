@@ -18587,6 +18587,22 @@ tr.suppressed td.fname{color:#64748b;}
 
             const VALID_TEAM = ['한준엽','조재연','정정훈','김성민','이필선','황윤선']; // 조현식 · 한인규 보고서 제외 (한인규는 별도 처리)
 
+            // 협약사 이름 캐노니컬라이저 — 동일 업체 다양한 표기 통합
+            //   (1) 아파트 관리사무소·입주자대표·동대표·연합회·아파트 → "아파트 관리사무소" 1행으로 취합
+            //   (2) 일반 협약사 — normalizeCompanyName() 으로 ㈜·(주)·공백·영문/한글 변형 정규화 후 매칭
+            //   originals: 통합된 원본 표기들 (몇 개 변형이 합쳐졌는지 표시용)
+            const APT_OFFICE_KEYWORDS = /관리사무소|관리소장|동대표|입주자대표|아파트|연합회/;
+            const APT_OFFICE_KEY = '__APT_OFFICE__';
+            const canonicalizeRequester = (name) => {
+              const trimmed = (name || '').trim();
+              if (!trimmed) return null;
+              if (APT_OFFICE_KEYWORDS.test(trimmed)) {
+                return { key: APT_OFFICE_KEY, display: '아파트 관리사무소', original: trimmed };
+              }
+              const norm = normalizeCompanyName(trimmed);
+              return { key: norm || trimmed, display: trimmed, original: trimmed };
+            };
+
             // 기간별 집계 함수 (현재 분기 + 전 분기 비교용)
             // [수정 2026-04-30] 분기정산 모달과 동일 룰로 정렬:
             //   - pt.date 기준 (이전: confirmDate / requestedAt — 김성민 0건 버그 원인)
@@ -18635,16 +18651,19 @@ tr.suppressed td.fname{color:#64748b;}
                     date: pt.date || '',
                     amount: amt,
                   });
-                  const reqName = (pt.requester || '').trim();
-                  if (reqName) {
-                    if (!byRequester[reqName]) byRequester[reqName] = { win: 0, draw: 0, lose: 0, support: 0, total: 0, amount: 0, pts: [] };
-                    byRequester[reqName].total++;
-                    byRequester[reqName].pts.push({ ptId: pt.id, siteName: pt.siteName, result: r, assignee: a, date: pt.date });
-                    if (r === '승') byRequester[reqName].win++;
-                    else if (r === '무') byRequester[reqName].draw++;
-                    else if (r === '패') byRequester[reqName].lose++;
-                    else if (r === '지원') byRequester[reqName].support++;
-                    byRequester[reqName].amount += amt;
+                  // 협약사 — 캐노니컬 키로 정규화 (관리사무소 계열 → "아파트 관리사무소" 1행 취합)
+                  const reqInfo = canonicalizeRequester(pt.requester);
+                  if (reqInfo) {
+                    const k = reqInfo.key;
+                    if (!byRequester[k]) byRequester[k] = { name: reqInfo.display, key: k, win: 0, draw: 0, lose: 0, support: 0, total: 0, amount: 0, originals: new Set(), pts: [] };
+                    byRequester[k].originals.add(reqInfo.original);
+                    byRequester[k].total++;
+                    byRequester[k].pts.push({ ptId: pt.id, siteName: pt.siteName, result: r, assignee: a, date: pt.date, original: reqInfo.original });
+                    if (r === '승') byRequester[k].win++;
+                    else if (r === '무') byRequester[k].draw++;
+                    else if (r === '패') byRequester[k].lose++;
+                    else if (r === '지원') byRequester[k].support++;
+                    byRequester[k].amount += amt;
                   }
                   if (r === '승') { byA[a].win++; byW[cat].win++; w++; byA[a].amount += amt; totalAmount += amt; }
                   else if (r === '무') { byA[a].draw++; byW[cat].draw++; d++; byA[a].amount += amt; totalAmount += amt; }
@@ -19018,17 +19037,28 @@ tr.suppressed td.fname{color:#64748b;}
                         <span style={{ ...F_DISP, fontSize: 18, fontWeight: 500, color: C.ink, letterSpacing: '-0.02em' }}>Clients</span>
                       </div>
                       {(() => {
-                        const reqList = Object.entries(cur.byRequester || {}).map(([name, v]) => ({ ...v, name }))
+                        // byRequester 는 이제 캐노니컬 키 기반 — name 필드 사용
+                        const reqList = Object.values(cur.byRequester || {})
                           .sort((a, b) => b.total - a.total).slice(0, 5);
                         if (reqList.length === 0) return <div style={{ color: C.meta, fontSize: 12, padding: '12px 0' }}>요청사 정보 없음</div>;
                         return reqList.map((r, i) => {
                           const winRate = (r.win + r.draw + r.lose) > 0 ? Math.round(r.win / (r.win + r.draw + r.lose) * 100) : 0;
                           const winRateColor = winRate >= 60 ? C.ink : winRate >= 40 ? C.inkSoft : C.accent;
                           const amt = r.amount || 0;
+                          const variantCount = r.originals?.size || 1;
+                          const isAptOffice = r.key === APT_OFFICE_KEY;
                           return (
-                            <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '20px 1fr auto 56px 80px', gap: 10, padding: '12px 4px', alignItems: 'center', borderTop: `1px solid ${C.rule}` }}>
+                            <div key={r.key || r.name} title={variantCount > 1 ? `통합 표기 ${variantCount}개: ${[...(r.originals || [])].slice(0, 6).join(', ')}${variantCount > 6 ? ' …' : ''}` : undefined}
+                              style={{ display: 'grid', gridTemplateColumns: '20px 1fr auto 56px 80px', gap: 10, padding: '12px 4px', alignItems: 'center', borderTop: `1px solid ${C.rule}` }}>
                               <span className="ed-mono" style={{ fontSize: 10, color: C.meta, letterSpacing: '0.04em', fontWeight: 600 }}>{i+1}</span>
-                              <span style={{ ...F_DISP, fontSize: 15, fontWeight: i < 3 ? 700 : 600, color: C.ink, letterSpacing: '-0.012em' }}>{r.name}</span>
+                              <span style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+                                <span style={{ ...F_DISP, fontSize: 15, fontWeight: i < 3 ? 700 : 600, color: C.ink, letterSpacing: '-0.012em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
+                                {(variantCount > 1 || isAptOffice) && (
+                                  <span className="ed-mono" style={{ fontSize: 9, color: C.meta, letterSpacing: '0.04em', background: C.surfaceSoft, padding: '1px 5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                    {isAptOffice ? `${variantCount}개 단지` : `${variantCount}개 표기`}
+                                  </span>
+                                )}
+                              </span>
                               <span className="ed-num-tabular" style={{ fontSize: 11, color: C.meta, fontWeight: 500 }}>{r.total}건 · {r.win}승 {r.lose}패</span>
                               <span style={{ ...F_DISP, fontSize: 17, fontWeight: 700, color: winRateColor, textAlign: 'right' }}>{winRate}%</span>
                               <span className="ed-num-tabular" style={{ fontSize: 12, color: amt > 0 ? C.ink : C.meta, textAlign: 'right', fontWeight: 600 }}>{amt > 0 ? `${(amt/10000).toLocaleString('ko-KR')}만` : '—'}</span>
