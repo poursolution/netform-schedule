@@ -18588,33 +18588,44 @@ tr.suppressed td.fname{color:#64748b;}
             const VALID_TEAM = ['한준엽','조재연','정정훈','김성민','이필선','황윤선']; // 조현식 · 한인규 보고서 제외 (한인규는 별도 처리)
 
             // 기간별 집계 함수 (현재 분기 + 전 분기 비교용)
+            // [수정 2026-04-30] 분기정산 모달과 동일 룰로 정렬:
+            //   - pt.date 기준 (이전: confirmDate / requestedAt — 김성민 0건 버그 원인)
+            //   - grace home 분기 (옛 PT 는 home 분기에 합산)
+            //   - calculateSettlementAmount() 로 정산 금액 동시 집계
+            //   분기정산 24,750,000원과 같은 합계를 대표 보고서에서도 확인 가능
             const aggregateForPeriod = (yy, qq) => {
               const sM = (qq - 1) * 3 + 1;
               const eM = qq * 3;
-              const inR = (date) => {
-                if (!date) return false;
-                const m = String(date).match(/^(\d{4})-(\d{2})/);
-                if (!m) return false;
-                return parseInt(m[1]) === yy && parseInt(m[2]) >= sM && parseInt(m[2]) <= eM;
-              };
+              const sD = `${yy}-${String(sM).padStart(2, '0')}-01`;
+              const eDay = (eM === 3 || eM === 12) ? 31 : 30;
+              const eD = `${yy}-${String(eM).padStart(2, '0')}-${String(eDay).padStart(2, '0')}`;
+              const qmStr = `${yy}-Q${qq}`;
+              const homeQ = _gracingAdjustedQuarter();
+              const inR = (date) => date && date >= sD && date <= eD;
               const byA = {}; const byW = {}; const byT = {}; const lossR = {};
-              const byAssigneePtList = {}; // 담당자별 PT 리스트 (대표 보고용)
-              const lossReasonPtList = {}; // 패배 사유별 PT 상세 리스트
-              const byRequester = {}; // 협약사(요청사)별 승/패/무 + PT 리스트
+              const byAssigneePtList = {};
+              const lossReasonPtList = {};
+              const byRequester = {};
               let w = 0, d = 0, l = 0, sup = 0;
-              VALID_TEAM.forEach(n => { byA[n] = { win: 0, draw: 0, lose: 0, support: 0 }; byAssigneePtList[n] = []; });
+              let totalAmount = 0;
+              VALID_TEAM.forEach(n => { byA[n] = { win: 0, draw: 0, lose: 0, support: 0, amount: 0 }; byAssigneePtList[n] = []; });
               ptSchedules.forEach(pt => {
                 if (pt.selfPT) return;
+                if (!pt.date) return;
+                // ★ 분기정산 모달과 동일 — pt.date 기준 + grace home 룰
+                const inRangeFlag = inR(pt.date);
+                const isOlder = pt.date < sD;
+                if (!inRangeFlag && !(isOlder && qmStr === homeQ)) return;
                 const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
                 for (const a of tokens) {
                   if (!VALID_TEAM.includes(a)) continue;
-                  const cd = getConfirmDate(pt, a);
-                  if (!inR(cd)) continue;
                   const r = pt.results?.[a] || (tokens.length === 1 ? pt.result : null);
                   if (!r) continue;
                   const cat = categorize(pt.workType, pt.siteName);
                   if (!byW[cat]) byW[cat] = { win: 0, lose: 0, draw: 0, support: 0 };
-                  // 담당자별 PT 리스트 누적 (siteName · 결과 · 공종 · 일자)
+                  // 정산 금액 — 분기정산 모달과 동일 (calculateSettlementAmount, exception 미적용)
+                  const calc = calculateSettlementAmount(pt, a);
+                  const amt = calc.amount || 0;
                   byAssigneePtList[a].push({
                     ptId: pt.id,
                     siteName: pt.siteName || '',
@@ -18622,21 +18633,22 @@ tr.suppressed td.fname{color:#64748b;}
                     workType: pt.workType || '',
                     category: cat,
                     date: pt.date || '',
-                    confirmDate: cd,
+                    amount: amt,
                   });
-                  // 협약사(요청사)별 누적 — 어느 업체가 많이 요청했고 결과가 어땠는지
                   const reqName = (pt.requester || '').trim();
                   if (reqName) {
-                    if (!byRequester[reqName]) byRequester[reqName] = { win: 0, draw: 0, lose: 0, support: 0, total: 0, pts: [] };
+                    if (!byRequester[reqName]) byRequester[reqName] = { win: 0, draw: 0, lose: 0, support: 0, total: 0, amount: 0, pts: [] };
                     byRequester[reqName].total++;
                     byRequester[reqName].pts.push({ ptId: pt.id, siteName: pt.siteName, result: r, assignee: a, date: pt.date });
                     if (r === '승') byRequester[reqName].win++;
                     else if (r === '무') byRequester[reqName].draw++;
                     else if (r === '패') byRequester[reqName].lose++;
                     else if (r === '지원') byRequester[reqName].support++;
+                    byRequester[reqName].amount += amt;
                   }
-                  if (r === '승') { byA[a].win++; byW[cat].win++; w++; }
-                  else if (r === '무') { byA[a].draw++; byW[cat].draw++; d++; }
+                  if (r === '승') { byA[a].win++; byW[cat].win++; w++; byA[a].amount += amt; totalAmount += amt; }
+                  else if (r === '무') { byA[a].draw++; byW[cat].draw++; d++; byA[a].amount += amt; totalAmount += amt; }
+                  else if (r === '지원') { byA[a].support++; byW[cat].support++; sup++; byA[a].amount += amt; totalAmount += amt; }
                   else if (r === '패') { byA[a].lose++; byW[cat].lose++; l++;
                     const rKey = classifyLossReason(pt.resultReasons?.[a]?.reason || '');
                     lossR[rKey] = (lossR[rKey] || 0) + 1;
@@ -18654,14 +18666,13 @@ tr.suppressed td.fname{color:#64748b;}
                       requester: pt.requester || '',
                     });
                   }
-                  else if (r === '지원') { byA[a].support++; byW[cat].support++; sup++; }
+                  // POUR/CNC 공법 추적 (변경 없음)
                   if (r === '승') {
                     const methods = (pt.announcementMethods || '') + '|' + (pt.workType || '');
                     const tag = /POUR/i.test(methods) ? 'POUR' : /CNC/i.test(methods) ? 'CNC' : '기타';
                     if (!byT[tag]) byT[tag] = { win: 0, lose: 0 };
                     byT[tag].win++;
-                  }
-                  if (r === '패') {
+                  } else if (r === '패') {
                     const reason = (pt.resultReasons?.[a]?.reason || '') + '|' + (pt.workType || '');
                     const tag = /POUR/i.test(reason) ? 'POUR' : /CNC/i.test(reason) ? 'CNC' : '기타';
                     if (!byT[tag]) byT[tag] = { win: 0, lose: 0 };
@@ -18669,7 +18680,7 @@ tr.suppressed td.fname{color:#64748b;}
                   }
                 }
               });
-              return { byAssignee: byA, byAssigneePtList, byWorkType: byW, byOurTech: byT, lossReasons: lossR, lossReasonPtList, byRequester, totalWin: w, totalDraw: d, totalLose: l, totalSupport: sup };
+              return { byAssignee: byA, byAssigneePtList, byWorkType: byW, byOurTech: byT, lossReasons: lossR, lossReasonPtList, byRequester, totalWin: w, totalDraw: d, totalLose: l, totalSupport: sup, totalAmount };
             };
 
             // 현재 분기 집계
@@ -18772,7 +18783,8 @@ tr.suppressed td.fname{color:#64748b;}
               accent:     '#B5613A',  // refined copper
               accentSoft: '#F4E5D6',
             };
-            const F_DISP = { fontFamily: "'Fraunces', 'Times New Roman', serif", letterSpacing: '-0.018em', fontVariationSettings: "'opsz' 144, 'SOFT' 50" };
+            // 디스플레이도 Pretendard 통일 — 가독성 우선. 큰 숫자엔 weight 700~800 + 좁은 letter-spacing.
+            const F_DISP = { fontFamily: "'Pretendard Variable', Pretendard, system-ui, sans-serif", letterSpacing: '-0.025em', fontVariantNumeric: 'tabular-nums' };
             const F_MONO = { fontFamily: "'JetBrains Mono', ui-monospace, monospace" };
             const todayD = new Date();
             const todayStr = `${todayD.getFullYear()}.${String(todayD.getMonth()+1).padStart(2,'0')}.${String(todayD.getDate()).padStart(2,'0')}`;
@@ -18832,7 +18844,10 @@ tr.suppressed td.fname{color:#64748b;}
                   <div style={{ padding: '18px 36px', display: 'flex', alignItems: 'flex-start', gap: 18 }}>
                     <span className="ed-mono" style={{ fontSize: 9, letterSpacing: '0.22em', color: C.accent, fontWeight: 700, whiteSpace: 'nowrap', paddingTop: 4 }}>TL;DR</span>
                     <span style={{ fontSize: 15, color: C.ink, fontWeight: 500, lineHeight: 1.55, letterSpacing: '-0.005em' }}>{headline}</span>
-                    <span className="ed-mono" style={{ fontSize: 10, color: C.meta, letterSpacing: '0.10em', marginLeft: 'auto', whiteSpace: 'nowrap', paddingTop: 4 }}>{assigneeRanked.length}명 · {totalWin+totalDraw+totalLose+totalSupport}건</span>
+                    <span className="ed-mono" style={{ fontSize: 10, color: C.meta, letterSpacing: '0.10em', marginLeft: 'auto', whiteSpace: 'nowrap', paddingTop: 4 }}>
+                      {assigneeRanked.length}명 · {totalWin+totalDraw+totalLose+totalSupport}건
+                      {(cur?.totalAmount || 0) > 0 && <> · <span style={{ color: C.ink, fontWeight: 700 }}>{(cur.totalAmount).toLocaleString('ko-KR')}원</span></>}
+                    </span>
                   </div>
                   <div className="ed-divider-warm" style={{ margin: '0 36px' }} />
 
@@ -18841,13 +18856,13 @@ tr.suppressed td.fname{color:#64748b;}
                     {/* 좌: 히어로 승률 */}
                     <div style={{ borderRight: `1px solid ${C.rule}`, paddingRight: 28 }}>
                       <div className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.22em', color: C.meta, fontWeight: 600, marginBottom: 14 }}>WIN RATE</div>
-                      <div style={{ ...F_DISP, fontSize: 144, fontWeight: 300, lineHeight: 0.9, color: C.ink, letterSpacing: '-0.05em' }}>
-                        {curRate}<span style={{ fontSize: '32%', color: C.meta, fontWeight: 300, marginLeft: 2 }}>%</span>
+                      <div style={{ ...F_DISP, fontSize: 132, fontWeight: 700, lineHeight: 0.95, color: C.ink, letterSpacing: '-0.045em' }}>
+                        {curRate}<span style={{ fontSize: '34%', color: C.meta, fontWeight: 500, marginLeft: 2 }}>%</span>
                       </div>
                       {prevTotal > 0 ? (
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 14 }}>
-                          <span style={{ ...F_DISP, fontSize: 22, fontWeight: 500, color: rateDelta >= 0 ? C.ink : C.accent }}>
-                            {rateDelta >= 0 ? '↑' : '↓'} {Math.abs(rateDelta)}<span style={{ fontSize: '60%', color: C.meta, marginLeft: 3, fontWeight: 400 }}>pp</span>
+                          <span style={{ ...F_DISP, fontSize: 20, fontWeight: 700, color: rateDelta >= 0 ? C.ink : C.accent }}>
+                            {rateDelta >= 0 ? '↑' : '↓'} {Math.abs(rateDelta)}<span style={{ fontSize: '62%', color: C.meta, marginLeft: 3, fontWeight: 500 }}>pp</span>
                           </span>
                           <span className="ed-mono" style={{ fontSize: 10, color: C.meta, letterSpacing: '0.08em' }}>vs {prevQKey} · {prevRate}%</span>
                         </div>
@@ -18860,7 +18875,7 @@ tr.suppressed td.fname{color:#64748b;}
                       {kpis.map((m, i) => (
                         <div key={m.label} style={{ paddingRight: i < 3 ? 24 : 0, paddingLeft: i > 0 ? 24 : 0, borderRight: i < 3 ? `1px solid ${C.rule}` : 'none', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
                           <div className="ed-mono" style={{ fontSize: 9, letterSpacing: '0.22em', color: C.meta, marginBottom: 10, fontWeight: 600 }}>{m.label}</div>
-                          <div style={{ ...F_DISP, fontSize: 60, fontWeight: m.accent ? 500 : 400, lineHeight: 1, color: m.accent ? C.accent : C.ink, letterSpacing: '-0.04em' }}>{m.value}</div>
+                          <div style={{ ...F_DISP, fontSize: 56, fontWeight: m.accent ? 800 : 700, lineHeight: 1, color: m.accent ? C.accent : C.ink, letterSpacing: '-0.035em' }}>{m.value}</div>
                           <div style={{ marginTop: 12, display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
                             <span style={{ fontSize: 11, fontWeight: 600, color: C.ink }}>{m.ko}</span>
                             {m.prev > 0 ? (m.delta === 0 ? (
@@ -18919,14 +18934,16 @@ tr.suppressed td.fname{color:#64748b;}
                       </div>
                       {assigneeRanked.length > 0 ? assigneeRanked.map(r => {
                         const barColor = r.winRate >= 60 ? C.ink : r.winRate >= 40 ? C.inkSoft : C.accent;
+                        const amt = byAssignee[r.name]?.amount || 0;
                         return (
-                          <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '60px 1fr 56px 56px', gap: 14, alignItems: 'center', padding: '11px 0', borderTop: `1px solid ${C.rule}` }}>
-                            <span style={{ ...F_DISP, fontSize: 16, fontWeight: 500, color: C.ink, letterSpacing: '-0.012em' }}>{r.name}</span>
+                          <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '60px 1fr 50px 64px 90px', gap: 12, alignItems: 'center', padding: '11px 0', borderTop: `1px solid ${C.rule}` }}>
+                            <span style={{ ...F_DISP, fontSize: 16, fontWeight: 600, color: C.ink, letterSpacing: '-0.012em' }}>{r.name}</span>
                             <div className="ed-bar-track">
                               <div className="ed-bar-fill" style={{ width: `${r.winRate}%`, background: barColor }} />
                             </div>
-                            <span style={{ ...F_DISP, fontSize: 17, fontWeight: 600, color: barColor, textAlign: 'right' }}>{r.winRate}%</span>
-                            <span className="ed-mono ed-num-tabular" style={{ fontSize: 10, color: C.meta, textAlign: 'right' }}>{r.win}W·{r.lose}L</span>
+                            <span style={{ ...F_DISP, fontSize: 16, fontWeight: 700, color: barColor, textAlign: 'right' }}>{r.winRate}%</span>
+                            <span className="ed-num-tabular" style={{ fontSize: 11, color: C.meta, textAlign: 'right', fontWeight: 500 }}>{r.win}승·{r.lose}패</span>
+                            <span className="ed-num-tabular" style={{ fontSize: 12, color: amt > 0 ? C.ink : C.meta, textAlign: 'right', fontWeight: 600 }}>{amt > 0 ? `${(amt/10000).toLocaleString('ko-KR')}만` : '—'}</span>
                           </div>
                         );
                       }) : <div style={{ color: C.meta, fontSize: 12, padding: '12px 0' }}>데이터 없음</div>}
@@ -19007,12 +19024,14 @@ tr.suppressed td.fname{color:#64748b;}
                         return reqList.map((r, i) => {
                           const winRate = (r.win + r.draw + r.lose) > 0 ? Math.round(r.win / (r.win + r.draw + r.lose) * 100) : 0;
                           const winRateColor = winRate >= 60 ? C.ink : winRate >= 40 ? C.inkSoft : C.accent;
+                          const amt = r.amount || 0;
                           return (
-                            <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '20px 1fr auto 60px', gap: 12, padding: '12px 4px', alignItems: 'center', borderTop: `1px solid ${C.rule}` }}>
+                            <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '20px 1fr auto 56px 80px', gap: 10, padding: '12px 4px', alignItems: 'center', borderTop: `1px solid ${C.rule}` }}>
                               <span className="ed-mono" style={{ fontSize: 10, color: C.meta, letterSpacing: '0.04em', fontWeight: 600 }}>{i+1}</span>
-                              <span style={{ ...F_DISP, fontSize: 15, fontWeight: i < 3 ? 600 : 500, color: C.ink, letterSpacing: '-0.012em' }}>{r.name}</span>
-                              <span className="ed-mono ed-num-tabular" style={{ fontSize: 10, color: C.meta }}>{r.total}건 · {r.win}W·{r.lose}L</span>
-                              <span style={{ ...F_DISP, fontSize: 18, fontWeight: 600, color: winRateColor, textAlign: 'right' }}>{winRate}%</span>
+                              <span style={{ ...F_DISP, fontSize: 15, fontWeight: i < 3 ? 700 : 600, color: C.ink, letterSpacing: '-0.012em' }}>{r.name}</span>
+                              <span className="ed-num-tabular" style={{ fontSize: 11, color: C.meta, fontWeight: 500 }}>{r.total}건 · {r.win}승 {r.lose}패</span>
+                              <span style={{ ...F_DISP, fontSize: 17, fontWeight: 700, color: winRateColor, textAlign: 'right' }}>{winRate}%</span>
+                              <span className="ed-num-tabular" style={{ fontSize: 12, color: amt > 0 ? C.ink : C.meta, textAlign: 'right', fontWeight: 600 }}>{amt > 0 ? `${(amt/10000).toLocaleString('ko-KR')}만` : '—'}</span>
                             </div>
                           );
                         });
