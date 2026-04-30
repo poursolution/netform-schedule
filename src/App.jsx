@@ -18840,11 +18840,11 @@ tr.suppressed td.fname{color:#64748b;}
                 <div className="ed-card" style={{ width: 1080, maxWidth: '100%', position: 'relative', background: C.surface }} onClick={e => e.stopPropagation()}>
 
                   {/* ─── 컨트롤 헤더 ─── */}
-                  <div style={{ padding: '24px 36px 22px', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', borderBottom: `1px solid ${C.rule}` }}>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
-                      <span className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.22em', color: C.meta, fontWeight: 600 }}>POUR</span>
-                      <span style={{ ...F_DISP, fontSize: 26, fontWeight: 500, color: C.ink, letterSpacing: '-0.022em' }}>분기 성과</span>
-                      <span className="ed-mono" style={{ fontSize: 11, color: C.meta, letterSpacing: '0.10em' }}>{yKey} · Q{qN}</span>
+                  <div style={{ padding: '28px 40px 26px', display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap', borderBottom: `1px solid ${C.rule}` }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 16 }}>
+                      <span style={{ fontSize: 13, letterSpacing: '0.12em', color: C.meta, fontWeight: 700 }}>POUR</span>
+                      <span style={{ ...F_DISP, fontSize: 32, fontWeight: 700, color: C.ink, letterSpacing: '-0.02em' }}>분기 성과</span>
+                      <span style={{ fontSize: 16, color: C.meta, fontWeight: 500 }}>{yKey}년 {qN}분기</span>
                     </div>
                     <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
                       {[2024, 2025, 2026, 2027].map(y => (
@@ -18860,49 +18860,48 @@ tr.suppressed td.fname{color:#64748b;}
                   </div>
 
                   {/* ─── TL;DR ─── */}
-                  <div style={{ padding: '18px 36px', display: 'flex', alignItems: 'flex-start', gap: 18 }}>
-                    <span className="ed-mono" style={{ fontSize: 9, letterSpacing: '0.22em', color: C.accent, fontWeight: 700, whiteSpace: 'nowrap', paddingTop: 4 }}>TL;DR</span>
-                    <span style={{ fontSize: 15, color: C.ink, fontWeight: 500, lineHeight: 1.55, letterSpacing: '-0.005em' }}>{headline}</span>
-                    <span className="ed-mono" style={{ fontSize: 10, color: C.meta, letterSpacing: '0.10em', marginLeft: 'auto', whiteSpace: 'nowrap', paddingTop: 4 }}>
+                  <div style={{ padding: '22px 40px', display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, letterSpacing: '0.10em', color: C.accent, fontWeight: 800, whiteSpace: 'nowrap', paddingTop: 4 }}>핵심</span>
+                    <span style={{ fontSize: 18, color: C.ink, fontWeight: 500, lineHeight: 1.55, letterSpacing: '-0.01em', flex: 1, minWidth: 280 }}>{headline}</span>
+                    <span style={{ fontSize: 14, color: C.meta, fontWeight: 500, marginLeft: 'auto', whiteSpace: 'nowrap', paddingTop: 4 }}>
                       {assigneeRanked.length}명 · {totalWin+totalDraw+totalLose+totalSupport}건
-                      {(cur?.totalAmount || 0) > 0 && <> · <span style={{ color: C.ink, fontWeight: 700 }}>{(cur.totalAmount).toLocaleString('ko-KR')}원</span></>}
+                      {(cur?.totalAmount || 0) > 0 && <> · <span style={{ color: C.ink, fontWeight: 800 }}>{(cur.totalAmount).toLocaleString('ko-KR')}원</span></>}
                     </span>
                   </div>
-                  <div className="ed-divider-warm" style={{ margin: '0 36px' }} />
+                  <div className="ed-divider-warm" style={{ margin: '0 40px' }} />
 
                   {/* ═════════ 히어로 + KPI ═════════ */}
-                  <section className="ed-section" style={{ padding: '36px 36px 32px', display: 'grid', gridTemplateColumns: '320px 1fr', gap: 36, alignItems: 'stretch' }}>
+                  <section className="ed-section" style={{ padding: '40px 40px 36px', display: 'grid', gridTemplateColumns: '360px 1fr', gap: 40, alignItems: 'stretch' }}>
                     {/* 좌: 히어로 승률 */}
-                    <div style={{ borderRight: `1px solid ${C.rule}`, paddingRight: 28 }}>
-                      <div className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.22em', color: C.meta, fontWeight: 600, marginBottom: 14 }}>WIN RATE</div>
-                      <div style={{ ...F_DISP, fontSize: 132, fontWeight: 700, lineHeight: 0.95, color: C.ink, letterSpacing: '-0.045em' }}>
-                        {curRate}<span style={{ fontSize: '34%', color: C.meta, fontWeight: 500, marginLeft: 2 }}>%</span>
+                    <div style={{ borderRight: `1px solid ${C.rule}`, paddingRight: 32 }}>
+                      <div style={{ fontSize: 14, letterSpacing: '0.04em', color: C.meta, fontWeight: 700, marginBottom: 16 }}>승률</div>
+                      <div style={{ ...F_DISP, fontSize: 152, fontWeight: 800, lineHeight: 0.95, color: C.ink, letterSpacing: '-0.05em' }}>
+                        {curRate}<span style={{ fontSize: '36%', color: C.meta, fontWeight: 600, marginLeft: 4 }}>%</span>
                       </div>
                       {prevTotal > 0 ? (
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 14 }}>
-                          <span style={{ ...F_DISP, fontSize: 20, fontWeight: 700, color: rateDelta >= 0 ? C.ink : C.accent }}>
-                            {rateDelta >= 0 ? '↑' : '↓'} {Math.abs(rateDelta)}<span style={{ fontSize: '62%', color: C.meta, marginLeft: 3, fontWeight: 500 }}>pp</span>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginTop: 18, flexWrap: 'wrap' }}>
+                          <span style={{ ...F_DISP, fontSize: 24, fontWeight: 800, color: rateDelta >= 0 ? C.ink : C.accent }}>
+                            {rateDelta >= 0 ? '↑' : '↓'} {Math.abs(rateDelta)}<span style={{ fontSize: '60%', color: C.meta, marginLeft: 3, fontWeight: 600 }}>%P</span>
                           </span>
-                          <span className="ed-mono" style={{ fontSize: 10, color: C.meta, letterSpacing: '0.08em' }}>vs {prevQKey} · {prevRate}%</span>
+                          <span style={{ fontSize: 14, color: C.meta, fontWeight: 500 }}>전 분기 {prevRate}% 대비</span>
                         </div>
                       ) : (
-                        <div className="ed-mono" style={{ fontSize: 10, color: C.meta, marginTop: 14, letterSpacing: '0.08em' }}>전 분기 데이터 없음</div>
+                        <div style={{ fontSize: 13, color: C.meta, marginTop: 18, fontWeight: 500 }}>전 분기 데이터 없음</div>
                       )}
                     </div>
                     {/* 우: KPI 4-up */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 0 }}>
                       {kpis.map((m, i) => (
                         <div key={m.label} style={{ paddingRight: i < 3 ? 24 : 0, paddingLeft: i > 0 ? 24 : 0, borderRight: i < 3 ? `1px solid ${C.rule}` : 'none', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                          <div className="ed-mono" style={{ fontSize: 9, letterSpacing: '0.22em', color: C.meta, marginBottom: 10, fontWeight: 600 }}>{m.label}</div>
-                          <div style={{ ...F_DISP, fontSize: 56, fontWeight: m.accent ? 800 : 700, lineHeight: 1, color: m.accent ? C.accent : C.ink, letterSpacing: '-0.035em' }}>{m.value}</div>
-                          <div style={{ marginTop: 12, display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: 11, fontWeight: 600, color: C.ink }}>{m.ko}</span>
+                          <div style={{ fontSize: 14, letterSpacing: '0.02em', color: C.meta, marginBottom: 12, fontWeight: 700 }}>{m.ko}</div>
+                          <div style={{ ...F_DISP, fontSize: 72, fontWeight: m.accent ? 800 : 800, lineHeight: 1, color: m.accent ? C.accent : C.ink, letterSpacing: '-0.04em' }}>{m.value}</div>
+                          <div style={{ marginTop: 14, display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
                             {m.prev > 0 ? (m.delta === 0 ? (
-                              <span className="ed-mono" style={{ fontSize: 10, color: C.meta }}>—</span>
+                              <span style={{ fontSize: 13, color: C.meta, fontWeight: 500 }}>전 분기와 동일</span>
                             ) : (() => {
                               const isGood = m.invert ? m.delta < 0 : m.delta > 0;
-                              return <span className="ed-mono" style={{ fontSize: 10, color: isGood ? C.ink : C.accent, letterSpacing: '0.04em', fontWeight: 600 }}>{m.delta > 0 ? '↑' : '↓'}{Math.abs(m.delta)}</span>;
-                            })()) : <span className="ed-mono" style={{ fontSize: 10, color: C.meta }}>NEW</span>}
+                              return <span style={{ fontSize: 14, color: isGood ? C.ink : C.accent, fontWeight: 700 }}>{m.delta > 0 ? '↑' : '↓'} {Math.abs(m.delta)}건</span>;
+                            })()) : <span style={{ fontSize: 13, color: C.meta, fontWeight: 600 }}>신규 분기</span>}
                           </div>
                         </div>
                       ))}
@@ -18914,11 +18913,10 @@ tr.suppressed td.fname{color:#64748b;}
                     const top3 = insights.slice(0, 3);
                     const remaining = insights.length - top3.length;
                     return (
-                      <section className="ed-section" style={{ padding: '0 36px 32px' }}>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 16 }}>
-                          <span className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.22em', color: C.meta, fontWeight: 600 }}>즉시 주목</span>
-                          <span style={{ ...F_DISP, fontSize: 18, fontWeight: 500, color: C.ink, letterSpacing: '-0.02em' }}>Highlights</span>
-                          {remaining > 0 && <span className="ed-mono" style={{ fontSize: 10, color: C.meta }}>+{remaining}</span>}
+                      <section className="ed-section" style={{ padding: '0 40px 36px' }}>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 18 }}>
+                          <span style={{ ...F_DISP, fontSize: 22, fontWeight: 700, color: C.ink, letterSpacing: '-0.02em' }}>주목할 포인트</span>
+                          {remaining > 0 && <span style={{ fontSize: 13, color: C.meta, fontWeight: 500 }}>+ {remaining}건</span>}
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${top3.length}, 1fr)`, gap: 14 }}>
                           {top3.map((ins, i) => {
@@ -18926,13 +18924,13 @@ tr.suppressed td.fname{color:#64748b;}
                             const isAccent = ins.type === 'bad';
                             return (
                               <div key={i} className="ed-insight-card ed-tile" style={{
-                                padding: '18px 20px',
+                                padding: '20px 22px',
                                 background: isAccent ? C.accentSoft : C.surfaceSoft,
-                                borderLeft: `2px solid ${isAccent ? C.accent : C.ink}`,
+                                borderLeft: `3px solid ${isAccent ? C.accent : C.ink}`,
                                 animation: `ed-fade-rise 0.5s ${0.1 + i * 0.06}s var(--ed-ease, ease-out) both`,
                               }}>
-                                <div className="ed-mono" style={{ fontSize: 9, letterSpacing: '0.22em', color: isAccent ? C.accent : C.inkSoft, fontWeight: 700, marginBottom: 8 }}>{tag}</div>
-                                <div style={{ fontSize: 13, lineHeight: 1.5, color: isAccent ? C.accent : C.ink, fontWeight: isAccent ? 600 : 500, letterSpacing: '-0.005em' }}>{ins.text}</div>
+                                <div style={{ fontSize: 13, letterSpacing: '0.04em', color: isAccent ? C.accent : C.inkSoft, fontWeight: 800, marginBottom: 10 }}>{tag}</div>
+                                <div style={{ fontSize: 15, lineHeight: 1.55, color: isAccent ? C.accent : C.ink, fontWeight: isAccent ? 700 : 600, letterSpacing: '-0.005em' }}>{ins.text}</div>
                               </div>
                             );
                           })}
@@ -18941,64 +18939,61 @@ tr.suppressed td.fname{color:#64748b;}
                     );
                   })()}
 
-                  <div className="ed-divider-warm" style={{ margin: '0 36px' }} />
+                  <div className="ed-divider-warm" style={{ margin: '0 40px' }} />
 
                   {/* ═════════ 담당자 + 공종 (2열) ═════════ */}
-                  <section className="ed-section" style={{ padding: '32px 36px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 40 }}>
+                  <section className="ed-section" style={{ padding: '36px 40px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 44 }}>
                     {/* 담당자 */}
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 18 }}>
-                        <span className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.22em', color: C.meta, fontWeight: 600 }}>담당자</span>
-                        <span style={{ ...F_DISP, fontSize: 18, fontWeight: 500, color: C.ink, letterSpacing: '-0.02em' }}>Team</span>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 20 }}>
+                        <span style={{ ...F_DISP, fontSize: 22, fontWeight: 700, color: C.ink, letterSpacing: '-0.02em' }}>담당자별 성과</span>
                       </div>
                       {assigneeRanked.length > 0 ? assigneeRanked.map(r => {
                         const barColor = r.winRate >= 60 ? C.ink : r.winRate >= 40 ? C.inkSoft : C.accent;
                         const amt = byAssignee[r.name]?.amount || 0;
                         return (
-                          <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '60px 1fr 50px 64px 90px', gap: 12, alignItems: 'center', padding: '11px 0', borderTop: `1px solid ${C.rule}` }}>
-                            <span style={{ ...F_DISP, fontSize: 16, fontWeight: 600, color: C.ink, letterSpacing: '-0.012em' }}>{r.name}</span>
-                            <div className="ed-bar-track">
+                          <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '74px 1fr 64px 86px 100px', gap: 14, alignItems: 'center', padding: '14px 0', borderTop: `1px solid ${C.rule}` }}>
+                            <span style={{ ...F_DISP, fontSize: 19, fontWeight: 700, color: C.ink, letterSpacing: '-0.012em' }}>{r.name}</span>
+                            <div className="ed-bar-track" style={{ height: 6 }}>
                               <div className="ed-bar-fill" style={{ width: `${r.winRate}%`, background: barColor }} />
                             </div>
-                            <span style={{ ...F_DISP, fontSize: 16, fontWeight: 700, color: barColor, textAlign: 'right' }}>{r.winRate}%</span>
-                            <span className="ed-num-tabular" style={{ fontSize: 11, color: C.meta, textAlign: 'right', fontWeight: 500 }}>{r.win}승·{r.lose}패</span>
-                            <span className="ed-num-tabular" style={{ fontSize: 12, color: amt > 0 ? C.ink : C.meta, textAlign: 'right', fontWeight: 600 }}>{amt > 0 ? `${(amt/10000).toLocaleString('ko-KR')}만` : '—'}</span>
+                            <span style={{ ...F_DISP, fontSize: 19, fontWeight: 800, color: barColor, textAlign: 'right' }}>{r.winRate}%</span>
+                            <span className="ed-num-tabular" style={{ fontSize: 14, color: C.inkSoft, textAlign: 'right', fontWeight: 600 }}>{r.win}승·{r.lose}패</span>
+                            <span className="ed-num-tabular" style={{ fontSize: 15, color: amt > 0 ? C.ink : C.meta, textAlign: 'right', fontWeight: 700 }}>{amt > 0 ? `${(amt/10000).toLocaleString('ko-KR')}만` : '—'}</span>
                           </div>
                         );
-                      }) : <div style={{ color: C.meta, fontSize: 12, padding: '12px 0' }}>데이터 없음</div>}
+                      }) : <div style={{ color: C.meta, fontSize: 14, padding: '12px 0' }}>데이터 없음</div>}
                     </div>
                     {/* 공종 */}
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 18 }}>
-                        <span className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.22em', color: C.meta, fontWeight: 600 }}>공종</span>
-                        <span style={{ ...F_DISP, fontSize: 18, fontWeight: 500, color: C.ink, letterSpacing: '-0.02em' }}>Categories</span>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 20 }}>
+                        <span style={{ ...F_DISP, fontSize: 22, fontWeight: 700, color: C.ink, letterSpacing: '-0.02em' }}>공종별 승률</span>
                       </div>
                       {workTypeRanked.length > 0 ? workTypeRanked.map(w => {
                         const barColor = w.winRate >= 60 ? C.ink : w.winRate >= 40 ? C.inkSoft : C.accent;
                         return (
-                          <div key={w.cat} style={{ display: 'grid', gridTemplateColumns: '70px 1fr 56px 64px', gap: 14, alignItems: 'center', padding: '11px 0', borderTop: `1px solid ${C.rule}` }}>
-                            <span style={{ ...F_DISP, fontSize: 16, fontWeight: 500, color: C.ink, letterSpacing: '-0.012em' }}>{w.cat}</span>
-                            <div className="ed-bar-track">
+                          <div key={w.cat} style={{ display: 'grid', gridTemplateColumns: '88px 1fr 64px 88px', gap: 14, alignItems: 'center', padding: '14px 0', borderTop: `1px solid ${C.rule}` }}>
+                            <span style={{ ...F_DISP, fontSize: 18, fontWeight: 600, color: C.ink, letterSpacing: '-0.012em' }}>{w.cat}</span>
+                            <div className="ed-bar-track" style={{ height: 6 }}>
                               <div className="ed-bar-fill" style={{ width: `${w.winRate}%`, background: barColor }} />
                             </div>
-                            <span style={{ ...F_DISP, fontSize: 17, fontWeight: 600, color: barColor, textAlign: 'right' }}>{w.winRate}%</span>
-                            <span className="ed-mono ed-num-tabular" style={{ fontSize: 10, color: C.meta, textAlign: 'right' }}>{w.win}/{w.total}</span>
+                            <span style={{ ...F_DISP, fontSize: 19, fontWeight: 800, color: barColor, textAlign: 'right' }}>{w.winRate}%</span>
+                            <span className="ed-num-tabular" style={{ fontSize: 13, color: C.meta, textAlign: 'right', fontWeight: 500 }}>{w.win}승/{w.total}건</span>
                           </div>
                         );
-                      }) : <div style={{ color: C.meta, fontSize: 12, padding: '12px 0' }}>데이터 없음</div>}
+                      }) : <div style={{ color: C.meta, fontSize: 14, padding: '12px 0' }}>데이터 없음</div>}
                     </div>
                   </section>
 
-                  <div className="ed-divider-warm" style={{ margin: '0 36px' }} />
+                  <div className="ed-divider-warm" style={{ margin: '0 40px' }} />
 
                   {/* ═════════ 패배 사유 + 협약사 (2열) ═════════ */}
-                  <section className="ed-section" style={{ padding: '32px 36px 28px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 40 }}>
+                  <section className="ed-section" style={{ padding: '36px 40px 32px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 44 }}>
                     {/* 패배 원인 */}
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 16 }}>
-                        <span className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.22em', color: C.meta, fontWeight: 600 }}>패배 원인</span>
-                        <span style={{ ...F_DISP, fontSize: 18, fontWeight: 500, color: C.ink, letterSpacing: '-0.02em' }}>Loss</span>
-                        <span className="ed-mono" style={{ fontSize: 9, color: C.meta, letterSpacing: '0.08em' }}>· 클릭 펼침</span>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 18 }}>
+                        <span style={{ ...F_DISP, fontSize: 22, fontWeight: 700, color: C.ink, letterSpacing: '-0.02em' }}>패배 원인</span>
+                        <span style={{ fontSize: 13, color: C.meta, fontWeight: 500 }}>· 클릭하면 펼쳐짐</span>
                       </div>
                       {lossReasonRanked.length > 0 ? lossReasonRanked.slice(0, 5).map((l, i) => {
                         const isExpanded = expandedAnalysisLossReason === l.reason;
@@ -19007,40 +19002,38 @@ tr.suppressed td.fname{color:#64748b;}
                         return (
                           <div key={l.reason}>
                             <div className="ed-row-toggle" onClick={() => setExpandedAnalysisLossReason(isExpanded ? null : l.reason)}
-                              style={{ display: 'grid', gridTemplateColumns: '20px 1fr auto auto 14px', gap: 12, padding: '12px 4px', alignItems: 'center', borderTop: `1px solid ${C.rule}` }}>
-                              <span className="ed-mono" style={{ fontSize: 10, color: C.meta, letterSpacing: '0.04em', fontWeight: 600 }}>{i+1}</span>
-                              <span style={{ fontSize: 13, fontWeight: isTop ? 600 : 500, color: isTop ? C.accent : C.ink, letterSpacing: '-0.005em' }}>{l.reason}</span>
-                              <span style={{ ...F_DISP, fontSize: 18, fontWeight: 500, color: isTop ? C.accent : C.ink, lineHeight: 1 }}>{l.count}</span>
-                              <span className="ed-mono ed-num-tabular" style={{ fontSize: 11, color: C.meta, minWidth: 36, textAlign: 'right' }}>{l.pct}%</span>
-                              <span className="ed-mono" style={{ fontSize: 12, color: C.meta, textAlign: 'right', transition: 'transform 0.25s var(--ed-ease)', transform: isExpanded ? 'rotate(45deg)' : 'rotate(0deg)' }}>+</span>
+                              style={{ display: 'grid', gridTemplateColumns: '24px 1fr auto auto 18px', gap: 14, padding: '14px 4px', alignItems: 'center', borderTop: `1px solid ${C.rule}` }}>
+                              <span style={{ fontSize: 13, color: C.meta, fontWeight: 700 }}>{i+1}</span>
+                              <span style={{ fontSize: 16, fontWeight: isTop ? 700 : 600, color: isTop ? C.accent : C.ink, letterSpacing: '-0.005em' }}>{l.reason}</span>
+                              <span style={{ ...F_DISP, fontSize: 22, fontWeight: 800, color: isTop ? C.accent : C.ink, lineHeight: 1 }}>{l.count}<span style={{ fontSize: '60%', color: C.meta, fontWeight: 500, marginLeft: 2 }}>건</span></span>
+                              <span className="ed-num-tabular" style={{ fontSize: 14, color: C.meta, minWidth: 48, textAlign: 'right', fontWeight: 600 }}>{l.pct}%</span>
+                              <span style={{ fontSize: 16, color: C.meta, textAlign: 'right', transition: 'transform 0.25s var(--ed-ease)', transform: isExpanded ? 'rotate(45deg)' : 'rotate(0deg)', fontWeight: 500 }}>+</span>
                             </div>
                             {isExpanded && reasonPts.length > 0 && (
-                              <div style={{ background: C.surfaceSoft, padding: '14px 16px', borderTop: `1px solid ${C.rule}`, animation: 'ed-fade-rise 0.35s var(--ed-ease) both' }}>
+                              <div style={{ background: C.surfaceSoft, padding: '16px 18px', borderTop: `1px solid ${C.rule}`, animation: 'ed-fade-rise 0.35s var(--ed-ease) both' }}>
                                 {reasonPts.slice(0, 5).map((p, idx) => (
-                                  <div key={p.ptId + idx} style={{ padding: '9px 0', borderTop: idx === 0 ? 'none' : `1px solid ${C.rule}`, fontSize: 11 }}>
-                                    <div style={{ fontWeight: 600, color: C.ink, marginBottom: 3 }}>{p.siteName}<span className="ed-mono" style={{ fontSize: 9, color: C.meta, fontWeight: 400, marginLeft: 8 }}>{p.date} · {p.assignee}</span></div>
-                                    {p.reasonText && <div style={{ color: C.inkSoft, lineHeight: 1.5, paddingLeft: 10, borderLeft: `2px solid ${C.accent}`, fontSize: 11 }}>{p.reasonText}</div>}
-                                    {p.competitor && <div className="ed-mono" style={{ fontSize: 9, color: C.accent, marginTop: 3, letterSpacing: '0.06em' }}>vs {p.competitor}</div>}
+                                  <div key={p.ptId + idx} style={{ padding: '12px 0', borderTop: idx === 0 ? 'none' : `1px solid ${C.rule}` }}>
+                                    <div style={{ fontWeight: 700, color: C.ink, marginBottom: 5, fontSize: 14 }}>{p.siteName}<span style={{ fontSize: 12, color: C.meta, fontWeight: 500, marginLeft: 10 }}>{p.date} · {p.assignee}</span></div>
+                                    {p.reasonText && <div style={{ color: C.inkSoft, lineHeight: 1.55, paddingLeft: 12, borderLeft: `3px solid ${C.accent}`, fontSize: 13, fontWeight: 500 }}>{p.reasonText}</div>}
+                                    {p.competitor && <div style={{ fontSize: 12, color: C.accent, marginTop: 5, fontWeight: 700 }}>경쟁사: {p.competitor}</div>}
                                   </div>
                                 ))}
-                                {reasonPts.length > 5 && <div className="ed-mono" style={{ fontSize: 9, color: C.meta, marginTop: 8, letterSpacing: '0.08em' }}>+ {reasonPts.length - 5} more</div>}
+                                {reasonPts.length > 5 && <div style={{ fontSize: 12, color: C.meta, marginTop: 10, fontWeight: 500 }}>+ {reasonPts.length - 5}건 더 보기</div>}
                               </div>
                             )}
                           </div>
                         );
-                      }) : <div style={{ color: C.meta, fontSize: 12, padding: '12px 0' }}>패배 사유 없음</div>}
+                      }) : <div style={{ color: C.meta, fontSize: 14, padding: '12px 0' }}>패배 사유 없음</div>}
                     </div>
                     {/* 협약사 */}
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 16 }}>
-                        <span className="ed-mono" style={{ fontSize: 10, letterSpacing: '0.22em', color: C.meta, fontWeight: 600 }}>협약사</span>
-                        <span style={{ ...F_DISP, fontSize: 18, fontWeight: 500, color: C.ink, letterSpacing: '-0.02em' }}>Clients</span>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 18 }}>
+                        <span style={{ ...F_DISP, fontSize: 22, fontWeight: 700, color: C.ink, letterSpacing: '-0.02em' }}>협약사 / 요청사</span>
                       </div>
                       {(() => {
-                        // byRequester 는 이제 캐노니컬 키 기반 — name 필드 사용
                         const reqList = Object.values(cur.byRequester || {})
                           .sort((a, b) => b.total - a.total).slice(0, 5);
-                        if (reqList.length === 0) return <div style={{ color: C.meta, fontSize: 12, padding: '12px 0' }}>요청사 정보 없음</div>;
+                        if (reqList.length === 0) return <div style={{ color: C.meta, fontSize: 14, padding: '12px 0' }}>요청사 정보 없음</div>;
                         return reqList.map((r, i) => {
                           const winRate = (r.win + r.draw + r.lose) > 0 ? Math.round(r.win / (r.win + r.draw + r.lose) * 100) : 0;
                           const winRateColor = winRate >= 60 ? C.ink : winRate >= 40 ? C.inkSoft : C.accent;
@@ -19049,19 +19042,19 @@ tr.suppressed td.fname{color:#64748b;}
                           const isAptOffice = r.key === APT_OFFICE_KEY;
                           return (
                             <div key={r.key || r.name} title={variantCount > 1 ? `통합 표기 ${variantCount}개: ${[...(r.originals || [])].slice(0, 6).join(', ')}${variantCount > 6 ? ' …' : ''}` : undefined}
-                              style={{ display: 'grid', gridTemplateColumns: '20px 1fr auto 56px 80px', gap: 10, padding: '12px 4px', alignItems: 'center', borderTop: `1px solid ${C.rule}` }}>
-                              <span className="ed-mono" style={{ fontSize: 10, color: C.meta, letterSpacing: '0.04em', fontWeight: 600 }}>{i+1}</span>
-                              <span style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-                                <span style={{ ...F_DISP, fontSize: 15, fontWeight: i < 3 ? 700 : 600, color: C.ink, letterSpacing: '-0.012em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
+                              style={{ display: 'grid', gridTemplateColumns: '24px 1fr auto 64px 92px', gap: 12, padding: '14px 4px', alignItems: 'center', borderTop: `1px solid ${C.rule}` }}>
+                              <span style={{ fontSize: 13, color: C.meta, fontWeight: 700 }}>{i+1}</span>
+                              <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0, flexWrap: 'wrap' }}>
+                                <span style={{ ...F_DISP, fontSize: 17, fontWeight: i < 3 ? 700 : 600, color: C.ink, letterSpacing: '-0.012em' }}>{r.name}</span>
                                 {(variantCount > 1 || isAptOffice) && (
-                                  <span className="ed-mono" style={{ fontSize: 9, color: C.meta, letterSpacing: '0.04em', background: C.surfaceSoft, padding: '1px 5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                  <span style={{ fontSize: 11, color: C.meta, fontWeight: 600, background: C.surfaceSoft, padding: '2px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}>
                                     {isAptOffice ? `${variantCount}개 단지` : `${variantCount}개 표기`}
                                   </span>
                                 )}
                               </span>
-                              <span className="ed-num-tabular" style={{ fontSize: 11, color: C.meta, fontWeight: 500 }}>{r.total}건 · {r.win}승 {r.lose}패</span>
-                              <span style={{ ...F_DISP, fontSize: 17, fontWeight: 700, color: winRateColor, textAlign: 'right' }}>{winRate}%</span>
-                              <span className="ed-num-tabular" style={{ fontSize: 12, color: amt > 0 ? C.ink : C.meta, textAlign: 'right', fontWeight: 600 }}>{amt > 0 ? `${(amt/10000).toLocaleString('ko-KR')}만` : '—'}</span>
+                              <span className="ed-num-tabular" style={{ fontSize: 13, color: C.inkSoft, fontWeight: 600 }}>{r.total}건 · {r.win}승 {r.lose}패</span>
+                              <span style={{ ...F_DISP, fontSize: 19, fontWeight: 800, color: winRateColor, textAlign: 'right' }}>{winRate}%</span>
+                              <span className="ed-num-tabular" style={{ fontSize: 14, color: amt > 0 ? C.ink : C.meta, textAlign: 'right', fontWeight: 700 }}>{amt > 0 ? `${(amt/10000).toLocaleString('ko-KR')}만` : '—'}</span>
                             </div>
                           );
                         });
@@ -19070,9 +19063,9 @@ tr.suppressed td.fname{color:#64748b;}
                   </section>
 
                   {/* ─── 푸터 ─── */}
-                  <div style={{ padding: '18px 36px', borderTop: `1px solid ${C.rule}`, background: C.surfaceSoft, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-                    <div className="ed-mono" style={{ fontSize: 9, letterSpacing: '0.20em', color: C.meta }}>POUR · Q{qN} {yKey} · GENERATED {todayStr} · {currentUser?.name || 'admin'}</div>
-                    <button onClick={() => setShowAnalysisReport(false)} className="ed-pickbtn" style={{ padding: '7px 18px' }}>닫기</button>
+                  <div style={{ padding: '20px 40px', borderTop: `1px solid ${C.rule}`, background: C.surfaceSoft, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                    <div style={{ fontSize: 12, color: C.meta, fontWeight: 500 }}>POUR · {yKey}년 {qN}분기 · {todayStr} 작성 · {currentUser?.name || 'admin'}</div>
+                    <button onClick={() => setShowAnalysisReport(false)} className="ed-pickbtn" style={{ padding: '8px 22px', fontSize: 12 }}>닫기</button>
                   </div>
 
                 </div>
