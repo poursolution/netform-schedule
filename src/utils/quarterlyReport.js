@@ -10,6 +10,7 @@
 
 import * as XLSX from 'xlsx';
 import { isExceptionApproved, EXCEPTION_TYPES } from './exceptions.js';
+import { calculateSettlementAmount } from './settlement.js';
 
 // 정산 대상 담당자 (6명) — 한인규 제외 (별도 정산 처리)
 // 이 명단에 포함된 담당자의 데이터만 보고서 집계에 사용
@@ -224,24 +225,40 @@ function extractConfirmDate(s, assignee) {
 }
 
 // === 메인 집계 — PT 실적 중심 ===
-// 기준: resultConfirmDate (결과 입력 시점) 기준 분기 귀속
-// 제외: 패·미입력 / 자체PT / 본인영업 / 취소공고
+// **분기정산 모달과 동일 룰** (분기정산이 진실의 원천):
+//   - 분기 귀속: pt.date 기준 + grace(분기 마감 30일 윈도우) 룰로 옛 PT는 home 분기에 합산
+//   - 필터: settlement.{a}.requested === true OR manualVerified === true
+//   - 제외: completed / superseded / 패·loss·자체PT·본인영업·취소공고·draw_support_excluded
+//   - 금액: calculateSettlementAmount(pt, a) — exception 미적용 (분기정산 모달과 동일)
+// 두 모달이 같은 결과를 내도록 정렬됨. 이전 confirmDate(resultConfirmDate) 기반 룰 폐기.
 export function aggregateQuarterlyReport(allData, year, quarter) {
   const range = getQuarterRange(year, quarter);  // PT 진행일 범위 (1/1~3/31) — 주말출근에 사용
-  const settleWindow = getSettlementWindow(year, quarter);  // 정산 처리 윈도우 (1/31~4/30) — confirmDate 기준
   const { ptSchedules = [] } = allData;
 
-  const SETTLEMENT_RESULTS = new Set(['승', '무', '지원']);
-  const ptVerified = [];
-  const ptUnverified = [];
-  // 주말출근(토/일) — PT 진행일 기준 분기 귀속, 결과 무관
-  //   PT 결과(승/무/지원/패) 와 정산 fallback 체인 무관 — 단순 출근일 집계.
-  //   범위: PT 진행일(s.date)이 분기 안에 있으면 카운트.
-  //   조건: SETTLEMENT_ASSIGNEES 7명 중, ptAssignee 토큰에 들어 있는 사람만.
-  //         취소공고 제외, 자체PT 제외 (실제 출근 의미 약함), dateType !== 'confirmed' 제외.
+  // 분기정산 모달과 동일한 분기 경계 + grace home 계산
+  const yr = parseInt(year, 10);
+  const qn = parseInt(quarter, 10);
+  const qStartMonth = (qn - 1) * 3 + 1;
+  const qStart = `${yr}-${String(qStartMonth).padStart(2, '0')}-01`;
+  const qEndMonth = qn * 3;
+  const qEndDay = qEndMonth === 3 || qEndMonth === 12 ? 31 : 30;
+  const qEnd = `${yr}-${String(qEndMonth).padStart(2, '0')}-${String(qEndDay).padStart(2, '0')}`;
+  const qm = `${yr}-Q${qn}`;
+  const homeQ = (() => {
+    const d = new Date();
+    let m = d.getMonth() + 1;
+    let y = d.getFullYear();
+    if ([1, 4, 7, 10].includes(m) && d.getDate() <= 30) {
+      m -= 3;
+      if (m < 1) { m += 12; y -= 1; }
+    }
+    return `${y}-Q${Math.ceil(m / 3)}`;
+  })();
+
+  const ptVerified = [];      // 정산 집계 대상 (분기정산 모달의 winCount/drawCount/supportCount 와 일치)
+  const ptUnverified = [];    // 검토필요 — settlement.requested/manualVerified 미체크된 것 (admin 안내용)
   const weekendItems = [];
 
-  // 디버그 카운터
   let debugStats = {
     totalSchedules: ptSchedules.length,
     skippedNoDate: 0,
@@ -250,7 +267,10 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
     skippedNonSettlementResult: 0,
     skippedCancelled: 0,
     skippedOutOfQuarter: 0,
-    missingResultConfirmDate: 0,
+    skippedNotRequested: 0,
+    skippedCompleted: 0,
+    skippedSuperseded: 0,
+    skippedExcludedByCalc: 0,
     includedVerified: 0,
     includedUnverified: 0,
     weekendItems: 0,
@@ -259,15 +279,21 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
   ptSchedules.forEach(s => {
     if (!s.date) { debugStats.skippedNoDate++; return; }
     if (s.dateType && s.dateType !== 'confirmed') { debugStats.skippedNonConfirmed++; return; }
-    if (s.kaptVerified?.status === 'cancelled') { debugStats.skippedCancelled++; return; }
+    // 취소공고는 분기정산 모달 calc 단에서 cancelled_notice 로 제외되므로 여기 일찍 차단 안 함.
+    // (다만 주말출근 카운트에서는 제외하기 위해 아래 weekend 블록에서 별도 체크)
 
-    // 주말출근 별도 집계 — PT 진행일 기준 (결과 무관)
-    //   가이드 룰: 본인영업 현장(selfPT 또는 selfSales) 근무 제외
-    if (!s.selfPT && isWeekendPt(s) && inRange(s.date, range)) {
+    // 분기정산 모달과 동일: pt.date 기준 분기 귀속 + grace 룰
+    const inRangeFlag = s.date >= qStart && s.date <= qEnd;
+    const isOlder = s.date < qStart;
+    const inQuarter = inRangeFlag || (isOlder && qm === homeQ);
+    if (!inQuarter) { debugStats.skippedOutOfQuarter++; return; }
+
+    // 주말출근 — PT 진행일 in range, 결과/requested 무관 (취소공고는 제외)
+    if (!s.selfPT && s.kaptVerified?.status !== 'cancelled' && isWeekendPt(s) && inRange(s.date, range)) {
       const wAssignees = parseAssignees(s.ptAssignee);
       wAssignees.forEach(wa => {
         if (!SETTLEMENT_ASSIGNEES_SET.has(wa)) return;
-        if (isSelfSales(s, wa)) return;  // 본인영업 제외 (가이드)
+        if (isSelfSales(s, wa)) return;
         weekendItems.push({
           date: s.date,
           dayOfWeek: ['일','월','화','수','목','금','토'][new Date(parseInt(s.date.slice(0,4)), parseInt(s.date.slice(5,7))-1, parseInt(s.date.slice(8,10))).getDay()],
@@ -283,49 +309,67 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
     assignees.forEach(a => {
       if (!SETTLEMENT_ASSIGNEES_SET.has(a)) { debugStats.skippedNonSettlementAssignee++; return; }
 
-      const rawResult = getPtResult(s, a);
-      const exceptionApproved = isExceptionApproved(s, a);
-      const exceptionReq = exceptionApproved ? s.exceptionRequests[a] : null;
-      const effectiveResult = exceptionApproved ? '승' : rawResult;
-      if (!SETTLEMENT_RESULTS.has(effectiveResult)) { debugStats.skippedNonSettlementResult++; return; }
-
-      const confirmDate = extractConfirmDate(s, a);
       const stl = s.settlement?.[a] || {};
-      const confirmSource = stl.finalConfirmedAt ? 'finalConfirmed'
-        : stl.requestedAt ? 'requested'
-        : s.resultConfirmDate?.[a] ? 'resultInput'
-        : 'ptDate';
-      if (confirmSource === 'ptDate') debugStats.missingResultConfirmDate++;
 
-      // 가이드 룰: 진행 분기 마감 안 입력 → 진행 분기 / 마감 지남 → 입력일 분기
-      const sq = getSettlementQuarterForPt(s.date, confirmDate);
-      if (!sq || sq.year !== parseInt(year) || sq.quarter !== parseInt(quarter)) {
-        debugStats.skippedOutOfQuarter++;
+      // ★ 분기정산 모달과 동일한 필터: requested OR manualVerified
+      const isRequested = stl.requested === true || stl.manualVerified === true;
+      if (!isRequested) {
+        // 검토필요 안내용 — 결과 입력은 됐지만 정산요청 미체크된 PT
+        const r = getPtResult(s, a);
+        if (r && r !== '패') {
+          ptUnverified.push({
+            date: s.date,
+            confirmDate: s.date,
+            bidNo: s.bidNo || '',
+            siteName: s.siteName || '',
+            assignee: a,
+            result: r,
+            rawResult: r,
+            amount: 0,
+            settlementStatus: '미정산',
+            selfPT: !!s.selfPT,
+            note: s.note || '',
+            verifyReason: '정산요청 미체크 (담당자 또는 관리자 manualVerified 필요)',
+          });
+          debugStats.includedUnverified++;
+        }
+        debugStats.skippedNotRequested++;
         return;
       }
+      if (stl.completed === true) { debugStats.skippedCompleted++; return; }
+      if (stl.superseded === true || stl.status === 'superseded') { debugStats.skippedSuperseded++; return; }
 
-      const verified = isPtVerified(s, a);
+      // ★ 분기정산 모달과 동일한 금액 계산 (calculateSettlementAmount, exception 미적용)
+      const calc = calculateSettlementAmount(s, a);
+      const r = calc.result;
+      const isExcludedReason = calc.reason === 'loss' || calc.reason === 'vendor_self_pt'
+        || calc.reason === 'self_sales' || calc.reason === 'draw_support_excluded'
+        || calc.reason === 'cancelled_notice';
+      if (isExcludedReason) { debugStats.skippedExcludedByCalc++; return; }
+      if (!r || r === '패') { debugStats.skippedNonSettlementResult++; return; }
+      // 감리는 별도 result='감리' 로 옴 — 정산 카운트에는 포함 (manualAmount 사용)
+      if (r !== '승' && r !== '무' && r !== '지원' && r !== '감리') { debugStats.skippedNonSettlementResult++; return; }
+
       const row = {
         date: s.date,
-        confirmDate,
-        confirmSource,
+        confirmDate: s.date,  // 분기정산은 pt.date 기준 — confirmDate=pt.date 로 일관
         bidNo: s.bidNo || '',
         siteName: s.siteName || '',
         assignee: a,
-        result: effectiveResult,
-        rawResult,
-        isException: exceptionApproved,
-        exceptionType: exceptionReq ? exceptionReq.type : null,
-        exceptionReason: exceptionReq ? exceptionReq.reason : '',
+        result: r,
+        rawResult: r,
+        isException: false,  // 분기정산 모달과 일관 — exception 승격 미적용
+        exceptionType: null,
+        exceptionReason: '',
         settlementStatus: isSettlementCompleted(s, a) ? '정산완료'
           : (isSettlementRequested(s, a) ? '정산요청' : '미정산'),
-        amount: getSettlementAmount(s, a, effectiveResult),
+        amount: calc.amount || 0,
         selfPT: !!s.selfPT,
         note: s.note || '',
-        verifyReason: getVerifyReason(s, a),
+        verifyReason: '',
       };
-      if (verified) { ptVerified.push(row); debugStats.includedVerified++; }
-      else { ptUnverified.push(row); debugStats.includedUnverified++; }
+      ptVerified.push(row);
+      debugStats.includedVerified++;
     });
   });
 
