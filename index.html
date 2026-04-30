@@ -37,23 +37,90 @@
     .spinner { width: 40px; height: 40px; border: 4px solid #e2e8f0; border-top-color: #2563eb; border-radius: 50%; animation: spin 1s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* ─── Executive Report Editorial Theme ─── */
-    .ed-modal { font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif; color: #0A0A0A; }
-    .ed-modal *::selection { background: #0A0A0A; color: #FAFAF5; }
-    .ed-display { font-family: 'Fraunces', 'Times New Roman', serif; font-feature-settings: 'ss01', 'ss02'; letter-spacing: -0.02em; }
+    /* ─── Executive Report — Warm Luminous Editorial ─── */
+    /*  Color palette: 따뜻한 페이퍼·잉크·구리(copper) 액센트.
+        일관된 조명: 모달 배경 상단 광원(linear gradient).
+        Surface: 흰 카드 위에 부드러운 따뜻한 그림자.
+        Motion: cubic-bezier(0.22,1,0.36,1) 기반 fadeRise 스태거. */
+    :root {
+      --ed-paper:        #F4F0E8;   /* 따뜻한 펄 (배경) */
+      --ed-paper-mid:    #ECE7DB;   /* 페이퍼 변형 */
+      --ed-surface:      #FFFFFF;   /* 카드 표면 */
+      --ed-surface-soft: #FBF8F2;   /* 살짝 따뜻한 카드 */
+      --ed-ink:          #1A1612;   /* 따뜻한 near-black */
+      --ed-ink-soft:     #4A4138;   /* 그래파이트 */
+      --ed-meta:         #8C8478;   /* warm tan-gray */
+      --ed-rule:         #E2DCCC;   /* 따뜻한 헤어라인 */
+      --ed-rule-strong:  #1A1612;   /* 강 헤어라인 (잉크) */
+      --ed-accent:       #B5613A;   /* refined copper — 이전 crimson 대체 */
+      --ed-accent-soft:  #F4E5D6;   /* 카퍼 페일 */
+      --ed-shadow-soft:  0 1px 2px rgba(60, 40, 20, 0.04), 0 6px 24px rgba(60, 40, 20, 0.06);
+      --ed-shadow-card:  0 1px 2px rgba(60, 40, 20, 0.04), 0 12px 40px rgba(60, 40, 20, 0.08);
+      --ed-ease:         cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .ed-modal {
+      font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif;
+      color: var(--ed-ink);
+      /* 일관된 광원: 위쪽에서 따뜻하게 떨어지는 빛 */
+      background:
+        radial-gradient(ellipse 60% 40% at 50% 0%, rgba(255, 235, 205, 0.55), transparent 60%),
+        rgba(20, 14, 8, 0.45);
+      backdrop-filter: blur(2px);
+    }
+    .ed-modal *::selection { background: var(--ed-ink); color: var(--ed-paper); }
+    .ed-display { font-family: 'Fraunces', 'Times New Roman', serif; font-feature-settings: 'ss01', 'ss02'; letter-spacing: -0.018em; font-variation-settings: 'opsz' 144, 'SOFT' 50; }
     .ed-mono { font-family: 'JetBrains Mono', ui-monospace, 'Courier New', monospace; }
-    .ed-rule { border: 0; border-top: 1px solid #0A0A0A; margin: 0; }
-    .ed-rule-soft { border: 0; border-top: 1px solid #C8C5B8; margin: 0; }
+    .ed-rule { border: 0; border-top: 1px solid var(--ed-rule-strong); margin: 0; }
+    .ed-rule-soft { border: 0; border-top: 1px solid var(--ed-rule); margin: 0; }
     .ed-num-tabular { font-variant-numeric: tabular-nums; }
-    .ed-pickbtn { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 7px 14px; border: 1px solid #0A0A0A; background: transparent; cursor: pointer; color: #0A0A0A; transition: all .15s; }
-    .ed-pickbtn:hover { background: #0A0A0A; color: #FAFAF5; }
-    .ed-pickbtn.is-active { background: #0A0A0A; color: #FAFAF5; }
-    .ed-row-toggle { cursor: pointer; transition: background .15s; }
-    .ed-row-toggle:hover { background: #F0EFE7; }
-    .ed-bar-track { background: #E8E5D8; height: 6px; position: relative; overflow: hidden; }
-    .ed-bar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: #0A0A0A; transition: width .3s ease-out; }
-    @keyframes ed-fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-    .ed-section { animation: ed-fadein .4s ease-out both; }
+    .ed-pickbtn {
+      font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.10em; text-transform: uppercase;
+      padding: 6px 12px; border: 1px solid var(--ed-rule); background: var(--ed-surface); cursor: pointer;
+      color: var(--ed-ink-soft); transition: all 0.25s var(--ed-ease);
+    }
+    .ed-pickbtn:hover { border-color: var(--ed-ink); color: var(--ed-ink); transform: translateY(-1px); box-shadow: var(--ed-shadow-soft); }
+    .ed-pickbtn.is-active { background: var(--ed-ink); color: var(--ed-paper); border-color: var(--ed-ink); }
+    .ed-row-toggle { cursor: pointer; transition: background 0.25s var(--ed-ease); }
+    .ed-row-toggle:hover { background: var(--ed-surface-soft); }
+    .ed-card {
+      background: var(--ed-surface);
+      box-shadow: var(--ed-shadow-card);
+      transition: transform 0.4s var(--ed-ease), box-shadow 0.4s var(--ed-ease);
+    }
+    .ed-tile {
+      background: var(--ed-surface);
+      transition: background 0.25s var(--ed-ease);
+    }
+    .ed-tile-soft { background: var(--ed-surface-soft); }
+    .ed-bar-track { background: var(--ed-rule); height: 4px; position: relative; overflow: hidden; border-radius: 2px; }
+    .ed-bar-fill {
+      position: absolute; left: 0; top: 0; bottom: 0;
+      background: var(--ed-ink);
+      animation: ed-bar-grow 0.8s var(--ed-ease) both;
+      transform-origin: left;
+    }
+    @keyframes ed-bar-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    @keyframes ed-fade-rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .ed-section { animation: ed-fade-rise 0.6s var(--ed-ease) both; }
+    .ed-section:nth-of-type(1) { animation-delay: 0.04s; }
+    .ed-section:nth-of-type(2) { animation-delay: 0.10s; }
+    .ed-section:nth-of-type(3) { animation-delay: 0.18s; }
+    .ed-section:nth-of-type(4) { animation-delay: 0.26s; }
+    .ed-section:nth-of-type(5) { animation-delay: 0.34s; }
+    .ed-section:nth-of-type(6) { animation-delay: 0.42s; }
+    .ed-divider-warm { height: 1px; background: linear-gradient(90deg, transparent, var(--ed-rule) 20%, var(--ed-rule) 80%, transparent); }
+    .ed-close-btn {
+      width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--ed-rule);
+      background: var(--ed-surface); color: var(--ed-ink-soft); cursor: pointer; padding: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'JetBrains Mono', monospace; font-size: 14px;
+      transition: all 0.25s var(--ed-ease);
+    }
+    .ed-close-btn:hover { background: var(--ed-ink); color: var(--ed-paper); border-color: var(--ed-ink); transform: rotate(90deg); }
+    .ed-insight-card {
+      transition: transform 0.3s var(--ed-ease), box-shadow 0.3s var(--ed-ease);
+    }
+    .ed-insight-card:hover { transform: translateY(-2px); box-shadow: var(--ed-shadow-soft); }
   </style>
 </head>
 <body>
