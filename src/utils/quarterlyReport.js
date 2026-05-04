@@ -344,7 +344,7 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
       const r = calc.result;
       const isExcludedReason = calc.reason === 'loss' || calc.reason === 'vendor_self_pt'
         || calc.reason === 'self_sales' || calc.reason === 'draw_support_excluded'
-        || calc.reason === 'cancelled_notice';
+        || calc.reason === 'cancelled_notice' || calc.reason === 'settlement_excluded';
       if (isExcludedReason) { debugStats.skippedExcludedByCalc++; return; }
       if (!r || r === '패') { debugStats.skippedNonSettlementResult++; return; }
       // 감리는 별도 result='감리' 로 옴 — 정산 카운트에는 포함 (manualAmount 사용)

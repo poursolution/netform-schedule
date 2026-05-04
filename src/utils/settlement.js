@@ -34,6 +34,7 @@ export const EXCLUSION_REASONS = {
   DRAW_SUPPORT_EXCLUDED: 'draw_support_excluded',  // 주담 무승부 → 지원자 관리자예외승인 필요
   LOSS: 'loss',                         // 결과가 패배
   CANCELLED_NOTICE: 'cancelled_notice', // K-APT 취소공고 (공고 올라왔지만 발주처 취소) — 재공고 대기
+  SETTLEMENT_EXCLUDED: 'settlement_excluded', // 관리자 판단 정산예외 (검증 통과했지만 사정상 정산 X)
 };
 
 // ===== 금액 테이블 =====
@@ -104,6 +105,13 @@ export function calculateSettlementAmount(pt, assignee, opts = {}) {
   const stl = pt.settlement?.[assignee] || {};
   if (stl.selfSales) {
     return { amount: 0, reason: EXCLUSION_REASONS.SELF_SALES, result: '제외' };
+  }
+
+  // 2.1) 정산예외 — 관리자/담당자 판단으로 정산 대상에서 제외
+  //      검증 통과한 PT 라도 사정상 정산 받지 않아야 하는 경우 사용 (admin 메모 등)
+  //      해제하려면 같은 체크박스 다시 클릭 (확인 다이얼로그)
+  if (stl.settlementExcluded === true) {
+    return { amount: 0, reason: EXCLUSION_REASONS.SETTLEMENT_EXCLUDED, result: '제외' };
   }
 
   // 2.5) K-APT 취소공고 — 공고 있었으나 발주처 취소 → 정산 제외 (재공고 대기)

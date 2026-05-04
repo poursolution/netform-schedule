@@ -63,6 +63,7 @@ const EXCLUSION_REASON_LABEL = {
   [EXCLUSION_REASONS.DRAW_SUPPORT_EXCLUDED]: '주담무승부',
   [EXCLUSION_REASONS.LOSS]: '패배',
   [EXCLUSION_REASONS.CANCELLED_NOTICE]: '취소공고',
+  [EXCLUSION_REASONS.SETTLEMENT_EXCLUDED]: '정산예외',
   supervision_pending_input: '감리·금액 입력 대기',
 };
 import { normalizeApartmentName, addApartmentAlias } from './utils/apartmentMatch.js';
@@ -10732,6 +10733,49 @@ tr.suppressed td.fname{color:#64748b;}
                                                       setTimeout(() => persistSettlementDerived(card.id, assigneeName), 0);
                                                     }} style={{ width: '14px', height: '14px', cursor: 'pointer' }} /> 본인영업
                                                   </label>
+                                                  {/* 정산예외 — 검증 통과한 PT 라도 사정상 정산 받지 않아야 하는 경우 사용 (관리자 판단) */}
+                                                  <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: (currentUser?.isAdmin || currentUser?.name === '한준엽') ? 'pointer' : 'not-allowed', opacity: (currentUser?.isAdmin || currentUser?.name === '한준엽') ? 1 : 0.6 }}
+                                                    title={(currentUser?.isAdmin || currentUser?.name === '한준엽') ? '검증 통과했지만 사정상 정산 안 받아야 하는 경우 — 정산 합계에서 제외' : '관리자만 변경 가능'}>
+                                                    <input type="checkbox" checked={!!aSettlement.settlementExcluded} onChange={() => {
+                                                      if (!currentUser?.isAdmin && currentUser?.name !== '한준엽') return;
+                                                      const newVal = !aSettlement.settlementExcluded;
+                                                      // 확인 다이얼로그 — 당황 방지 (이전 정산요청 UX 패턴과 동일)
+                                                      const calcCur = calculateSettlementAmount(card, assigneeName);
+                                                      const amtCur = (calcCur?.amount || 0).toLocaleString('ko-KR');
+                                                      let reasonText = '';
+                                                      if (newVal) {
+                                                        const msg = `🚫 정산예외 처리\n\n현장: ${card.siteName || '-'}\n담당: ${assigneeName}\n현재 예상 정산금: ${amtCur}원\n\n검증 통과한 PT 지만 사정상 정산 받지 않아야 한다고 판단되는 경우 사용합니다.\n적용 시:\n  · 분기정산 합계에서 제외 (금액 0)\n  · "🚫 정산예외" 라벨 표시\n  · 정산요청/완료/본인영업 체크와 무관하게 우선 적용\n\n사유를 간단히 입력해주세요 (필수, 운영 이력용):`;
+                                                        reasonText = window.prompt(msg, '');
+                                                        if (reasonText === null) return;  // 취소
+                                                        const trimmed = (reasonText || '').trim();
+                                                        if (!trimmed) { alert('사유 미입력 — 정산예외 처리 취소'); return; }
+                                                        reasonText = trimmed;
+                                                      } else {
+                                                        if (!window.confirm(`✅ 정산예외 해제\n\n현장: ${card.siteName || '-'}\n담당: ${assigneeName}\n사유: ${aSettlement.settlementExcludedReason || '-'}\n\n해제 시 다시 정산 대상에 포함됩니다. 진행?`)) return;
+                                                      }
+                                                      const nowISO = new Date().toISOString();
+                                                      setPtSchedules(prev => prev.map(ps => {
+                                                        if (ps.id !== card.id) return ps;
+                                                        const cur = ps.settlement?.[assigneeName] || {};
+                                                        const newEntry = { ...cur, settlementExcluded: newVal };
+                                                        if (newVal) {
+                                                          newEntry.settlementExcludedAt = nowISO;
+                                                          newEntry.settlementExcludedBy = currentUser?.name || 'admin';
+                                                          newEntry.settlementExcludedReason = reasonText;
+                                                        } else {
+                                                          newEntry.settlementExcludedAt = null;
+                                                          newEntry.settlementExcludedBy = null;
+                                                          newEntry.settlementExcludedReason = null;
+                                                        }
+                                                        return { ...ps, settlement: { ...ps.settlement, [assigneeName]: newEntry } };
+                                                      }));
+                                                      setDirtyScheduleIds(prev => new Set([...prev, card.id]));
+                                                      setHasResultChanges(true);
+                                                      setTimeout(() => persistSettlementDerived(card.id, assigneeName), 0);
+                                                      try { logActivity('settlement_excluded_toggle', { ptId: card.id, assignee: assigneeName, on: newVal, reason: reasonText, by: currentUser?.name }); } catch {}
+                                                    }} disabled={!currentUser?.isAdmin && currentUser?.name !== '한준엽'} style={{ width: '14px', height: '14px', cursor: (currentUser?.isAdmin || currentUser?.name === '한준엽') ? 'pointer' : 'not-allowed' }} />
+                                                    <span style={{ color: aSettlement.settlementExcluded ? '#dc2626' : 'inherit', fontWeight: aSettlement.settlementExcluded ? 700 : 400 }}>정산예외</span>
+                                                  </label>
                                                 </div>
                                               )}
                                               {/* 확정일·귀속·급여 미니 라벨 — 리스트에서 제거됨 (관리자 분기정산 모달에서 조회 가능). 계산은 persist 용도로 유지. */}
@@ -15510,7 +15554,7 @@ tr.suppressed td.fname{color:#64748b;}
                   const r = calc.result;
                   acc[a].totalCount++;
                   acc[a].items.push({ ptId: pt.id, siteName: pt.siteName, ptDate: pt.date, result: r, amount: calc.amount, reason: calc.reason });
-                  if (calc.reason === 'loss' || calc.reason === 'vendor_self_pt' || calc.reason === 'self_sales' || calc.reason === 'draw_support_excluded' || calc.reason === 'cancelled_notice') {
+                  if (calc.reason === 'loss' || calc.reason === 'vendor_self_pt' || calc.reason === 'self_sales' || calc.reason === 'draw_support_excluded' || calc.reason === 'cancelled_notice' || calc.reason === 'settlement_excluded') {
                     acc[a].excludedCount++;
                     continue;
                   }
@@ -15892,7 +15936,7 @@ tr.suppressed td.fname{color:#64748b;}
             const bulkCompleteAll = async () => {
               if (!rows.length) { alert('정산 대상이 없습니다.'); return; }
               const targets = [];
-              const EXCLUDED = new Set(['loss', 'vendor_self_pt', 'self_sales', 'draw_support_excluded', 'cancelled_notice']);
+              const EXCLUDED = new Set(['loss', 'vendor_self_pt', 'self_sales', 'draw_support_excluded', 'cancelled_notice', 'settlement_excluded']);
               for (const r of rows) {
                 const items = r.items || [];
                 for (const it of items) {
@@ -19641,7 +19685,7 @@ tr.suppressed td.fname{color:#64748b;}
                   const calc = calculateSettlementAmount(pt, a);
                   acc[a].totalCount++;
                   acc[a].items.push({ ptId: pt.id, siteName: pt.siteName, ptDate: pt.date, result: calc.result, amount: calc.amount, reason: calc.reason });
-                  if (['loss','vendor_self_pt','self_sales','draw_support_excluded','cancelled_notice'].includes(calc.reason)) {
+                  if (['loss','vendor_self_pt','self_sales','draw_support_excluded','cancelled_notice','settlement_excluded'].includes(calc.reason)) {
                     acc[a].excludedCount++;
                     continue;
                   }
