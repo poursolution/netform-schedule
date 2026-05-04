@@ -11952,11 +11952,14 @@ tr.suppressed td.fname{color:#64748b;}
                 const nowY = _adjYear;
                 const qStart = `${nowY}-${String((nowQ - 1) * 3 + 1).padStart(2, '0')}-01`;
                 const qEnd = `${nowY}-${String(nowQ * 3).padStart(2, '0')}-${nowQ === 1 || nowQ === 4 ? '31' : nowQ === 2 ? '30' : '30'}`;
-                // 사용자 룰: 분기 귀속 = pt.date 기준
-                // 마이페이지는 항상 grace-adjusted 현재 분기 = home 분기 → 옛 PT 자연 포함
-                // 룰: pt.date <= 분기 종료일 + requested + !completed + !superseded
+                // 사용자 룰 (2026-04-30 변경): 마이페이지 분기 화면은 strict pt.date 범위만.
+                //   이전 grace 룰 ("옛 PT 는 home 분기에 자연 포함") 제거 — 사용자: "Q1 제외된 실제로 Q2만"
+                //   분기정산 모달의 grace 룰과는 의도적으로 다름:
+                //     · 분기정산 모달 = legacy 데이터 카운트 보정용 (admin 운영 화면)
+                //     · 마이페이지   = 본인이 그 분기에 한 PT 만 (담당자 시점)
+                //   금액 계산 자체는 calculateSettlementAmount 로 일원화 — 다른 화면과 동일.
                 const _inQuarter = (s) => {
-                  if (!s.date || s.date > qEnd) return false;
+                  if (!s.date || s.date < qStart || s.date > qEnd) return false;
                   const stl = s.settlement?.[viewingUser] || {};
                   if (!(stl.requested === true || stl.manualVerified === true)) return false;
                   if (stl.completed === true) return false;
@@ -12325,6 +12328,8 @@ tr.suppressed td.fname{color:#64748b;}
                 const myWTStats = {};
                 myPtSchedules.forEach(s => {
                   if (s.selfPT) return;
+                  // 일원화: 마이페이지의 모든 통계는 현재 분기(strict pt.date 범위) 기준
+                  if (!s.date || s.date < qStart || s.date > qEnd) return;
                   const r = getMyResult(s);
                   if (!['승', '무', '패'].includes(r)) return;
                   const cat = categorizeWT(s.workType, s.siteName);
