@@ -137,7 +137,19 @@ export function calculateSettlementAmount(pt, assignee, opts = {}) {
     return { amount: 0, reason: EXCLUSION_REASONS.LOSS, result: '패' };
   }
 
-  if (result === '승') return { amount: SETTLEMENT_AMOUNTS.WIN, reason: null, result };
+  // ★ 다중 담당자 PT (한 아파트에 2명 이상 간 현장) — 승도 250K (분할 정산)
+  //   사용자 룰 변경 (2026-04-30, 이승우 대표 공지):
+  //   "지원 현장이 있는 경우 승이어도 25만원 지급. 총 75만원 나가는 게 아니라 25씩 나누라는 얘기"
+  //   1분기 포함 모든 분기 소급 적용 (calculateSettlementAmount 가 호출되는 모든 보고서/모달 자동 반영)
+  const ptTokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+  const isMultiAssigneePt = ptTokens.length > 1;
+
+  if (result === '승') {
+    if (isMultiAssigneePt) {
+      return { amount: SETTLEMENT_AMOUNTS.SUPPORT, reason: null, result };  // 250K (분할)
+    }
+    return { amount: SETTLEMENT_AMOUNTS.WIN, reason: null, result };       // 500K (단독)
+  }
   if (result === '무') return { amount: SETTLEMENT_AMOUNTS.DRAW, reason: null, result };
   if (result === '지원') return { amount: SETTLEMENT_AMOUNTS.SUPPORT, reason: null, result };
 

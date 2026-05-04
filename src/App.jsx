@@ -2934,8 +2934,10 @@ const SETTLEMENT_BADGE_STYLE = {
           const isKaptVerified = updatedSchedule.kaptVerified?.status === 'verified';
           const isVerified = isSupervisionPt || hasJandiEvidence || isKaptVerified;
 
-          // #9 calculatedAmount 저장 — 감리 80K, 그 외 500K (승 기준)
-          const calculatedAmount = isSupervisionPt ? 80000 : 500000;
+          // #9 calculatedAmount 저장 — calculateSettlementAmount 사용 (다중 담당자 분할 룰 자동 반영)
+          //   단독 승: 500K · 다중 담당자 승: 250K · 감리: 80K · 본인PT/취소공고: 0
+          const _calc = calculateSettlementAmount(updatedSchedule, targetAssignee);
+          const calculatedAmount = _calc.amount || 0;
           const nowISO = new Date().toISOString();
           const settlementPatch = {
             [`settlement/${targetAssignee}/calculatedAmount`]: calculatedAmount,
@@ -3663,14 +3665,11 @@ const SETTLEMENT_BADGE_STYLE = {
         const support = list.filter(s => getResult(s) === '지원').length;
         const completed = wins + draws + losses; // 지원은 승률 계산에서 제외
         
-        // 결과별 금액 (승: 50만, 무: 25만, 패: 0, 지원: 25만) - 본인영업/협약사자체PT는 0원
+        // 결과별 금액 — calculateSettlementAmount 사용 (다중 담당자 분할 룰 적용)
+        // 단독 승: 50만, 다중 담당자 승: 25만, 무/지원: 25만, 감리: 80K, 본인영업/selfPT/취소공고: 0원
         const totalAmount = list.reduce((sum, s) => {
-          const result = getResult(s);
-          if (!result || isSelfSales(s) || s.selfPT) return sum;
-          if (result === '승') return sum + 500000;
-          if (result === '무') return sum + 250000;
-          if (result === '지원') return sum + 250000;
-          return sum;
+          const _calc = calculateSettlementAmount(s, assignee);
+          return sum + (_calc.amount || 0);
         }, 0);
         
         return { wins, draws, losses, support, pending: list.filter(s => !getResult(s)).length, total: list.length, winRate: completed > 0 ? Math.round((wins / completed) * 100) : 0, totalAmount };
@@ -4057,7 +4056,8 @@ const SETTLEMENT_BADGE_STYLE = {
           return;
         }
         
-        // 결과별 금액 설정
+        // 결과별 금액 설정 — calculateSettlementAmount 우선 (다중 담당자 분할 룰 적용)
+        // 폴백 매핑 (호출처가 calc 못 쓰는 경우 — 단독 PT 가정)
         const resultAmount = {
           '승': 500000,
           '무': 250000,
@@ -4116,7 +4116,9 @@ const SETTLEMENT_BADGE_STYLE = {
                 if (!assigneeData[assignee]) {
                   assigneeData[assignee] = { items: [], totalAmount: 0 };
                 }
-                const amount = resultAmount[result] || 0;
+                // 다중 담당자 분할 룰 적용 — calculateSettlementAmount 사용
+                const _calc = calculateSettlementAmount(s, assignee);
+                const amount = _calc.amount || resultAmount[result] || 0;
                 const reasonData = s.resultReasons?.[assignee] || {};
                 // 경쟁사: resultReasons에 있으면 사용, 없으면 원본 s.competitor 사용
                 const competitor = reasonData.competitor || s.competitor || '';
@@ -4357,7 +4359,9 @@ const SETTLEMENT_BADGE_STYLE = {
               if (!assigneeData[assignee]) {
                 assigneeData[assignee] = { items: [], totalAmount: 0 };
               }
-              const amount = resultAmount[result] || 0;
+              // 다중 담당자 분할 룰 — calculateSettlementAmount 사용
+              const _calc = calculateSettlementAmount(s, assignee);
+              const amount = _calc.amount || resultAmount[result] || 0;
               const reasonData = s.resultReasons?.[assignee] || {};
               // 경쟁사: resultReasons에 있으면 사용, 없으면 원본 s.competitor 사용
               const competitor = reasonData.competitor || s.competitor || '';
@@ -4544,7 +4548,9 @@ const SETTLEMENT_BADGE_STYLE = {
               if (!assigneeData[assignee]) {
                 assigneeData[assignee] = { items: [], totalAmount: 0 };
               }
-              const amount = resultAmount[result] || 0;
+              // 다중 담당자 분할 룰 — calculateSettlementAmount 사용
+              const _calc = calculateSettlementAmount(s, assignee);
+              const amount = _calc.amount || resultAmount[result] || 0;
               const reasonData = s.resultReasons?.[assignee] || {};
               // 경쟁사: resultReasons에 있으면 사용, 없으면 원본 s.competitor 사용
               const competitor = reasonData.competitor || s.competitor || '';
@@ -11883,15 +11889,12 @@ tr.suppressed td.fname{color:#64748b;}
                 const ptCompleted = ptWins + ptLosses + ptDraws;
                 const ptWinRate = ptCompleted > 0 ? Math.round((ptWins / ptCompleted) * 100) : 0;
 
-                // 정산금액 계산 (전체)
+                // 정산금액 계산 (전체) — calculateSettlementAmount 사용 (다중 담당자 분할 룰 적용)
                 const mySettlementAmount = myPtSchedules.reduce((sum, s) => {
                   const r = getMyResult(s);
-                  if (!r || s.selfPT) return sum;
-                  const stl = s.settlement?.[viewingUser] || {};
-                  if (stl.selfSales) return sum;
-                  if (r === '승') return sum + 500000;
-                  if (r === '무' || r === '지원') return sum + 250000;
-                  return sum;
+                  if (!r || r === '패') return sum;
+                  const _calc = calculateSettlementAmount(s, viewingUser);
+                  return sum + (_calc.amount || 0);
                 }, 0);
 
                 // 이번 분기 예상 수당
@@ -12262,16 +12265,11 @@ tr.suppressed td.fname{color:#64748b;}
                 const VALID_TEAM_M = ['한준엽','조재연','정정훈','김성민','이필선','한인규','황윤선'];
                 const teamQuarterMoney = VALID_TEAM_M.map(name => {
                   return ptSchedules.filter(s => s.date >= qStart && s.date <= qEnd).reduce((sum, s) => {
-                    if (s.selfPT) return sum;
-                    if (s.kaptVerified?.status === 'cancelled') return sum;
                     const tokens = (s.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
                     if (!tokens.includes(name)) return sum;
-                    const r = s.results?.[name] || (tokens.length === 1 ? s.result : null);
-                    if (!r || r === '패') return sum;
-                    const stl = s.settlement?.[name] || {};
-                    if (stl.selfSales) return sum;
-                    const isSup = /감리/.test((s.workType || '') + '|' + (s.siteName || ''));
-                    return sum + (isSup ? 80000 : (r === '승' ? 500000 : 250000));
+                    // 다중 담당자 분할 룰 — calculateSettlementAmount (selfPT/취소공고/selfSales/감리 모두 처리)
+                    const _calc = calculateSettlementAmount(s, name);
+                    return sum + (_calc.amount || 0);
                   }, 0);
                 }).filter(v => v > 0);
                 const teamAvg = teamQuarterMoney.length > 0 ? Math.round(teamQuarterMoney.reduce((a, b) => a + b, 0) / teamQuarterMoney.length) : 0;
@@ -17027,13 +17025,10 @@ tr.suppressed td.fname{color:#64748b;}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       {drilldownFilter === 'settlement' && (() => {
+                        // 다중 담당자 분할 룰 — calculateSettlementAmount (감리/selfPT/취소공고 모두 처리)
                         const totalSettlement = drillPts.reduce((sum, s) => {
-                          // 감리 (workType 또는 siteName 어느 쪽이든 '감리') 는 승패 무관 건당 80,000원
-                          if (/감리/.test((s?.workType || '') + '|' + (s?.siteName || ''))) return sum + 80000;
-                          const r2 = getUserResult(s);
-                          if (r2 === '승') return sum + 500000;
-                          if (r2 === '무' || r2 === '지원') return sum + 250000;
-                          return sum;
+                          const _calc = calculateSettlementAmount(s, viewUser);
+                          return sum + (_calc.amount || 0);
                         }, 0);
                         return <span style={{ fontSize: 12, fontWeight: 800, color: '#f97316' }}>{(totalSettlement / 10000).toLocaleString()}만원</span>;
                       })()}
