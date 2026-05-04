@@ -10779,16 +10779,7 @@ tr.suppressed td.fname{color:#64748b;}
                                                 </div>
                                               )}
                                               {/* 확정일·귀속·급여 미니 라벨 — 리스트에서 제거됨 (관리자 분기정산 모달에서 조회 가능). 계산은 persist 용도로 유지. */}
-                                              {/* B — 지원자 규칙 안내: 주담 결과에 종속됨을 명시 */}
-                                              {showSupportHint && (
-                                                <div style={{ flexBasis: '100%', marginTop: '4px', fontSize: '11px', color: mainResult === '패' ? '#dc2626' : mainResult === '무' ? '#d97706' : mainResult === '승' ? '#16a34a' : '#94a3b8', padding: '4px 8px', background: '#f8fafc', borderRadius: '4px', borderLeft: `3px solid ${mainResult === '패' ? '#dc2626' : mainResult === '무' ? '#d97706' : mainResult === '승' ? '#16a34a' : '#cbd5e1'}` }}>
-                                                  ※ 지원자 정산은 주담 <b>{mainAssignee}</b> 결과에 종속됨
-                                                  {mainResult === '승' && ' — 현재 주담 [승] → 지원 250,000원 인정'}
-                                                  {mainResult === '무' && ' — 현재 주담 [무] → 지원 제외 (관리자 예외승인 필요)'}
-                                                  {mainResult === '패' && ' — 현재 주담 [패] → 지원자도 [패] 처리'}
-                                                  {!mainResult && ' — 주담 결과 입력 전 (지원 판정 대기)'}
-                                                </div>
-                                              )}
+                                              {/* 지원자 종속 안내문 — 사용자 요청으로 제거 (2026-04-30) */}
                                             </div>
                                           );
                                         });
