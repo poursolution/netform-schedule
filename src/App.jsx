@@ -1969,6 +1969,12 @@ const SETTLEMENT_BADGE_STYLE = {
       };
 
       const updatePersonalSchedule = (schedule) => {
+        // 진단 로그 — 한준엽 개인일정 업데이트 안 되는 현상 추적용 (2026-04-30)
+        if (!schedule || !schedule.id) {
+          console.error('[updatePersonalSchedule] invalid schedule', schedule);
+          alert('개인일정 업데이트 실패 — 데이터 누락 (id 없음). 콘솔 로그를 확인하세요.');
+          return;
+        }
         setPersonalSchedules(prev => {
           const exists = prev.find(s => s.id === schedule.id);
           let updated;
@@ -1984,9 +1990,18 @@ const SETTLEMENT_BADGE_STYLE = {
           return updated;
         });
         if (firebaseEnabled && database) {
-          const safeId = schedule.id.replace(/[.#$\/\[\]]/g, '_');
-          database.ref(`personal/${safeId}`).set({...schedule, id: safeId});
-          setLastSaved(new Date().toLocaleTimeString());
+          const safeId = String(schedule.id).replace(/[.#$\/\[\]]/g, '_');
+          // undefined 값 제거 — Firebase 가 undefined 만나면 전체 set 실패함 (조용한 실패의 주 원인)
+          const sanitized = {};
+          for (const [k, v] of Object.entries({ ...schedule, id: safeId })) {
+            if (v !== undefined) sanitized[k] = v;
+          }
+          database.ref(`personal/${safeId}`).set(sanitized)
+            .then(() => { setLastSaved(new Date().toLocaleTimeString()); })
+            .catch(err => {
+              console.error('[updatePersonalSchedule] Firebase write failed', err, { schedule, sanitized });
+              alert(`개인일정 저장 실패: ${err?.message || err}\n\n콘솔 로그(F12)에서 자세한 정보 확인 가능.`);
+            });
         }
       };
 
@@ -5806,7 +5821,18 @@ const SETTLEMENT_BADGE_STYLE = {
           const updated = [...personalSchedules, newItem];
           setPersonalSchedules(updated);
           if (firebaseEnabled && database) {
-            database.ref(`personal/${newItem.id}`).set(newItem);
+            // undefined 값 sanitize — Firebase set 이 undefined 만나면 전체 실패 (조용한 실패 방지)
+            const sanitized = {};
+            for (const [k, v] of Object.entries(newItem)) {
+              if (v !== undefined) sanitized[k] = v;
+            }
+            database.ref(`personal/${newItem.id}`).set(sanitized)
+              .catch(err => {
+                console.error('[handleAddSchedule:personal] Firebase write failed', err, { newItem, sanitized });
+                alert(`개인일정 저장 실패: ${err?.message || err}\n\n콘솔 로그(F12) 확인 부탁드립니다.`);
+                // 로컬 state 롤백 — Firebase 실패 시 UI 일치
+                setPersonalSchedules(prev => prev.filter(s => s.id !== newItem.id));
+              });
           } else {
             saveToLocal('personal_schedules', updated);
           }
