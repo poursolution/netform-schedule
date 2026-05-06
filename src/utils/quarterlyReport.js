@@ -1,9 +1,8 @@
 // 분기 보고서 (PT 정산 실적 중심) 데이터 집계 + Excel/PDF 생성
 //
 // [2026-04 재구성] 주말출근·공법통계 제거 → PT 실적 중심 단순화
-// 정산 기준일: resultConfirmDate (담당자가 승/무/패 클릭한 날짜)
-//   PT 진행일(ptDate)이 아니라 "결과 입력 시점"이 분기 내에 있어야 집계됨.
-//   예: 2026-01-15 PT · 2026-04-10 결과 입력 → 2026-Q2 귀속
+// 정산 대상 기준: 분기정산 화면과 동일
+//   PT 진행일이 선택 분기 안에 있고, 담당자별 requested/manualVerified 상태인 건.
 //
 // 발송 흐름: admin 확인 → 김유림(yurim@netformrnd.com) 발송
 // 발송 시점: 해당 분기 끝난 다음달 마지막 주 월요일 14:00 KST
@@ -11,12 +10,13 @@
 import * as XLSX from 'xlsx';
 import { isExceptionApproved, EXCEPTION_TYPES } from './exceptions.js';
 import { calculateSettlementAmount } from './settlement.js';
+import {
+  SETTLEMENT_ASSIGNEES,
+  isQuarterSettlementTarget,
+} from './quarterlySettlementCore.js';
+export { SETTLEMENT_ASSIGNEES } from './quarterlySettlementCore.js';
 
-// 정산 대상 담당자 (6명) — 한인규 제외 (별도 정산 처리)
 // 이 명단에 포함된 담당자의 데이터만 보고서 집계에 사용
-export const SETTLEMENT_ASSIGNEES = [
-  '황윤선', '이필선', '한준엽', '조재연', '정정훈', '김성민',
-];
 const SETTLEMENT_ASSIGNEES_SET = new Set(SETTLEMENT_ASSIGNEES);
 
 // === 분기 날짜 범위 ===
@@ -224,39 +224,22 @@ function extractConfirmDate(s, assignee) {
   return s.date || null;
 }
 
-// === 메인 집계 — PT 실적 중심 ===
-// **분기정산 모달과 동일 룰** (분기정산이 진실의 원천):
-//   - 분기 귀속: pt.date 기준 + grace(분기 마감 30일 윈도우) 룰로 옛 PT는 home 분기에 합산
-//   - 필터: settlement.{a}.requested === true OR manualVerified === true
-//   - 제외: completed / superseded / 패·loss·자체PT·본인영업·취소공고·draw_support_excluded
-//   - 금액: calculateSettlementAmount(pt, a) — exception 미적용 (분기정산 모달과 동일)
-// 두 모달이 같은 결과를 내도록 정렬됨. 이전 confirmDate(resultConfirmDate) 기반 룰 폐기.
-export function aggregateQuarterlyReport(allData, year, quarter) {
+// === 메인 집계 — PT 정산 중심 ===
+// 기준: 관리자 분기정산 화면과 동일한 대상 조건
+// 제외: 미요청 / 완료 / 중복대체 / 자체PT / 본인영업 / 취소공고
+export function aggregateQuarterlyReport(allData, year, quarter, opts = {}) {
   const range = getQuarterRange(year, quarter);  // PT 진행일 범위 (1/1~3/31) — 주말출근에 사용
   const { ptSchedules = [] } = allData;
+  const quarterKey = `${parseInt(year, 10)}-Q${parseInt(quarter, 10)}`;
 
-  // 분기정산 모달과 동일한 분기 경계 + grace home 계산
-  const yr = parseInt(year, 10);
-  const qn = parseInt(quarter, 10);
-  const qStartMonth = (qn - 1) * 3 + 1;
-  const qStart = `${yr}-${String(qStartMonth).padStart(2, '0')}-01`;
-  const qEndMonth = qn * 3;
-  const qEndDay = qEndMonth === 3 || qEndMonth === 12 ? 31 : 30;
-  const qEnd = `${yr}-${String(qEndMonth).padStart(2, '0')}-${String(qEndDay).padStart(2, '0')}`;
-  const qm = `${yr}-Q${qn}`;
-  const homeQ = (() => {
-    const d = new Date();
-    let m = d.getMonth() + 1;
-    let y = d.getFullYear();
-    if ([1, 4, 7, 10].includes(m) && d.getDate() <= 30) {
-      m -= 3;
-      if (m < 1) { m += 12; y -= 1; }
-    }
-    return `${y}-Q${Math.ceil(m / 3)}`;
-  })();
-
-  const ptVerified = [];      // 정산 집계 대상 (분기정산 모달의 winCount/drawCount/supportCount 와 일치)
-  const ptUnverified = [];    // 검토필요 — settlement.requested/manualVerified 미체크된 것 (admin 안내용)
+  const SETTLEMENT_RESULTS = new Set(['승', '무', '지원', '감리']);
+  const ptVerified = [];
+  const ptUnverified = [];
+  // 주말출근(토/일) — PT 진행일 기준 분기 귀속, 결과 무관
+  //   PT 결과(승/무/지원/패) 와 정산 fallback 체인 무관 — 단순 출근일 집계.
+  //   범위: PT 진행일(s.date)이 분기 안에 있으면 카운트.
+  //   조건: SETTLEMENT_ASSIGNEES 중, ptAssignee 토큰에 들어 있는 사람만.
+  //         취소공고 제외, 자체PT 제외 (실제 출근 의미 약함).
   const weekendItems = [];
 
   let debugStats = {
@@ -278,16 +261,9 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
 
   ptSchedules.forEach(s => {
     if (!s.date) { debugStats.skippedNoDate++; return; }
-    if (s.dateType && s.dateType !== 'confirmed') { debugStats.skippedNonConfirmed++; return; }
-    // 취소공고는 분기정산 모달 calc 단에서 cancelled_notice 로 제외되므로 여기 일찍 차단 안 함.
-    // (다만 주말출근 카운트에서는 제외하기 위해 아래 weekend 블록에서 별도 체크)
+    if (s.kaptVerified?.status === 'cancelled') { debugStats.skippedCancelled++; return; }
 
     // 분기정산 모달과 동일: pt.date 기준 분기 귀속 + grace 룰
-    const inRangeFlag = s.date >= qStart && s.date <= qEnd;
-    const isOlder = s.date < qStart;
-    const inQuarter = inRangeFlag || (isOlder && qm === homeQ);
-    if (!inQuarter) { debugStats.skippedOutOfQuarter++; return; }
-
     // 주말출근 — PT 진행일 in range, 결과/requested 무관 (취소공고는 제외)
     if (!s.selfPT && s.kaptVerified?.status !== 'cancelled' && isWeekendPt(s) && inRange(s.date, range)) {
       const wAssignees = parseAssignees(s.ptAssignee);
@@ -308,59 +284,33 @@ export function aggregateQuarterlyReport(allData, year, quarter) {
     const assignees = parseAssignees(s.ptAssignee);
     assignees.forEach(a => {
       if (!SETTLEMENT_ASSIGNEES_SET.has(a)) { debugStats.skippedNonSettlementAssignee++; return; }
-
-      const stl = s.settlement?.[a] || {};
-
-      // ★ 분기정산 모달과 동일한 필터: requested OR manualVerified
-      const isRequested = stl.requested === true || stl.manualVerified === true;
-      if (!isRequested) {
-        // 검토필요 안내용 — 결과 입력은 됐지만 정산요청 미체크된 PT
-        const r = getPtResult(s, a);
-        if (r && r !== '패') {
-          ptUnverified.push({
-            date: s.date,
-            confirmDate: s.date,
-            bidNo: s.bidNo || '',
-            siteName: s.siteName || '',
-            assignee: a,
-            result: r,
-            rawResult: r,
-            amount: 0,
-            settlementStatus: '미정산',
-            selfPT: !!s.selfPT,
-            note: s.note || '',
-            verifyReason: '정산요청 미체크 (담당자 또는 관리자 manualVerified 필요)',
-          });
-          debugStats.includedUnverified++;
-        }
-        debugStats.skippedNotRequested++;
+      if (!isQuarterSettlementTarget(s, a, quarterKey, opts)) {
+        debugStats.skippedOutOfQuarter++;
         return;
       }
-      if (stl.completed === true) { debugStats.skippedCompleted++; return; }
-      if (stl.superseded === true || stl.status === 'superseded') { debugStats.skippedSuperseded++; return; }
+      const rawResult = getPtResult(s, a);
+      const exceptionApproved = isExceptionApproved(s, a);
+      const exceptionReq = exceptionApproved ? s.exceptionRequests?.[a] : null;
+      const calc = exceptionApproved
+        ? { amount: 500000, result: '\uc2b9', reason: null }
+        : calculateSettlementAmount(s, a);
+      const effectiveResult = exceptionApproved ? '\uc2b9' : (calc.result || rawResult);
+      if (!SETTLEMENT_RESULTS.has(effectiveResult)) { debugStats.skippedNonSettlementResult++; return; }
 
-      // ★ 분기정산 모달과 동일한 금액 계산 (calculateSettlementAmount, exception 미적용)
-      const calc = calculateSettlementAmount(s, a);
-      const r = calc.result;
-      const isExcludedReason = calc.reason === 'loss' || calc.reason === 'vendor_self_pt'
-        || calc.reason === 'self_sales' || calc.reason === 'draw_support_excluded'
-        || calc.reason === 'cancelled_notice' || calc.reason === 'settlement_excluded';
-      if (isExcludedReason) { debugStats.skippedExcludedByCalc++; return; }
-      if (!r || r === '패') { debugStats.skippedNonSettlementResult++; return; }
-      // 감리는 별도 result='감리' 로 옴 — 정산 카운트에는 포함 (manualAmount 사용)
-      if (r !== '승' && r !== '무' && r !== '지원' && r !== '감리') { debugStats.skippedNonSettlementResult++; return; }
-
+      const confirmDate = extractConfirmDate(s, a);
+      const stl = s.settlement?.[a] || {};
+      const verified = isPtVerified(s, a);
       const row = {
         date: s.date,
-        confirmDate: s.date,  // 분기정산은 pt.date 기준 — confirmDate=pt.date 로 일관
+        confirmDate,
         bidNo: s.bidNo || '',
         siteName: s.siteName || '',
         assignee: a,
-        result: r,
-        rawResult: r,
-        isException: false,  // 분기정산 모달과 일관 — exception 승격 미적용
-        exceptionType: null,
-        exceptionReason: '',
+        result: exceptionApproved ? effectiveResult : calc.result,
+        rawResult,
+        isException: exceptionApproved,
+        exceptionType: exceptionReq ? exceptionReq.type : null,
+        exceptionReason: exceptionReq ? exceptionReq.reason : '',
         settlementStatus: isSettlementCompleted(s, a) ? '정산완료'
           : (isSettlementRequested(s, a) ? '정산요청' : '미정산'),
         amount: calc.amount || 0,
@@ -446,7 +396,7 @@ export function generateExcelBlob(report) {
   const wb = XLSX.utils.book_new();
   wb.Props = {
     Title: `${year}년 ${range.label} PT 실적 보고서`,
-    Subject: 'PT 정산 (확정일 기준)',
+    Subject: 'PT 정산 (분기정산 대상 기준)',
     Author: 'POUR영업운영시스템',
     CreatedDate: new Date(),
   };
@@ -464,12 +414,12 @@ export function generateExcelBlob(report) {
 
   const sheet1Data = [
     [`${year}년 ${range.label} PT 실적 보고서`],
-    [`기간: ${range.start} ~ ${range.end} (확정일 기준)`],
+    [`기간: ${range.start} ~ ${range.end} (분기정산 대상 기준)`],
     [`발송일: ${new Date().toISOString().slice(0,10)} · 수신: 김유림(yurim@netformrnd.com)`],
     [],
     ['【 분기 요약 】'],
     ['항목', '값'],
-    ['총 PT 건수 (승/무/지원)', totals.ptCount + '건'],
+    ['총 정산 대상 건수', totals.ptCount + '건'],
     ['결과 분포', `승 ${totals.ptWin} / 무 ${totals.ptDraw} / 지원 ${totals.ptSupport}`],
     ['총 정산금액', totals.settlementAmount.toLocaleString() + '원'],
     ['주말출근 (토/일)', `${totals.weekendCount}회 → 연차 ${totals.annualLeaveDays}일 (1.5배 환산)`],
@@ -485,9 +435,9 @@ export function generateExcelBlob(report) {
     ['무', 'POUR 공법 + 타공법 동시 입찰', '250,000원'],
     ['지원', '한 현장 2명 이상 — 주영업 외 지원', '250,000원 (주담 패배 시 0원)'],
     ['패', 'POUR 공법 미입찰', '0원'],
-    ['감리', '감리 공종 (공고문 요구 없음)', '건당 80,000원'],
+    ['감리', '감리 공종 (공고문 요구 없음)', '한준엽/관리자 수동 입력 금액'],
     [],
-    ['※ 집계 기준: 결과 확정일 (승/무/패 클릭 시점) — PT 진행일 아님'],
+    ['※ 집계 기준: 관리자 분기정산 화면과 동일 (정산요청/수동검증 · 완료 제외)'],
     ['※ 자체PT(selfPT) · 본인영업 건은 정산 제외 (0원 처리)'],
     ['※ 취소공고 건은 집계 제외'],
   ];
@@ -527,7 +477,7 @@ export function generateExcelBlob(report) {
 
   // ----- Sheet2: PT 상세 리스트 (담당자별 그룹) -----
   const ptData = [
-    ['PT 상세 리스트 (확정일 기준 · 승/무/지원만)'],
+    ['PT 상세 리스트 (분기정산 대상 기준 · 승/무/지원/감리)'],
     ['※ 자체PT·본인영업·취소공고 건은 제외 · 패배 건은 금액 0원이므로 제외'],
     [],
     ['【 담당자별 합계 】'],
@@ -636,7 +586,7 @@ export function buildReportHTML(report) {
       <div>
         <div style="font-size:12px;color:#64748b;font-weight:600;margin-bottom:6px;">POUR영업운영시스템</div>
         <div style="font-size:28px;font-weight:700;color:#1e293b;letter-spacing:-0.5px;">${year}년 ${range.label} PT 실적 보고서</div>
-        <div style="font-size:12px;color:#94a3b8;margin-top:4px;">확정일 기준 집계 (PT 진행일 아님)</div>
+        <div style="font-size:12px;color:#94a3b8;margin-top:4px;">분기정산 대상 기준 집계</div>
       </div>
       <div style="text-align:right;font-size:12px;color:#64748b;">
         <div>발송일 ${today}</div>
@@ -653,9 +603,9 @@ export function buildReportHTML(report) {
     <div style="font-size:11px;color:#64748b;font-weight:700;letter-spacing:0.05em;margin-bottom:10px;">① 분기 요약</div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
       <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:18px;">
-        <div style="font-size:13px;color:#64748b;font-weight:600;">총 PT 건수</div>
+        <div style="font-size:13px;color:#64748b;font-weight:600;">총 정산 대상 건수</div>
         <div style="font-size:28px;font-weight:700;color:#0F4C75;margin-top:8px;">${totals.ptCount}<span style="font-size:14px;color:#94a3b8;font-weight:500;margin-left:4px;">건</span></div>
-        <div style="font-size:11px;color:#94a3b8;margin-top:6px;">승/무/지원 — 패·미입력 제외</div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:6px;">승/무/지원/감리 — 패·미입력 제외</div>
       </div>
       <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:18px;">
         <div style="font-size:13px;color:#64748b;font-weight:600;">결과 분포</div>
@@ -749,12 +699,12 @@ export function buildReportHTML(report) {
         <tr>
           <td style="padding:10px 14px;text-align:center;"><span style="display:inline-block;padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:8px;font-size:11px;font-weight:700;">감리</span></td>
           <td style="padding:10px 14px;color:#475569;">감리 공종 (공고문 요구 없음)</td>
-          <td style="padding:10px 14px;text-align:right;color:#1e293b;font-weight:600;">건당 80,000원</td>
+          <td style="padding:10px 14px;text-align:right;color:#1e293b;font-weight:600;">수동 입력 금액</td>
         </tr>
       </tbody>
     </table>
     <div style="margin-top:10px;font-size:11px;color:#94a3b8;line-height:1.6;">
-      ※ 집계 기준: 결과 확정일 (승/무/패 클릭 시점) — PT 진행일 아님<br />
+      ※ 집계 기준: 관리자 분기정산 화면과 동일 (정산요청/수동검증 · 완료 제외)<br />
       ※ 협약사 자체PT · 본인영업 건은 정산 대상에서 제외 (0원)<br />
       ※ 취소공고 건은 집계 제외
     </div>
@@ -858,16 +808,16 @@ export function buildMailtoLink(report, recipient = 'yurim@netformrnd.com') {
     `${year}년 ${range.label} (${range.start} ~ ${range.end}) PT 실적 보고서를 송부드립니다.`,
     ``,
     `■ 분기 요약`,
-    `  · 총 PT 건수: ${totals.ptCount}건 (승 ${totals.ptWin} / 무 ${totals.ptDraw} / 지원 ${totals.ptSupport})`,
+    `  · 총 정산 대상 건수: ${totals.ptCount}건 (승 ${totals.ptWin} / 무 ${totals.ptDraw} / 지원 ${totals.ptSupport})`,
     `  · 총 정산금액: ${totals.settlementAmount.toLocaleString()}원`,
     ``,
     `■ 첨부파일 (수동 첨부 부탁드립니다)`,
     `  1. POUR_분기보고서_${year}_${range.label}.xlsx`,
     `  2. POUR_분기보고서_${year}_${range.label}.pdf`,
     ``,
-    `※ 집계 기준: 결과 확정일 (승/무/패 클릭 시점) — PT 진행일 아님`,
+    `※ 집계 기준: 관리자 분기정산 화면과 동일 (정산요청/수동검증 · 완료 제외)`,
     `※ 자체PT · 본인영업 · 취소공고 건은 정산 제외`,
-    `※ 정산 담당자: 황윤선, 이필선, 한준엽, 조재연, 정정훈, 김성민 (한인규 별도 처리)`,
+    `※ 정산 담당자: 황윤선, 이필선, 한준엽, 조재연, 정정훈, 김성민`,
     ``,
     `감사합니다.`,
     `POUR영업운영시스템`,

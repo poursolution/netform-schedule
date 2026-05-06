@@ -37,7 +37,12 @@ import {
 } from './utils/exceptions.js';
 import { sendJandiNotification } from './utils/jandi.js';
 import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculateSettlementAmount, EXCLUSION_REASONS, shouldAutoTransitionToTarget, buildAutoTransitionPatch, AUTO_TRANSITION_START, getResultConfirmDate } from './utils/settlement.js';
+import { aggregateQuarterSettlement, isQuarterSettlementTarget } from './utils/quarterlySettlementCore.js';
 import { buildVerificationOnResultClick, VERIFICATION_STATUS } from './utils/verification.js';
+
+const getQuarterSettlementOptions = (quarterKey) => ({
+  includeLegacyCarryover: quarterKey === '2026-Q1',
+});
 
 // 패배 사유 분류기 (대표 보고용 분석 리포트)
 //   resultReasons.{assignee}.reason 자유 텍스트 → 카테고리 매핑
@@ -1284,10 +1289,10 @@ const SETTLEMENT_BADGE_STYLE = {
       const gangwonConsultRegions = ['강릉', '동해', '삼척', '속초', '춘천', '태백', '평창', '강원'];
 
       // 주소에서 지역 추출하여 단가 계산 (2026-04-01 이후 신규 단가 적용)
-      // 감리 공종은 지역/날짜 무관 건당 80,000원 고정
+      // 감리 공종은 한준엽/관리자 수동 입력 전까지 0원 대기
       const getRegionPrice = (address, date, workType) => {
         if (workType && /감리/.test(String(workType))) {
-          return { region: '감리(건당)', price: 80000, zone: 0, isSupervision: true };
+          return { region: '감리(수동입력)', price: 0, zone: 0, isSupervision: true };
         }
         if (!address) return { region: '미정', price: 0, zone: 0 };
         const isNewPrice = !date || date >= '2026-04-01';
@@ -3647,19 +3652,17 @@ const SETTLEMENT_BADGE_STYLE = {
         // 담당자 이름이 포함된 일정 필터 (복수 담당자 지원: "정정훈/김성민", "정정훈,김성민" 등)
         // 분기정산 모달과 동일 룰: pt.date <= 분기 종료일 + requested(or mv) + !completed + !superseded
         // 단, 분기 필터 안 한 경우(전체)는 모든 PT 포함 (역사 조회용)
+        const qNumMapForStats = { '1분기': 1, '2분기': 2, '3분기': 3, '4분기': 4 };
+        const qKeyForStats = !skipDateFilter && qNumMapForStats[quarterFilter]
+          ? `${yearFilter}-Q${qNumMapForStats[quarterFilter]}`
+          : null;
         const list = ptSchedules.filter(s => {
           if (!s.date || !s.ptAssignee) return false;
           if (s.selfPT) return false; // 협약사자체PT 제외
           const assignees = s.ptAssignee.split(/[\/,+&]/).map(a => a.trim());
           if (!assignees.includes(assignee)) return false;
           if (skipDateFilter) return true; // 전체 조회 — 정산 필터 없음
-          // 분기 선택 시: 분기정산 모달 룰 적용
-          if (s.date > range.end) return false; // 분기 종료일 이후 PT 제외
-          const stl = s.settlement?.[assignee] || {};
-          if (!(stl.requested === true || stl.manualVerified === true)) return false;
-          if (stl.completed === true) return false;
-          if (stl.superseded === true || stl.status === 'superseded') return false;
-          return true;
+          return isQuarterSettlementTarget(s, assignee, qKeyForStats, getQuarterSettlementOptions(qKeyForStats));
         });
         
         // 개별 담당자 결과 (지원 규칙 종속: util deriveAssigneeResult 위임)
@@ -15542,57 +15545,7 @@ tr.suppressed td.fname{color:#64748b;}
             // 실시간 계산: ptSchedules state 에서 직접 perAssignee 산출 (worker 캐시 의존 X)
             //   결과 수정 즉시 모달 갱신 — 사용자: "금액 수정하면 실시간으로 반영"
             //   같은 룰: pt.date <= 분기 종료일 + requested(or mv) + !completed + !superseded
-            const _liveData = (() => {
-              const qm = monthlySettlementMonth || '';
-              const qParse = qm.match(/^(\d{4})-Q([1-4])/);
-              if (!qParse) return null;
-              const yr = parseInt(qParse[1], 10);
-              const qn = parseInt(qParse[2], 10);
-              const qStartMonth = (qn - 1) * 3 + 1;
-              const qStart = `${yr}-${String(qStartMonth).padStart(2,'0')}-01`;
-              const qEndMonth = qn * 3;
-              const qEndDay = qEndMonth === 3 || qEndMonth === 12 ? 31 : 30;
-              const qEnd = `${yr}-${String(qEndMonth).padStart(2,'0')}-${String(qEndDay).padStart(2,'0')}`;
-              const homeQ = _gracingAdjustedQuarter();
-              // 한인규 제외 (별도 정산 처리) · 조현식 제외 (정산 비대상)
-              const VALID = new Set(['한준엽','조재연','정정훈','김성민','이필선','황윤선','이승우','부산지사']);
-              const acc = {};
-              for (const pt of ptSchedules) {
-                if (!pt || pt.selfPT) continue;
-                if (!pt.date) continue;
-                // 룰: pt.date 가 분기 안에 있으면 그 분기 / 옛 PT 는 grace-current(home) 분기에만 합산
-                const inRange = pt.date >= qStart && pt.date <= qEnd;
-                const isOlder = pt.date < qStart;
-                if (!inRange && !(isOlder && qm === homeQ)) continue;
-                const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
-                for (const a of tokens) {
-                  if (!VALID.has(a)) continue;
-                  const stl = pt.settlement?.[a] || {};
-                  if (!(stl.requested === true || stl.manualVerified === true)) continue;
-                  if (stl.completed === true) continue;
-                  if (stl.superseded === true || stl.status === 'superseded') continue;
-                  if (!acc[a]) acc[a] = { assignee: a, quarterKey: qm, totalCount: 0, winCount: 0, drawCount: 0, supportCount: 0, excludedCount: 0, reviewCount: 0, estimatedAmount: 0, status: 'draft', items: [] };
-                  const calc = calculateSettlementAmount(pt, a);
-                  const r = calc.result;
-                  acc[a].totalCount++;
-                  acc[a].items.push({ ptId: pt.id, siteName: pt.siteName, ptDate: pt.date, result: r, amount: calc.amount, reason: calc.reason });
-                  if (calc.reason === 'loss' || calc.reason === 'vendor_self_pt' || calc.reason === 'self_sales' || calc.reason === 'draw_support_excluded' || calc.reason === 'cancelled_notice' || calc.reason === 'settlement_excluded') {
-                    acc[a].excludedCount++;
-                    continue;
-                  }
-                  const needsReview = pt.kaptVerified?.status === 'needs_review' && !(pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0) && stl.manualVerified !== true;
-                  if (needsReview) acc[a].reviewCount++;
-                  acc[a].estimatedAmount += (calc.amount || 0);
-                  if (r === '승') acc[a].winCount++;
-                  else if (r === '무') acc[a].drawCount++;
-                  else if (r === '지원') acc[a].supportCount++;
-                }
-              }
-              const totalEstimated = Object.values(acc).reduce((s, x) => s + x.estimatedAmount, 0);
-              const totalCount = Object.values(acc).reduce((s, x) => s + x.totalCount, 0);
-              const totalReview = Object.values(acc).reduce((s, x) => s + x.reviewCount, 0);
-              return { perAssignee: acc, totals: { quarterKey: qm, totalAssignees: Object.keys(acc).length, totalCount, totalEstimated, totalReview, aggregationBasis: 'live(ptSchedules)' } };
-            })();
+            const _liveData = aggregateQuarterSettlement(ptSchedules, monthlySettlementMonth, getQuarterSettlementOptions(monthlySettlementMonth));
             // 우선순위: live 계산 (state 변경 즉시 갱신) > Firebase 캐시
             const data = _liveData || monthlySettlementData;
             const perAssignee = data?.perAssignee || {};
@@ -16164,13 +16117,18 @@ tr.suppressed td.fname{color:#64748b;}
                         {totals.closingDate && <span><b>마감일:</b> <span style={{ color: '#dc2626', fontWeight: '700' }}>{totals.closingDate}</span> <span style={{ color: '#94a3b8', fontSize: '10px' }}>(분기 다음달 30일)</span></span>}
                         {totals.payrollMonth && <span><b>급여 반영월:</b> <span style={{ color: '#16a34a', fontWeight: '700' }}>{totals.payrollMonth}</span></span>}
                         {totals.reportedTo && <span><b>전달:</b> <span style={{ color: '#7c3aed', fontWeight: '700' }}>{totals.reportedTo}</span></span>}
-                        {totals.aggregationBasis && <span style={{ color: '#94a3b8', fontSize: '10px' }}>· 집계기준: {totals.aggregationBasis === 'resultConfirmDate' ? '실적확정일' : 'PT일자'}</span>}
+                        {totals.aggregationBasis && <span style={{ color: '#94a3b8', fontSize: '10px' }}>· 집계기준: 분기정산 대상</span>}
                       </div>
                       <div style={{ padding: '12px 14px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', marginBottom: '12px', display: 'flex', gap: '18px', flexWrap: 'wrap', fontSize: '12px' }}>
                         <span><b>담당자:</b> {totals.totalAssignees}명</span>
                         <span><b>건수:</b> {totals.totalCount}</span>
                         <span><b>예상 합계:</b> <span style={{ color: '#2563eb', fontWeight: '700' }}>{(totals.totalEstimated || 0).toLocaleString('ko-KR')}원</span></span>
                         <span><b>검토필요:</b> <span style={{ color: '#d97706' }}>{totals.totalReview}</span></span>
+                        {(totals.totalSupervisionPending || 0) > 0 && (
+                          <span title="감리 금액이 입력되지 않아 0원으로 집계된 건입니다. 한준엽 또는 관리자가 감리 금액을 입력해야 합니다.">
+                            <b>감리 금액대기:</b> <span style={{ color: '#dc2626', fontWeight: '800' }}>{totals.totalSupervisionPending}</span>
+                          </span>
+                        )}
                         <span><b>자가확인 완료:</b> <span style={{ color: '#16a34a', fontWeight: '700' }}>{confirmedCount} / {rows.length}</span></span>
                         {totalOpenReviews > 0 && (
                           <span><b>담당자 검증요청:</b> <span style={{ color: '#dc2626', fontWeight: '700' }}>{totalOpenReviews}건</span></span>
@@ -16449,11 +16407,11 @@ tr.suppressed td.fname{color:#64748b;}
                     </div>
                   </div>
 
-                  {/* 감리 공종 - 건당 80,000원 (지역 무관) */}
+                  {/* 감리 공종 - 관리자/한준엽 수동 금액 */}
                   <div style={{ border: '1px solid #c4b5fd', borderRadius: '10px', overflow: 'hidden', gridColumn: '1 / span 2' }}>
-                    <div style={{ background: '#7c3aed', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>감리 공종 - 건당 80,000원 (지역/결과 무관)</div>
+                    <div style={{ background: '#7c3aed', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>감리 공종 - 수동 금액 입력 (지역/결과 무관)</div>
                     <div style={{ padding: '12px', fontSize: '11px', color: '#475569', textAlign: 'center' }}>
-                      workType에 '감리' 포함된 PT/현설 건은 지역·승패 관계없이 1건당 80,000원으로 정산됩니다. (공고문 검증 제외)
+                      workType에 '감리' 포함된 PT/현설 건은 공고문 검증에서 제외되며, 한준엽 또는 관리자가 입력한 금액으로 정산됩니다. 금액 미입력 시 0원 대기 처리됩니다.
                     </div>
                   </div>
                 </div>
@@ -16466,7 +16424,7 @@ tr.suppressed td.fname{color:#64748b;}
                   <div>▣ 인천권 = <strong>110,000원</strong></div>
                   <div>▣ 강원권 = <strong>협의</strong> (원주 = <strong>130,000원</strong>)</div>
                   <div>▣ 대전/전라권 인접 = <strong>추후논의</strong></div>
-                  <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed #cbd5e1' }}>▣ <strong style={{ color: '#7c3aed' }}>감리 공종 = 건당 80,000원</strong> (지역·결과 무관)</div>
+                  <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed #cbd5e1' }}>▣ <strong style={{ color: '#7c3aed' }}>감리 공종 = 한준엽/관리자 수동 입력 금액</strong> (미입력 시 0원 대기)</div>
                 </div>
               </div>
             </div>
@@ -19661,7 +19619,8 @@ tr.suppressed td.fname{color:#64748b;}
               seminarSchedules,
               salesSchedules,
             };
-            const report = aggregateQuarterlyReport(allData, quarterReportYear, quarterReportQuarter);
+            const reportQKey = `${quarterReportYear}-Q${quarterReportQuarter}`;
+            const report = aggregateQuarterlyReport(allData, quarterReportYear, quarterReportQuarter, getQuarterSettlementOptions(reportQKey));
             const { totals } = report;
             const deadline = getQuarterDeadline(quarterReportYear, quarterReportQuarter);
             const today = new Date().toISOString().slice(0, 10);
@@ -19671,59 +19630,10 @@ tr.suppressed td.fname{color:#64748b;}
             // Phase 5 — 김유림 발송 가드: 모든 담당자 finalConfirmed 필수
             //   대상: 해당 분기 settlement 데이터에 totalCount > 0 인 담당자만 (활동자 기준)
             //   관리자는 '가드 우회' 체크박스로 긴급 발송 가능 (권장 X)
-            const reportQKey = `${quarterReportYear}-Q${quarterReportQuarter}`;
             // 실시간 계산: ptSchedules state 에서 직접 산출 (Firebase 캐시 의존 X)
             //   사용자 룰: pt.date <= 분기 종료일 + requested(or mv) + !completed + !superseded + VALID_ASSIGNEES
             //   결과 변경 즉시 분기보고서 갱신
-            const qSettlement = (() => {
-              const qParse = reportQKey.match(/^(\d{4})-Q([1-4])/);
-              if (!qParse) return null;
-              const yr = parseInt(qParse[1], 10);
-              const qn = parseInt(qParse[2], 10);
-              const qStartMonth = (qn - 1) * 3 + 1;
-              const qStart = `${yr}-${String(qStartMonth).padStart(2,'0')}-01`;
-              const qEndMonth = qn * 3;
-              const qEndDay = qEndMonth === 3 || qEndMonth === 12 ? 31 : 30;
-              const qEnd = `${yr}-${String(qEndMonth).padStart(2,'0')}-${String(qEndDay).padStart(2,'0')}`;
-              const homeQ = _gracingAdjustedQuarter();
-              // 한인규 제외 (별도 정산 처리) — 김유림 분기보고서에도 미반영
-              const VALID = new Set(['한준엽','조재연','정정훈','김성민','이필선','황윤선','이승우','부산지사']);
-              const acc = {};
-              for (const pt of ptSchedules) {
-                if (!pt || pt.selfPT) continue;
-                if (!pt.date) continue;
-                // 룰: pt.date 가 분기 안 → 그 분기 / 옛 PT 는 grace-current(home) 분기에만
-                const inRange = pt.date >= qStart && pt.date <= qEnd;
-                const isOlder = pt.date < qStart;
-                if (!inRange && !(isOlder && reportQKey === homeQ)) continue;
-                const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
-                for (const a of tokens) {
-                  if (!VALID.has(a)) continue;
-                  const stl = pt.settlement?.[a] || {};
-                  if (!(stl.requested === true || stl.manualVerified === true)) continue;
-                  if (stl.completed === true) continue;
-                  if (stl.superseded === true || stl.status === 'superseded') continue;
-                  if (!acc[a]) acc[a] = { assignee: a, quarterKey: reportQKey, totalCount: 0, winCount: 0, drawCount: 0, supportCount: 0, excludedCount: 0, reviewCount: 0, estimatedAmount: 0, items: [] };
-                  const calc = calculateSettlementAmount(pt, a);
-                  acc[a].totalCount++;
-                  acc[a].items.push({ ptId: pt.id, siteName: pt.siteName, ptDate: pt.date, result: calc.result, amount: calc.amount, reason: calc.reason });
-                  if (['loss','vendor_self_pt','self_sales','draw_support_excluded','cancelled_notice','settlement_excluded'].includes(calc.reason)) {
-                    acc[a].excludedCount++;
-                    continue;
-                  }
-                  const needsReview = pt.kaptVerified?.status === 'needs_review' && !(pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0) && stl.manualVerified !== true;
-                  if (needsReview) acc[a].reviewCount++;
-                  acc[a].estimatedAmount += (calc.amount || 0);
-                  if (calc.result === '승') acc[a].winCount++;
-                  else if (calc.result === '무') acc[a].drawCount++;
-                  else if (calc.result === '지원') acc[a].supportCount++;
-                }
-              }
-              const totalEstimated = Object.values(acc).reduce((s, x) => s + x.estimatedAmount, 0);
-              const totalCount = Object.values(acc).reduce((s, x) => s + x.totalCount, 0);
-              const totalReview = Object.values(acc).reduce((s, x) => s + x.reviewCount, 0);
-              return { perAssignee: acc, totals: { quarterKey: reportQKey, totalAssignees: Object.keys(acc).length, totalCount, totalEstimated, totalReview, aggregationBasis: 'live(ptSchedules)' } };
-            })();
+            const qSettlement = aggregateQuarterSettlement(ptSchedules, reportQKey, getQuarterSettlementOptions(reportQKey));
             const qPerAssignee = qSettlement?.perAssignee || {};
             const activeAssignees = Object.values(qPerAssignee).filter(a => (a?.totalCount || 0) > 0).map(a => a.assignee);
             const confMap = quarterConfirmations[reportQKey] || {};
@@ -19767,7 +19677,8 @@ tr.suppressed td.fname{color:#64748b;}
                   const wd = (a.winCount || 0) + (a.drawCount || 0);
                   const sup = a.supportCount || 0;
                   const supLbl = sup > 0 ? ` + 지원${sup}` : '';
-                  return `  ${a.assignee}: ${wd}건${supLbl} · ${(a.estimatedAmount || 0).toLocaleString('ko-KR')}원`;
+                  const supervisionLbl = a.supervisionPendingCount > 0 ? ` · 감리입력대기 ${a.supervisionPendingCount}` : '';
+                  return `  ${a.assignee}: ${wd}건${supLbl} · ${(a.estimatedAmount || 0).toLocaleString('ko-KR')}원${supervisionLbl}`;
                 })
                 .join('\n');
               // 분기 마감 상태 — 김유림 보고서에 마감완료 명시 (확정 데이터임을 알림)
@@ -19795,6 +19706,7 @@ tr.suppressed td.fname{color:#64748b;}
                         '',
                         '담당자별:',
                         perList,
+                        qSettlement?.totals?.totalSupervisionPending > 0 ? `\n⚠ 감리 금액 입력대기 ${qSettlement.totals.totalSupervisionPending}건은 0원으로 집계됨` : '',
                         '',
                         '👉 첨부파일은 시스템에서 다운로드된 Excel + PDF 를 별도 잔디 메시지로 첨부해주세요.',
                         `발송자: ${currentUser?.name || 'admin'} · ${new Date().toISOString().slice(0,16).replace('T',' ')}`,
@@ -19908,7 +19820,12 @@ tr.suppressed td.fname{color:#64748b;}
                     {/* 분기 메타 배너 — 집계기준·마감일·급여반영월 + 분기 마감 상태 */}
                     {qSettlement?.totals && (
                       <div style={{ marginTop: 10, padding: '10px 12px', background: 'linear-gradient(135deg, #eff6ff 0%, #f0f9ff 100%)', border: '1px solid #bfdbfe', borderRadius: 6, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11, color: '#1e40af' }}>
-                        <span><b>집계기준:</b> {qSettlement.totals.aggregationBasis === 'resultConfirmDate' ? '실적확정일 (finalConfirmedAt > requestedAt > PT일)' : 'PT일자'}</span>
+                        <span><b>집계기준:</b> 분기정산 대상</span>
+                        {(qSettlement.totals.totalSupervisionPending || 0) > 0 && (
+                          <span title="감리 금액이 입력되지 않아 0원으로 집계된 건입니다. 한준엽 또는 관리자가 감리 금액을 입력해야 합니다.">
+                            <b>감리 금액대기:</b> <span style={{ color: '#dc2626', fontWeight: 800 }}>{qSettlement.totals.totalSupervisionPending}</span>
+                          </span>
+                        )}
                         {qSettlement.totals.closingDate && <span><b>마감일:</b> <span style={{ color: '#dc2626', fontWeight: 700 }}>{qSettlement.totals.closingDate}</span></span>}
                         {qSettlement.totals.payrollMonth && <span><b>급여 반영월:</b> <span style={{ color: '#16a34a', fontWeight: 700 }}>{qSettlement.totals.payrollMonth}</span></span>}
                         {/* 분기 마감 상태 — 김유림 보고서에 그대로 반영됨 */}

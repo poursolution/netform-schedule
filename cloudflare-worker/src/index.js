@@ -382,6 +382,7 @@ Rules:
           monthKey: body.monthKey,
           force: !!body.force,
           overwrite: !!body.overwrite,
+          notifySupervisionOwner: body.notifySupervisionOwner !== false,
         });
         // 중복 가드 응답은 409 로 (admin 모달이 덮어쓰기 프롬프트 띄움)
         const httpStatus = result.status === 'exists' ? 409 : 200;
@@ -1961,14 +1962,15 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
   const allPts = ptData ? Object.entries(ptData).map(([id, pt]) => ({ id, ...pt })) : [];
 
   // 2) 담당자별 집계 — 사용자 정의 룰
-  //    분기 정산 대상 = pt.date <= 분기 종료일 + settlement.{a}.requested=true (또는 mv) + completed != true
-  //    옛날 PT라도 정산요청되면 해당 분기에 합산, 정산완료되면 다음 분기에 자동 제외
+  //    분기 정산 대상 = pt.date 가 해당 분기 안 + settlement.{a}.requested=true (또는 manualVerified) + completed != true
+  //    2026-Q1 만 레거시 이월분 포함, 한인규는 정산 대상에서 제외
   const VALID_ASSIGNEES = new Set([
-    '한준엽', '조재연', '정정훈', '김성민', '이필선', '한인규', '황윤선',
-    '이승우', '부산지사',
+    '한준엽', '조재연', '정정훈', '김성민', '이필선', '황윤선',
   ]);
   // 분기 종료일 계산
   const _qParsed = parseQuarterKey(quarterKey);
+  const _qStartMonth = (_qParsed.quarter - 1) * 3 + 1;
+  const _qStartDate = `${_qParsed.year}-${String(_qStartMonth).padStart(2, '0')}-01`;
   const _qEndMonth = _qParsed.quarter * 3;
   const _qEndDay = _qEndMonth === 3 || _qEndMonth === 12 ? 31 : 30;
   const _qEndDate = `${_qParsed.year}-${String(_qEndMonth).padStart(2, '0')}-${String(_qEndDay).padStart(2, '0')}`;
@@ -1976,10 +1978,13 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
   for (const pt of allPts) {
     if (pt.selfPT) continue; // 협약사 자체PT 통째 제외
     const ptDate = pt.date || '';
-    if (!ptDate || ptDate > _qEndDate) continue; // 분기 종료일 이후 PT 는 제외 (다음 분기 대상)
+    if (!ptDate || ptDate > _qEndDate) continue;
     const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
     for (const assignee of tokens) {
       if (!VALID_ASSIGNEES.has(assignee)) continue;
+      const inQuarter = ptDate >= _qStartDate && ptDate <= _qEndDate;
+      const includeLegacyCarryover = quarterKey === '2026-Q1' && ptDate < _qStartDate;
+      if (!inQuarter && !includeLegacyCarryover) continue;
       const stl = pt.settlement?.[assignee] || {};
       // 정산요청 OR 수동검증 안 됐으면 분기 정산 대상 아님 (담당자가 명시적으로 정산요청 누른 것만)
       if (!(stl.requested === true || stl.manualVerified === true)) continue;
@@ -1989,11 +1994,17 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
       if (stl.superseded === true || stl.status === 'superseded') continue;
       const confirmDate = ptDate;
       const assigneeQK = quarterKey;
+      const calc = calcAmountWorker(pt, assignee);
+      if (!calc.result) continue;
+      if (calc.reason === 'loss' || calc.reason === 'vendor_self_pt' || calc.reason === 'self_sales' || calc.reason === 'draw_support_excluded' || calc.reason === 'cancelled_notice') {
+        continue;
+      }
 
       if (!perAssignee[assignee]) {
         perAssignee[assignee] = {
           quarterKey, assignee,
           totalCount: 0, winCount: 0, drawCount: 0, supportCount: 0, excludedCount: 0, reviewCount: 0,
+          supervisionPendingCount: 0,
           estimatedAmount: 0,
           status: 'draft',
           closingDate: closingDateStr, payrollMonth, reportedTo: '김유림',
@@ -2004,16 +2015,14 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
         };
       }
       const agg = perAssignee[assignee];
-      const calc = calcAmountWorker(pt, assignee);
       agg.totalCount++;
       agg.items.push({
         ptId: pt.id, siteName: pt.siteName, ptDate: pt.date,
         resultConfirmDate: confirmDate,
         result: calc.result, amount: calc.amount, reason: calc.reason,
       });
-      if (calc.reason === 'loss' || calc.reason === 'vendor_self_pt' || calc.reason === 'self_sales' || calc.reason === 'draw_support_excluded' || calc.reason === 'cancelled_notice') {
-        agg.excludedCount++;
-        continue;
+      if (calc.reason === 'supervision_pending_input') {
+        agg.supervisionPendingCount++;
       }
       // 검토필요: K-APT needs_review 이고 증빙 없음
       const needsReview = pt.kaptVerified?.status === 'needs_review'
@@ -2028,10 +2037,10 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
 
   // 3) 전체 summary
   const totals = {
-    quarterKey, totalAssignees: 0, totalCount: 0, totalEstimated: 0, totalReview: 0,
+    quarterKey, totalAssignees: 0, totalCount: 0, totalEstimated: 0, totalReview: 0, totalSupervisionPending: 0,
     closingDate: closingDateStr, payrollMonth, reportedTo: '김유림',
     generatedAt: now.toISOString(), generatedBy: opts.force ? 'manual' : 'cron',
-    aggregationBasis: 'resultConfirmDate',
+    aggregationBasis: 'quarterlySettlementTarget',
   };
   for (const agg of Object.values(perAssignee)) {
     if (agg.totalCount === 0) continue;
@@ -2039,6 +2048,7 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
     totals.totalCount += agg.totalCount;
     totals.totalEstimated += agg.estimatedAmount;
     totals.totalReview += agg.reviewCount;
+    totals.totalSupervisionPending += agg.supervisionPendingCount || 0;
   }
 
   // 5) Firebase 저장 (quarterlySettlements/{quarterKey})
@@ -2058,7 +2068,8 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
       const wd = (a.winCount || 0) + (a.drawCount || 0);
       const sup = a.supportCount || 0;
       const supLbl = sup > 0 ? ` + 지원${sup}` : '';
-      return `${a.assignee}: ${wd}건${supLbl} · 예상 ${(a.estimatedAmount || 0).toLocaleString('ko-KR')}원 (검토 ${a.reviewCount})`;
+      const supPendingLbl = a.supervisionPendingCount > 0 ? ` · 감리입력대기 ${a.supervisionPendingCount}` : '';
+      return `${a.assignee}: ${wd}건${supLbl} · 예상 ${(a.estimatedAmount || 0).toLocaleString('ko-KR')}원 (검토 ${a.reviewCount}${supPendingLbl})`;
     })
     .slice(0, 15);
   // 관리자 채널 알림 — opts.notifyAdmin === true 일 때만 발송
@@ -2071,6 +2082,7 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
       title: `총 ${totals.totalAssignees}명 · ${totals.totalCount}건 · 예상 ${(totals.totalEstimated || 0).toLocaleString('ko-KR')}원`,
       description: [
         `검토필요 합계: ${totals.totalReview}건`,
+        totals.totalSupervisionPending > 0 ? `감리 금액 입력대기: ${totals.totalSupervisionPending}건 (한준엽 알림)` : '',
         '',
         '담당자별:',
         ...perList,
@@ -2104,6 +2116,7 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
             supportCount > 0 ? `지원: ${supportCount}건 (별도)` : '',
             `예상 정산금액: ${amountStr}`,
             agg.reviewCount > 0 ? `⚠ 검토필요: ${agg.reviewCount}건` : '',
+            agg.supervisionPendingCount > 0 ? `⚠ 감리 금액 입력대기: ${agg.supervisionPendingCount}건 (0원 집계)` : '',
             '',
             '👉 시스템에서 정산요청 상태를 확인해주세요.',
           ].filter(Boolean).join('\n'),
@@ -2116,7 +2129,37 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
     userNotifyResults.suppressedByDefault = true;
   }
 
-  return { status: 'ok', quarterKey, totals, assigneesWritten: Object.keys(perAssignee).length, userNotify: userNotifyResults };
+  const supervisionNotify = { sent: 0, skipped: 0, failed: 0 };
+  if ((totals.totalSupervisionPending || 0) > 0 && opts.notifySupervisionOwner !== false) {
+    const hjyUrl = await fetchUserJandiWebhook(env, '한준엽');
+    if (!hjyUrl) {
+      supervisionNotify.skipped++;
+    } else {
+      const pendingLines = Object.values(perAssignee)
+        .flatMap(agg => (agg.items || [])
+          .filter(item => item.reason === 'supervision_pending_input')
+          .map(item => `- ${agg.assignee}: ${item.siteName || '-'} (${item.ptDate || '-'})`))
+        .slice(0, 20);
+      const r = await notifyJandiToUrl(hjyUrl, {
+        body: `⚠ [${quarterKey} 감리 정산금액 입력 필요]`,
+        connectColor: '#f59e0b',
+        connectInfo: [{
+          title: `감리 금액 미입력 ${totals.totalSupervisionPending}건`,
+          description: [
+            'manualAmount 가 없어 0원으로 집계된 감리 건이 있습니다.',
+            '한준엽 또는 관리자가 감리 금액을 입력해야 정산금액에 반영됩니다.',
+            '',
+            ...pendingLines,
+            totals.totalSupervisionPending > pendingLines.length ? `... 외 ${totals.totalSupervisionPending - pendingLines.length}건` : '',
+          ].filter(Boolean).join('\n'),
+        }],
+      });
+      if (r.ok) supervisionNotify.sent++;
+      else supervisionNotify.failed++;
+    }
+  }
+
+  return { status: 'ok', quarterKey, totals, assigneesWritten: Object.keys(perAssignee).length, userNotify: userNotifyResults, supervisionNotify };
 }
 
 // =================================================================
