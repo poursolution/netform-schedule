@@ -16479,13 +16479,6 @@ tr.suppressed td.fname{color:#64748b;}
                     </div>
                   </div>
 
-                  {/* 감리 공종 - 관리자/한준엽 수동 금액 */}
-                  <div style={{ border: '1px solid #c4b5fd', borderRadius: '10px', overflow: 'hidden', gridColumn: '1 / span 2' }}>
-                    <div style={{ background: '#7c3aed', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>감리 공종 - 수동 금액 입력 (지역/결과 무관)</div>
-                    <div style={{ padding: '12px', fontSize: '11px', color: '#475569', textAlign: 'center' }}>
-                      workType에 '감리' 포함된 PT/현설 건은 공고문 검증에서 제외되며, 한준엽 또는 관리자가 입력한 금액으로 정산됩니다. 금액 미입력 시 0원 대기 처리됩니다.
-                    </div>
-                  </div>
                 </div>
 
                 <div style={{ marginTop: '16px', padding: '12px', background: '#f8fafc', borderRadius: '8px', fontSize: '12px', color: '#475569' }}>
@@ -16496,7 +16489,6 @@ tr.suppressed td.fname{color:#64748b;}
                   <div>▣ 인천권 = <strong>110,000원</strong></div>
                   <div>▣ 강원권 = <strong>협의</strong> (원주 = <strong>130,000원</strong>)</div>
                   <div>▣ 대전/전라권 인접 = <strong>추후논의</strong></div>
-                  <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed #cbd5e1' }}>▣ <strong style={{ color: '#7c3aed' }}>감리 공종 = 한준엽/관리자 수동 입력 금액</strong> (미입력 시 0원 대기)</div>
                 </div>
               </div>
             </div>
