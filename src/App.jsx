@@ -16471,19 +16471,17 @@ tr.suppressed td.fname{color:#64748b;}
                 </div>
 
                 <div style={{ marginTop: '16px', marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', background: '#0f766e', color: 'white', fontSize: '13px', fontWeight: '700' }}>단가표 2 - 박시현 / 이헌정</div>
-                <div style={{ border: '1px solid #cbd5e1', borderRadius: '10px', overflow: 'hidden', fontSize: '12px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.1fr 0.8fr 2fr', borderBottom: '1px solid #e2e8f0', background: '#e2e8f0', fontWeight: '700', color: '#334155' }}>
-                    <div style={{ padding: '8px 10px' }}>구분</div>
-                    <div style={{ padding: '8px 10px' }}>금액</div>
-                    <div style={{ padding: '8px 10px' }}>지역</div>
-                  </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', fontSize: '12px' }}>
                   {briefingCustomRegionPriceRules.map(rule => (
-                    <div key={rule.region} style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.1fr 0.8fr 2fr', borderBottom: '1px solid #e2e8f0' }}>
-                      <div style={{ padding: '9px 10px', fontWeight: '700', color: '#1e293b' }}>{rule.region}</div>
-                      <div style={{ padding: '9px 10px', color: rule.price > 0 ? '#1d4ed8' : '#dc2626', fontWeight: '700' }}>
-                        {rule.price > 0 ? `${rule.price.toLocaleString()}원` : '협의'}
+                    <div key={rule.region} style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                      <div style={{ background: rule.price > 0 ? '#0f766e' : '#94a3b8', color: 'white', padding: '10px', textAlign: 'center', fontWeight: '700' }}>
+                        {rule.region} - {rule.price > 0 ? `${rule.price.toLocaleString()}원` : '협의'}
                       </div>
-                      <div style={{ padding: '9px 10px', color: '#475569', lineHeight: 1.5 }}>{rule.keywords.join(', ')}</div>
+                      <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px', fontSize: '11px' }}>
+                        {rule.keywords.map(r => (
+                          <span key={r} style={{ padding: '4px', background: '#f1f5f9', borderRadius: '4px', textAlign: 'center' }}>{r}</span>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>
