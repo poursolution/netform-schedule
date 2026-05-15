@@ -16366,28 +16366,7 @@ tr.suppressed td.fname{color:#64748b;}
                 </div>
                 <div style={{ marginBottom: '16px', fontSize: '12px', color: '#dc2626', fontWeight: '600' }}>※ 2026년 4월 1일부터 신규 단가 적용</div>
 
-                <div style={{ marginBottom: '16px', border: '1px solid #cbd5e1', borderRadius: '10px', overflow: 'hidden', fontSize: '12px' }}>
-                  <div style={{ background: '#0f172a', color: 'white', padding: '10px 12px', fontWeight: '700' }}>담당자별 적용 단가표</div>
-                  <div style={{ padding: '12px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                    <div style={{ marginBottom: '6px' }}><strong>김현조</strong>: 기존 지역별 단가표 그대로 적용</div>
-                    <div><strong>박시현 / 이헌정</strong>: 아래 별도 단가표 적용</div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.1fr 0.8fr 2fr', borderBottom: '1px solid #e2e8f0', background: '#e2e8f0', fontWeight: '700', color: '#334155' }}>
-                    <div style={{ padding: '8px 10px' }}>구분</div>
-                    <div style={{ padding: '8px 10px' }}>금액</div>
-                    <div style={{ padding: '8px 10px' }}>지역</div>
-                  </div>
-                  {briefingCustomRegionPriceRules.map(rule => (
-                    <div key={rule.region} style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.1fr 0.8fr 2fr', borderBottom: '1px solid #e2e8f0' }}>
-                      <div style={{ padding: '9px 10px', fontWeight: '700', color: '#1e293b' }}>{rule.region}</div>
-                      <div style={{ padding: '9px 10px', color: rule.price > 0 ? '#1d4ed8' : '#dc2626', fontWeight: '700' }}>
-                        {rule.price > 0 ? `${rule.price.toLocaleString()}원` : '협의'}
-                      </div>
-                      <div style={{ padding: '9px 10px', color: '#475569', lineHeight: 1.5 }}>{rule.keywords.join(', ')}</div>
-                    </div>
-                  ))}
-                </div>
-
+                <div style={{ marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', background: '#0f172a', color: 'white', fontSize: '13px', fontWeight: '700' }}>단가표 1 - 김현조</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', fontSize: '12px' }}>
                   {/* 서울권 */}
                   <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
@@ -16489,6 +16468,24 @@ tr.suppressed td.fname{color:#64748b;}
                   <div>▣ 인천권 = <strong>110,000원</strong></div>
                   <div>▣ 강원권 = <strong>협의</strong> (원주 = <strong>130,000원</strong>)</div>
                   <div>▣ 대전/전라권 인접 = <strong>추후논의</strong></div>
+                </div>
+
+                <div style={{ marginTop: '16px', marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', background: '#0f766e', color: 'white', fontSize: '13px', fontWeight: '700' }}>단가표 2 - 박시현 / 이헌정</div>
+                <div style={{ border: '1px solid #cbd5e1', borderRadius: '10px', overflow: 'hidden', fontSize: '12px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.1fr 0.8fr 2fr', borderBottom: '1px solid #e2e8f0', background: '#e2e8f0', fontWeight: '700', color: '#334155' }}>
+                    <div style={{ padding: '8px 10px' }}>구분</div>
+                    <div style={{ padding: '8px 10px' }}>금액</div>
+                    <div style={{ padding: '8px 10px' }}>지역</div>
+                  </div>
+                  {briefingCustomRegionPriceRules.map(rule => (
+                    <div key={rule.region} style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.1fr 0.8fr 2fr', borderBottom: '1px solid #e2e8f0' }}>
+                      <div style={{ padding: '9px 10px', fontWeight: '700', color: '#1e293b' }}>{rule.region}</div>
+                      <div style={{ padding: '9px 10px', color: rule.price > 0 ? '#1d4ed8' : '#dc2626', fontWeight: '700' }}>
+                        {rule.price > 0 ? `${rule.price.toLocaleString()}원` : '협의'}
+                      </div>
+                      <div style={{ padding: '9px 10px', color: '#475569', lineHeight: 1.5 }}>{rule.keywords.join(', ')}</div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
