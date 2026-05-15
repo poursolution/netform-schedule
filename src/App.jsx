@@ -1350,6 +1350,15 @@ const SETTLEMENT_BADGE_STYLE = {
           : base;
       };
 
+      const downloadCanvasImage = (canvas, fileName, format = 'png') => {
+        const link = document.createElement('a');
+        const mimeType = format === 'jpg' ? 'image/jpeg' : 'image/png';
+        const extension = format === 'jpg' ? 'jpg' : 'png';
+        link.download = `${fileName}.${extension}`;
+        link.href = canvas.toDataURL(mimeType, 0.95);
+        link.click();
+      };
+
       const assigneeList = ['이승우', '황윤선', '한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '조현식'];
       const briefingAssigneeList = [...briefingSettlementAssignees, ...assigneeList];
       const statusList = ['확정', '일정조율중', '월예정', '미정'];
@@ -13755,12 +13764,16 @@ tr.suppressed td.fname{color:#64748b;}
                     const element = document.getElementById('settle-list');
                     if (!element) return;
                     html2canvas(element, { backgroundColor: '#ffffff', scale: 2 }).then(canvas => {
-                      const link = document.createElement('a');
-                      link.download = `현설정산_${settleYear}년${settleMonth > 0 ? settleMonth + '월' : ''}_${settleAssignee === 'all' ? '전체' : settleAssignee}.png`;
-                      link.href = canvas.toDataURL('image/png');
-                      link.click();
+                      downloadCanvasImage(canvas, `현설정산_${settleYear}년${settleMonth > 0 ? settleMonth + '월' : ''}_${settleAssignee === 'all' ? '전체' : settleAssignee}`, 'png');
                     });
                   }} style={{ padding: '6px 10px', borderRadius: '6px', border: 'none', background: '#2563eb', color: 'white', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>캡처</button>
+                  <button onClick={() => {
+                    const element = document.getElementById('settle-list');
+                    if (!element) return;
+                    html2canvas(element, { backgroundColor: '#ffffff', scale: 2 }).then(canvas => {
+                      downloadCanvasImage(canvas, `현설정산_${settleYear}년${settleMonth > 0 ? settleMonth + '월' : ''}_${settleAssignee === 'all' ? '전체' : settleAssignee}`, 'jpg');
+                    });
+                  }} style={{ padding: '6px 10px', borderRadius: '6px', border: 'none', background: '#0f766e', color: 'white', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>JPG 저장</button>
                 </div>
               </div>
               
@@ -14744,12 +14757,9 @@ tr.suppressed td.fname{color:#64748b;}
                     const element = document.getElementById('briefing-export-card');
                     if (!element) return;
                     html2canvas(element, { backgroundColor: '#ffffff', scale: 2 }).then(canvas => {
-                      const link = document.createElement('a');
-                      link.download = `현설_${briefingExportData.siteName || '일정'}_${briefingExportData.date || 'unknown'}.png`;
-                      link.href = canvas.toDataURL('image/png');
-                      link.click();
+                      downloadCanvasImage(canvas, `현설_${briefingExportData.siteName || '일정'}_${briefingExportData.date || 'unknown'}`, 'jpg');
                     });
-                  }} style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>저장</button>
+                  }} style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>JPG 저장</button>
                 </div>
                 
                 {/* 내보내기용 카드 */}
