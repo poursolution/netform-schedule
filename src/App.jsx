@@ -1204,6 +1204,7 @@ const SETTLEMENT_BADGE_STYLE = {
       const [settleMonth, setSettleMonth] = useState(new Date().getMonth() + 1);
       const [settleAssignee, setSettleAssignee] = useState('all');
       const [showPriceTable, setShowPriceTable] = useState(false);
+      const [priceTableTab, setPriceTableTab] = useState('table1');
       const [statsMonth, setStatsMonth] = useState('all'); // 통계용 월 선택
       const [statsAssignee, setStatsAssignee] = useState('all'); // 통계용 담당자 선택
 
@@ -13759,7 +13760,7 @@ tr.suppressed td.fname{color:#64748b;}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
                 <h2 style={{ fontSize: isMobile ? '16px' : '20px', fontWeight: '700', color: '#1e293b', margin: 0 }}>현설 정산</h2>
                 <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button onClick={() => setShowPriceTable(true)} style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>단가표</button>
+                  <button onClick={() => { setPriceTableTab('table1'); setShowPriceTable(true); }} style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>단가표</button>
                   <button onClick={() => {
                     const element = document.getElementById('settle-list');
                     if (!element) return;
@@ -16366,6 +16367,13 @@ tr.suppressed td.fname{color:#64748b;}
                 </div>
                 <div style={{ marginBottom: '16px', fontSize: '12px', color: '#dc2626', fontWeight: '600' }}>※ 2026년 4월 1일부터 신규 단가 적용</div>
 
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                  <button onClick={() => setPriceTableTab('table1')} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: priceTableTab === 'table1' ? '1px solid #0f172a' : '1px solid #e2e8f0', background: priceTableTab === 'table1' ? '#0f172a' : '#f8fafc', color: priceTableTab === 'table1' ? 'white' : '#475569', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>단가표 1 - 김현조</button>
+                  <button onClick={() => setPriceTableTab('table2')} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: priceTableTab === 'table2' ? '1px solid #0f766e' : '1px solid #e2e8f0', background: priceTableTab === 'table2' ? '#0f766e' : '#f8fafc', color: priceTableTab === 'table2' ? 'white' : '#475569', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>단가표 2 - 박시현 / 이헌정</button>
+                </div>
+
+                {priceTableTab === 'table1' && (
+                <>
                 <div style={{ marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', background: '#0f172a', color: 'white', fontSize: '13px', fontWeight: '700' }}>단가표 1 - 김현조</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', fontSize: '12px' }}>
                   {/* 서울권 */}
@@ -16469,7 +16477,11 @@ tr.suppressed td.fname{color:#64748b;}
                   <div>▣ 강원권 = <strong>협의</strong> (원주 = <strong>130,000원</strong>)</div>
                   <div>▣ 대전/전라권 인접 = <strong>추후논의</strong></div>
                 </div>
+                </>
+                )}
 
+                {priceTableTab === 'table2' && (
+                <>
                 <div style={{ marginTop: '16px', marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', background: '#0f766e', color: 'white', fontSize: '13px', fontWeight: '700' }}>단가표 2 - 박시현 / 이헌정</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', fontSize: '12px' }}>
                   {briefingCustomRegionPriceRules.map(rule => (
@@ -16485,6 +16497,8 @@ tr.suppressed td.fname{color:#64748b;}
                     </div>
                   ))}
                 </div>
+                </>
+                )}
               </div>
             </div>
           )}
