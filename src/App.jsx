@@ -1321,8 +1321,37 @@ const SETTLEMENT_BADGE_STYLE = {
         return { region: '추후논의', price: 0, zone: 0 };
       };
 
+      const briefingSettlementAssignees = ['김현조', '박시현', '이헌정'];
+      const briefingCustomPriceAssignees = ['박시현', '이헌정'];
+      const briefingCustomRegionPriceRules = [
+        { region: '서울', price: 90000, keywords: ['서울', '강남구', '서초구', '송파구', '강동구', '강북구', '도봉구', '노원구', '강서구', '양천구', '동대문구', '중랑구', '광진구', '성동구', '마포구', '용산구', '종로구', '영등포구', '동작구', '관악구', '구로구', '금천구', '은평구', '서대문구'] },
+        { region: '인천', price: 110000, keywords: ['인천', '계양', '남동구', '미추홀', '부평', '서구', '연수'] },
+        { region: '경기 1분류', price: 70000, keywords: ['수원', '의왕', '화성', '용인', '군포', '안성', '오산', '평택'] },
+        { region: '경기 2분류', price: 80000, keywords: ['광주', '성남', '이천', '시흥', '광명', '안양', '안산', '부천', '여주'] },
+        { region: '경기 3분류', price: 110000, keywords: ['가평', '양평', '고양', '파주', '김포', '의정부', '포천', '동두천', '양주', '남양주', '하남'] },
+        { region: '충청권(천안/음성/아산)', price: 80000, keywords: ['천안', '음성', '아산'] },
+        { region: '충청권', price: 120000, keywords: ['충청', '충북', '충남', '공주', '계룡', '당진', '서산', '예산', '홍성', '증평', '청주', '충주', '제천', '보령', '논산'] },
+        { region: '강원권(협의)', price: 0, keywords: ['강원', '원주', '강릉', '동해', '철원', '속초', '춘천', '태백', '평창'] },
+        { region: '대전/전라권(협의)', price: 0, keywords: ['대전', '전라', '전북', '전남', '광주광역시', '전주', '군산', '익산', '목포', '순천', '여수'] },
+      ];
+
+      const getBriefingSettlementAssignees = (schedule) => {
+        const assignees = (schedule?.assignee || '').split(/[\/,]/).map(a => a.trim()).filter(Boolean);
+        return assignees.filter(a => briefingSettlementAssignees.includes(a));
+      };
+
+      const getBriefingSettlementPrice = (schedule, assignee) => {
+        const base = getRegionPrice(schedule?.address, schedule?.date, schedule?.workType);
+        if (!briefingCustomPriceAssignees.includes(assignee)) return base;
+        const address = schedule?.address || '';
+        const rule = briefingCustomRegionPriceRules.find(r => r.keywords.some(keyword => address.includes(keyword)));
+        return rule
+          ? { ...base, region: rule.region, price: rule.price, overridden: true }
+          : base;
+      };
+
       const assigneeList = ['이승우', '황윤선', '한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '조현식'];
-      const briefingAssigneeList = ['김현조', '박시현', ...assigneeList];
+      const briefingAssigneeList = [...briefingSettlementAssignees, ...assigneeList];
       const statusList = ['확정', '일정조율중', '월예정', '미정'];
 
       // 사용자 계정 정보 (비밀번호는 Firebase users/ 노드에서 로드됨)
@@ -13746,17 +13775,15 @@ tr.suppressed td.fname{color:#64748b;}
                 </select>
                 <select value={settleAssignee} onChange={e => setSettleAssignee(e.target.value)} style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '12px', flex: isMobile ? '1' : 'none' }}>
                   <option value="all">전체</option>
-                  <option value="김현조">김현조</option>
-                  <option value="박시현">박시현</option>
+                  {briefingSettlementAssignees.map(a => <option key={a} value={a}>{a}</option>)}
                 </select>
               </div>
 
               {/* 정산 리스트 */}
               {(() => {
                 const settleBriefings = briefingSchedules.filter(s => {
-                  const assignees = (s.assignee || '').split(/[\/,]/).map(a => a.trim());
-                  const hasSettleAssignee = assignees.some(a => a === '김현조' || a === '박시현');
-                  if (!hasSettleAssignee) return false;
+                  const assignees = getBriefingSettlementAssignees(s);
+                  if (assignees.length === 0) return false;
                   if (settleAssignee !== 'all' && !assignees.includes(settleAssignee)) return false;
                   if (!s.date) return false;
                   const [y, m] = s.date.split('-').map(Number);
@@ -13765,14 +13792,17 @@ tr.suppressed td.fname{color:#64748b;}
                   return true;
                 }).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
-                const totals = { '김현조': 0, '박시현': 0 };
-                const counts = { '김현조': 0, '박시현': 0 };
+                const totals = Object.fromEntries(briefingSettlementAssignees.map(a => [a, 0]));
+                const counts = Object.fromEntries(briefingSettlementAssignees.map(a => [a, 0]));
                 settleBriefings.forEach(s => {
-                  const { price: autoPrice } = getRegionPrice(s.address, s.date, s.workType);
-                  const price = s.customPrice || autoPrice;
-                  const assignees = (s.assignee || '').split(/[\/,]/).map(a => a.trim());
-                  if (assignees.includes('김현조')) { totals['김현조'] += price; counts['김현조']++; }
-                  if (assignees.includes('박시현')) { totals['박시현'] += price; counts['박시현']++; }
+                  const assignees = getBriefingSettlementAssignees(s)
+                    .filter(a => settleAssignee === 'all' || a === settleAssignee);
+                  assignees.forEach(a => {
+                    const { price: autoPrice } = getBriefingSettlementPrice(s, a);
+                    const price = s.customPrice || autoPrice;
+                    totals[a] += price;
+                    counts[a]++;
+                  });
                 });
 
                 return (
@@ -13789,7 +13819,10 @@ tr.suppressed td.fname{color:#64748b;}
                         <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>해당 기간 정산 내역이 없습니다.</div>
                       ) : (
                         settleBriefings.map(s => {
-                          const { region, price: autoPrice, isSupervision } = getRegionPrice(s.address, s.date, s.workType);
+                          const rowAssignees = getBriefingSettlementAssignees(s)
+                            .filter(a => settleAssignee === 'all' || a === settleAssignee);
+                          const priceAssignee = settleAssignee !== 'all' ? settleAssignee : rowAssignees[0];
+                          const { region, price: autoPrice, isSupervision, overridden } = getBriefingSettlementPrice(s, priceAssignee);
                           const price = s.customPrice || autoPrice;
                           const isCustom = autoPrice === 0;
                           return (
@@ -13825,7 +13858,7 @@ tr.suppressed td.fname{color:#64748b;}
                                   <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
                                     background: price === 70000 ? '#dbeafe' : price === 100000 ? '#dcfce7' : price === 130000 ? '#fef3c7' : '#f1f5f9',
                                     color: price === 70000 ? '#1d4ed8' : price === 100000 ? '#16a34a' : price === 130000 ? '#d97706' : '#64748b'
-                                  }}>{region}</span>
+                                  }}>{overridden ? `${region} 별도` : region}</span>
                                 </div>
                                 <span style={{ fontSize: '13px', color: '#2563eb', fontWeight: '600' }}>{s.assignee}</span>
                               </div>
@@ -13847,13 +13880,20 @@ tr.suppressed td.fname{color:#64748b;}
                           ) : (
                             <>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', paddingBottom: '4px', borderBottom: '1px solid #6b7280' }}>
-                                {counts['김현조'] > 0 && <span style={{ fontSize: '13px', color: '#93c5fd' }}>김현조 {counts['김현조']}건: {totals['김현조'].toLocaleString()}원</span>}
-                                {counts['박시현'] > 0 && <span style={{ fontSize: '13px', color: '#86efac' }}>박시현 {counts['박시현']}건: {totals['박시현'].toLocaleString()}원</span>}
+                                {briefingSettlementAssignees.map((a, idx) => (
+                                  counts[a] > 0 && (
+                                    <span key={a} style={{ fontSize: '13px', color: ['#93c5fd', '#86efac', '#fbbf24'][idx % 3] }}>
+                                      {a} {counts[a]}건: {totals[a].toLocaleString()}원
+                                    </span>
+                                  )
+                                ))}
                               </div>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span style={{ fontWeight: '600', color: 'white', fontSize: '14px' }}>합계 ({counts['김현조'] + counts['박시현']}건)</span>
+                                <span style={{ fontWeight: '600', color: 'white', fontSize: '14px' }}>
+                                  합계 ({briefingSettlementAssignees.reduce((sum, a) => sum + counts[a], 0)}건)
+                                </span>
                                 <span style={{ fontSize: '18px', fontWeight: '700', color: '#60a5fa' }}>
-                                  {(totals['김현조'] + totals['박시현']).toLocaleString()}원
+                                  {briefingSettlementAssignees.reduce((sum, a) => sum + totals[a], 0).toLocaleString()}원
                                 </span>
                               </div>
                             </>
