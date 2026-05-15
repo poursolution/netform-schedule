@@ -1364,6 +1364,8 @@ const SETTLEMENT_BADGE_STYLE = {
       const canViewPriceTableAssigneeNames = currentUser?.canManagePasswords === true;
       const priceTable1Label = canViewPriceTableAssigneeNames ? '단가표 1 - 김현조' : '단가표 1';
       const priceTable2Label = canViewPriceTableAssigneeNames ? '단가표 2 - 박시현 / 이헌정' : '단가표 2';
+      const priceTable1PublicLabel = '단가표 1';
+      const priceTable2PublicLabel = '단가표 2';
 
       const assigneeList = ['이승우', '황윤선', '한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '조현식'];
       const briefingAssigneeList = [...briefingSettlementAssignees, ...assigneeList];
@@ -16373,7 +16375,7 @@ tr.suppressed td.fname{color:#64748b;}
                       const element = document.getElementById('price-table-capture');
                       if (!element) return;
                       html2canvas(element, { backgroundColor: '#ffffff', scale: 2 }).then(canvas => {
-                        downloadCanvasImage(canvas, priceTableTab === 'table1' ? priceTable1Label : priceTable2Label, 'jpg');
+                        downloadCanvasImage(canvas, priceTableTab === 'table1' ? priceTable1PublicLabel : priceTable2PublicLabel, 'jpg');
                       });
                     }} style={{ padding: '8px 12px', borderRadius: '8px', border: 'none', background: '#0f766e', color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>JPG 저장</button>
                     <button onClick={() => setShowPriceTable(false)} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', fontSize: '13px', color: '#64748b', cursor: 'pointer' }}>닫기</button>
@@ -16389,7 +16391,7 @@ tr.suppressed td.fname{color:#64748b;}
                 <div id="price-table-capture" style={{ background: 'white', padding: '2px' }}>
                 {priceTableTab === 'table1' && (
                 <>
-                <div style={{ marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', background: '#0f172a', color: 'white', fontSize: '13px', fontWeight: '700' }}>{priceTable1Label}</div>
+                <div style={{ marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', background: '#0f172a', color: 'white', fontSize: '13px', fontWeight: '700' }}>{priceTable1PublicLabel}</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', fontSize: '12px' }}>
                   {/* 서울권 */}
                   <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
@@ -16497,7 +16499,7 @@ tr.suppressed td.fname{color:#64748b;}
 
                 {priceTableTab === 'table2' && (
                 <>
-                <div style={{ marginTop: '16px', marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', background: '#0f766e', color: 'white', fontSize: '13px', fontWeight: '700' }}>{priceTable2Label}</div>
+                <div style={{ marginTop: '16px', marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', background: '#0f766e', color: 'white', fontSize: '13px', fontWeight: '700' }}>{priceTable2PublicLabel}</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', fontSize: '12px' }}>
                   {briefingCustomRegionPriceRules.map(rule => (
                     <div key={rule.region} style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
