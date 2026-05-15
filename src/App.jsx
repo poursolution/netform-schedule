@@ -1355,10 +1355,15 @@ const SETTLEMENT_BADGE_STYLE = {
         const link = document.createElement('a');
         const mimeType = format === 'jpg' ? 'image/jpeg' : 'image/png';
         const extension = format === 'jpg' ? 'jpg' : 'png';
-        link.download = `${fileName}.${extension}`;
+        const safeFileName = String(fileName || 'image').replace(/[\\/:*?"<>|]/g, '_');
+        link.download = `${safeFileName}.${extension}`;
         link.href = canvas.toDataURL(mimeType, 0.95);
         link.click();
       };
+
+      const canViewPriceTableAssigneeNames = currentUser?.canManagePasswords === true;
+      const priceTable1Label = canViewPriceTableAssigneeNames ? '단가표 1 - 김현조' : '단가표 1';
+      const priceTable2Label = canViewPriceTableAssigneeNames ? '단가표 2 - 박시현 / 이헌정' : '단가표 2';
 
       const assigneeList = ['이승우', '황윤선', '한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '조현식'];
       const briefingAssigneeList = [...briefingSettlementAssignees, ...assigneeList];
@@ -16363,18 +16368,28 @@ tr.suppressed td.fname{color:#64748b;}
               <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '700px', maxWidth: '95%', margin: 'auto' }} onClick={e => e.stopPropagation()}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                   <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0 }}>지역별 단가표</h2>
-                  <button onClick={() => setShowPriceTable(false)} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', fontSize: '13px', color: '#64748b', cursor: 'pointer' }}>닫기</button>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button onClick={() => {
+                      const element = document.getElementById('price-table-capture');
+                      if (!element) return;
+                      html2canvas(element, { backgroundColor: '#ffffff', scale: 2 }).then(canvas => {
+                        downloadCanvasImage(canvas, priceTableTab === 'table1' ? priceTable1Label : priceTable2Label, 'jpg');
+                      });
+                    }} style={{ padding: '8px 12px', borderRadius: '8px', border: 'none', background: '#0f766e', color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>JPG 저장</button>
+                    <button onClick={() => setShowPriceTable(false)} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', fontSize: '13px', color: '#64748b', cursor: 'pointer' }}>닫기</button>
+                  </div>
                 </div>
                 <div style={{ marginBottom: '16px', fontSize: '12px', color: '#dc2626', fontWeight: '600' }}>※ 2026년 4월 1일부터 신규 단가 적용</div>
 
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                  <button onClick={() => setPriceTableTab('table1')} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: priceTableTab === 'table1' ? '1px solid #0f172a' : '1px solid #e2e8f0', background: priceTableTab === 'table1' ? '#0f172a' : '#f8fafc', color: priceTableTab === 'table1' ? 'white' : '#475569', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>단가표 1 - 김현조</button>
-                  <button onClick={() => setPriceTableTab('table2')} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: priceTableTab === 'table2' ? '1px solid #0f766e' : '1px solid #e2e8f0', background: priceTableTab === 'table2' ? '#0f766e' : '#f8fafc', color: priceTableTab === 'table2' ? 'white' : '#475569', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>단가표 2 - 박시현 / 이헌정</button>
+                  <button onClick={() => setPriceTableTab('table1')} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: priceTableTab === 'table1' ? '1px solid #0f172a' : '1px solid #e2e8f0', background: priceTableTab === 'table1' ? '#0f172a' : '#f8fafc', color: priceTableTab === 'table1' ? 'white' : '#475569', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>{priceTable1Label}</button>
+                  <button onClick={() => setPriceTableTab('table2')} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: priceTableTab === 'table2' ? '1px solid #0f766e' : '1px solid #e2e8f0', background: priceTableTab === 'table2' ? '#0f766e' : '#f8fafc', color: priceTableTab === 'table2' ? 'white' : '#475569', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>{priceTable2Label}</button>
                 </div>
 
+                <div id="price-table-capture" style={{ background: 'white', padding: '2px' }}>
                 {priceTableTab === 'table1' && (
                 <>
-                <div style={{ marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', background: '#0f172a', color: 'white', fontSize: '13px', fontWeight: '700' }}>단가표 1 - 김현조</div>
+                <div style={{ marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', background: '#0f172a', color: 'white', fontSize: '13px', fontWeight: '700' }}>{priceTable1Label}</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', fontSize: '12px' }}>
                   {/* 서울권 */}
                   <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
@@ -16482,7 +16497,7 @@ tr.suppressed td.fname{color:#64748b;}
 
                 {priceTableTab === 'table2' && (
                 <>
-                <div style={{ marginTop: '16px', marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', background: '#0f766e', color: 'white', fontSize: '13px', fontWeight: '700' }}>단가표 2 - 박시현 / 이헌정</div>
+                <div style={{ marginTop: '16px', marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', background: '#0f766e', color: 'white', fontSize: '13px', fontWeight: '700' }}>{priceTable2Label}</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', fontSize: '12px' }}>
                   {briefingCustomRegionPriceRules.map(rule => (
                     <div key={rule.region} style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
@@ -16499,6 +16514,7 @@ tr.suppressed td.fname{color:#64748b;}
                 </div>
                 </>
                 )}
+                </div>
               </div>
             </div>
           )}
