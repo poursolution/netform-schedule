@@ -68,6 +68,7 @@ export default {
       return jsonResponse({
         status: 'ok',
         version: VERSION,
+        buildTag: 'sales-meeting-manual-2026-05-26',
         hasKey: !!env.DATA_GO_KR_KEY,
         hasJandi: !!env.JANDI_WEBHOOK_URL,
         hasFirebase: !!(env.FIREBASE_DB_URL && env.FIREBASE_DB_SECRET),
@@ -334,13 +335,227 @@ Rules:
       }
     }
 
-    // 영업회의 D-7/D-1 알림 수동 실행 (테스트·재발송용): POST /run-sales-meeting-reminders
+    // 일회성: 5/29 영업회의 복원 (앱에서 삭제된 회의를 메타데이터 그대로 재등록)
+    //   POST /admin/restore-may29  body: {}
+    if (url.pathname === '/admin/restore-may29' && request.method === 'POST') {
+      try {
+        if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) {
+          return jsonResponse({ status: 'error', error: 'no_firebase_config' }, env, 500);
+        }
+        const meetingId = 'meeting_1779352286921';
+        const data = {
+          id: meetingId,
+          type: 'meeting',
+          title: '260529 영업회의',
+          date: '2026-05-29',
+          time: '09:00',
+          location: '본사 2층 회의실',
+          attendees: ['황윤선', '이필선', '한준엽'],
+          responses: {
+            '황윤선': { status: '미정', reason: '' },
+            '이필선': { status: '미정', reason: '' },
+            '한준엽': { status: '미정', reason: '' },
+          },
+          createdAt: '2026-05-21T08:31:26.921Z',
+          notifyLog: {
+            // 5/26 KST 10:25 에 잔디로 WEEK 알림 이미 발송됨 — 재발송 방지 위해 기록 보존
+            week: { sentAt: '2026-05-26T01:25:00.000Z', kind: 'WEEK', by: 'manual-restore' },
+          },
+        };
+        const fbUrl = `${env.FIREBASE_DB_URL}/meetings/${meetingId}.json?auth=${env.FIREBASE_DB_SECRET}`;
+        const r = await fetch(fbUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+        if (!r.ok) {
+          const txt = await r.text().catch(() => '');
+          return jsonResponse({ status: 'error', error: `firebase_${r.status}`, detail: txt.slice(0, 200) }, env, 502);
+        }
+        return jsonResponse({ status: 'ok', restored: meetingId, data }, env);
+      } catch (e) {
+        return jsonResponse({ status: 'error', error: e.message }, env, 500);
+      }
+    }
+
+    // 영업회의 참석자 일괄 갱신 (미래 회의만): POST /update-sales-meeting-attendees
+    //   { newAttendees: ['황윤선', '이필선', '한준엽'], dryRun?: false }
+    //   동작: title 에 '영업회의' 포함되고 m.date >= 오늘인 모든 회의의 attendees + responses 갱신
+    //         - attendees 를 newAttendees 로 교체
+    //         - responses 는 newAttendees 인원만 보존 (기존 응답 유지), 나머지 제거
+    if (url.pathname === '/update-sales-meeting-attendees' && request.method === 'POST') {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const newAttendees = Array.isArray(body.newAttendees) ? body.newAttendees : null;
+        const dryRun = !!body.dryRun;
+        if (!newAttendees || newAttendees.length === 0) {
+          return jsonResponse({ status: 'error', error: 'newAttendees array required' }, env, 400);
+        }
+        if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) {
+          return jsonResponse({ status: 'error', error: 'no_firebase_config' }, env, 500);
+        }
+        const todayStr = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+        const fbUrl = `${env.FIREBASE_DB_URL}/meetings.json?auth=${env.FIREBASE_DB_SECRET}`;
+        const resp = await fetch(fbUrl);
+        if (!resp.ok) return jsonResponse({ status: 'error', error: `firebase_${resp.status}` }, env, 502);
+        const meetings = await resp.json() || {};
+
+        const updated = [];
+        const skipped = [];
+
+        for (const [mid, m] of Object.entries(meetings)) {
+          if (!m || !m.title || !m.date) continue;
+          if (!String(m.title).includes('영업회의')) continue;
+          if (m.date < todayStr) {
+            skipped.push({ mid, title: m.title, date: m.date, reason: 'past' });
+            continue;
+          }
+
+          // 새 responses 구성 — newAttendees 중 기존 응답 있으면 보존, 없으면 미정
+          const newResponses = {};
+          for (const name of newAttendees) {
+            const existing = (m.responses || {})[name];
+            newResponses[name] = existing && typeof existing === 'object'
+              ? existing
+              : { status: '미정', reason: '' };
+          }
+
+          const before = { attendees: m.attendees || [], responsesCount: Object.keys(m.responses || {}).length };
+
+          if (dryRun) {
+            updated.push({ mid, title: m.title, date: m.date, before, after: { attendees: newAttendees, responsesCount: newAttendees.length }, dryRun: true });
+            continue;
+          }
+
+          const patchUrl = `${env.FIREBASE_DB_URL}/meetings/${mid}.json?auth=${env.FIREBASE_DB_SECRET}`;
+          const patchResp = await fetch(patchUrl, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ attendees: newAttendees, responses: newResponses }),
+          });
+          if (patchResp.ok) {
+            updated.push({ mid, title: m.title, date: m.date, before, after: { attendees: newAttendees, responsesCount: newAttendees.length } });
+          } else {
+            const txt = await patchResp.text().catch(() => '');
+            skipped.push({ mid, title: m.title, date: m.date, reason: `patch_${patchResp.status}`, detail: txt.slice(0, 200) });
+          }
+        }
+
+        return jsonResponse({
+          status: 'ok',
+          todayStr,
+          newAttendees,
+          dryRun,
+          updatedCount: updated.length,
+          updated,
+          skippedCount: skipped.length,
+          skipped,
+        }, env);
+      } catch (e) {
+        return jsonResponse({ status: 'error', error: e.message }, env, 500);
+      }
+    }
+
+    // 영업회의 WEEK/D-1 알림 수동 실행 (테스트·재발송용): POST /run-sales-meeting-reminders
     //   { dryRun?, force? } — force=true 면 notifyLog 무시하고 재발송
     if (url.pathname === '/run-sales-meeting-reminders' && request.method === 'POST') {
       try {
         const body = await request.json().catch(() => ({}));
-        const result = await sendSalesMeetingReminders(env, { dryRun: !!body.dryRun, force: !!body.force });
+        const result = await sendSalesMeetingReminders(env, {
+          dryRun: !!body.dryRun,
+          force: !!body.force,
+          targetDate: body.targetDate || null,
+          forceKind: body.forceKind || null,
+        });
         return jsonResponse(result, env);
+      } catch (e) {
+        return jsonResponse({ status: 'error', error: e.message }, env, 500);
+      }
+    }
+
+    // 하이웍스 휴가 데이터 푸시: POST /hiworks-vacation-push
+    //   PC 로컬 자동화(hiworks-sync)가 매일 호출 → Firebase hiworks_vacation_sync 노드 갱신
+    //   Headers: Authorization: Bearer ${HIWORKS_PUSH_TOKEN}
+    //   Body: { data: { "YYYY-MM": [rows] }, meta: { lastSync, syncedMonths, totalRecords, syncedBy }, users?: {} }
+    if (url.pathname === '/hiworks-vacation-push' && request.method === 'POST') {
+      try {
+        // 인증
+        const auth = request.headers.get('Authorization') || '';
+        if (!env.HIWORKS_PUSH_TOKEN || auth !== `Bearer ${env.HIWORKS_PUSH_TOKEN}`) {
+          return jsonResponse({ status: 'error', error: 'unauthorized' }, env, 401);
+        }
+        // Firebase 설정 확인
+        if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) {
+          return jsonResponse({ status: 'error', error: 'no_firebase_config' }, env, 500);
+        }
+        // 페이로드 검증
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== 'object' || !body.data || !body.meta) {
+          return jsonResponse({ status: 'error', error: 'invalid_body — data, meta 필드 필수' }, env, 400);
+        }
+        if (typeof body.data !== 'object' || Array.isArray(body.data)) {
+          return jsonResponse({ status: 'error', error: 'data 는 { "YYYY-MM": [...] } 객체여야 함' }, env, 400);
+        }
+        // users 맵 확보 — body.users > 기존 Firebase 노드의 users > 하드코딩 fallback 순으로 시도
+        let usersMap = body.users && typeof body.users === 'object' ? body.users : null;
+        if (!usersMap) {
+          try {
+            const existingResp = await fetch(`${env.FIREBASE_DB_URL}/hiworks_vacation_sync/users.json?auth=${env.FIREBASE_DB_SECRET}`);
+            if (existingResp.ok) {
+              const existing = await existingResp.json();
+              if (existing && typeof existing === 'object') usersMap = existing;
+            }
+          } catch (_) {}
+        }
+        if (!usersMap) {
+          usersMap = HIWORKS_USERS_FALLBACK;
+        }
+        // 각 row 에 user_name 채워넣기 (vacation-calendar API 는 office_user_no 만 반환 — 클라이언트는 user_name 으로 필터링)
+        if (usersMap) {
+          for (const monthKey of Object.keys(body.data || {})) {
+            if (Array.isArray(body.data[monthKey])) {
+              body.data[monthKey] = body.data[monthKey].map(row => {
+                if (row && row.office_user_no != null && !row.user_name) {
+                  const name = usersMap[String(row.office_user_no)];
+                  if (name) return { ...row, user_name: name };
+                }
+                return row;
+              });
+            }
+          }
+        }
+        // 페이로드 안전 정리 — server 측 lastSync 갱신
+        const payload = {
+          data: body.data,
+          meta: {
+            ...body.meta,
+            receivedAt: new Date().toISOString(),
+            lastSync: body.meta.lastSync || new Date().toISOString(),
+          },
+          ...(usersMap ? { users: usersMap } : {}),
+        };
+        // Firebase 에 PUT (전체 노드 교체 — 멱등성)
+        const fbUrl = `${env.FIREBASE_DB_URL}/hiworks_vacation_sync.json?auth=${env.FIREBASE_DB_SECRET}`;
+        const r = await fetch(fbUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!r.ok) {
+          const txt = await r.text().catch(() => '');
+          return jsonResponse({
+            status: 'error',
+            error: `firebase_${r.status}`,
+            detail: txt.slice(0, 300),
+          }, env, 502);
+        }
+        return jsonResponse({
+          status: 'ok',
+          totalRecords: payload.meta.totalRecords,
+          syncedMonths: payload.meta.syncedMonths,
+          lastSync: payload.meta.lastSync,
+          receivedAt: payload.meta.receivedAt,
+        }, env);
       } catch (e) {
         return jsonResponse({ status: 'error', error: e.message }, env, 500);
       }
@@ -524,11 +739,20 @@ Rules:
         const rr = await sendQuarterlyConfirmationReminders(env);
         console.log('[cron] reminder result', rr);
       } catch (e) { console.error('[cron] reminder failed', e); }
-      // 영업회의 알림도 (월요일 09시 = 영업회의 D-7 케이스 커버 — 화/수/목 트리거는 0,8 cron이 처리)
+      // 영업회의 알림도 (월요일 09시 = 해당주 알림 — 화/수/목 트리거는 0,8 cron이 처리)
       try {
         const sm = await sendSalesMeetingReminders(env);
         console.log('[cron] sales meeting reminders', sm);
       } catch (e) { console.error('[cron] sales meeting reminders failed', e); }
+      return;
+    }
+    if (event.cron === '15 0 * * *') {
+      // 매일 09:15 KST — 09:00 영업회의 알림 cron 누락 대비 백업
+      // notifyLog 멱등성으로 중복 발송은 자동 방지됨
+      try {
+        const sm = await sendSalesMeetingReminders(env);
+        console.log('[cron backup 09:15] sales meeting reminders', sm);
+      } catch (e) { console.error('[cron backup 09:15] failed', e); }
       return;
     }
     if (event.cron === '0 0,8 * * *') {
@@ -541,7 +765,7 @@ Rules:
         const rr = await checkQuarterReportReadiness(env);
         console.log('[cron] readiness result', rr);
       } catch (e) { console.error('[cron] readiness check failed', e); }
-      // 영업회의 D-7 / D-1 알림 (09시 트리거에서만 — 17시는 중복 방지로 skip)
+      // 영업회의 WEEK(월요일) / D-1 알림 (09시 트리거에서만 — 17시는 중복 방지로 skip)
       const utcHour = new Date(event.scheduledTime || Date.now()).getUTCHours();
       if (utcHour === 0) {  // 09시 KST 만
         try {
@@ -727,16 +951,72 @@ async function runAutoSupersede(env, opts = {}) {
   };
 }
 
-// === 영업회의 알림 (D-7 / D-1) ===
+// === 영업회의 알림 (WEEK / D-1) ===
 // meetings/{id} 노드에서 title 에 "영업회의" 포함된 미래 회의 조회.
-// 오늘 기준 +7일 또는 +1일에 회의가 있으면 잔디 웹훅 발송.
-// 멱등성: meetings/{id}/notifyLog/{D-7|D-1} 에 발송 기록 → 중복 발송 방지.
+//  - WEEK : 오늘이 월요일이고, 회의 날짜가 이번주(월~일) 범위 → "해당주 알림" (참석/불참 체크 요청)
+//  - D-1  : 회의 전일 → "확정 인원 브리핑" (참석자 명단 + 불참 사유 + 미체크자)
+// 멱등성: meetings/{id}/notifyLog/{week|d1} 에 발송 기록 → 중복 발송 방지.
 //
 // 웹훅 URL: SALES_MEETING_WEBHOOK_URL secret 또는 하드코딩 (사용자 제공).
 const SALES_MEETING_WEBHOOK_FALLBACK = 'https://wh.jandi.com/connect-api/webhook/26098605/503f681ce06c8e5e33a07c35d08c6b66';
 
+// 하이웍스 office_user_no → 이름 매핑 (사용자 매핑이 Firebase 노드에서 빠졌을 때 fallback)
+// 신규 입사·퇴사 시 여기 갱신
+const HIWORKS_USERS_FALLBACK = {
+  '9908': '이재훈', '9909': '이승우', '9910': '주유진', '9911': '김채원', '9912': '권정아',
+  '9914': '신명희', '9915': '백정석', '9920': '조재연', '9921': '한준엽', '9922': '김유림',
+  '9923': '함지민', '9924': '방현수', '9925': '김성준', '9926': '김성준', '9927': '이재민',
+  '9928': '심혜진', '9929': '권혜영', '9930': '김송희', '9931': '쩐티리', '9965': '김범석',
+  '9993': '김소연', '10002': '정영재', '10005': '허지은', '10057': '신나영', '10079': '김수진',
+  '10091': '김유진', '10100': '김소라', '10117': '정정훈', '10127': '황윤선', '10128': '한지혜',
+  '10136': '이필선', '10137': '송보람', '10138': '최영옥', '10139': '김성민', '10140': '주현진',
+  '10154': '한인규', '10175': '이채은', '10213': '이완성', '10260': '관리자', '10326': '이란',
+  '10327': '박우남', '10330': '이나라', '10334': '김소정', '10694': '남윤정', '10806': '이지연',
+  '10808': '정태윤', '10881': '임재용', '10920': '손예진', '10987': '일정관리', '11002': '이정훈',
+  '11006': '최경선', '11007': '김경미', '11064': '김민지', '11364': '변유림', '11368': '최원철',
+  '11385': '김유지', '11412': '임다비', '11413': '김다예', '11423': '박영환', '11516': '김민지',
+  '11549': '위해숙', '11588': '이현승',
+};
+
+// "HH:MM" → "오전 9시" / "오후 1시 30분" 한국어 시간 포맷
+function formatKoreanTime(time) {
+  const [hStr, mStr] = String(time || '09:00').split(':');
+  const h = parseInt(hStr, 10);
+  const m = parseInt(mStr || '0', 10);
+  if (isNaN(h)) return String(time || '09:00');
+  const ampm = h < 12 ? '오전' : '오후';
+  const h12 = h === 0 ? 12 : (h > 12 ? h - 12 : h);
+  return m === 0 ? `${ampm} ${h12}시` : `${ampm} ${h12}시 ${m}분`;
+}
+
+// 회의 응답을 참석/불참/미체크로 분류
+function classifyMeetingResponses(m) {
+  const attendees = Array.isArray(m.attendees) ? m.attendees : [];
+  const responses = m.responses || {};
+  const confirmed = [];
+  const declined = [];   // { name, reason }
+  const unchecked = [];
+  for (const name of attendees) {
+    const r = responses[name];
+    const status = (r && typeof r === 'object') ? r.status : r;
+    const reason = (r && typeof r === 'object') ? (r.reason || '') : '';
+    if (status === '참석') {
+      confirmed.push(name);
+    } else if (status === '불참') {
+      declined.push({ name, reason: String(reason).trim() });
+    } else {
+      unchecked.push(name);
+    }
+  }
+  return { attendees, confirmed, declined, unchecked };
+}
+
 async function sendSalesMeetingReminders(env, opts = {}) {
-  const { dryRun = false, force = false } = opts;
+  const { dryRun = false, force = false, targetDate = null, forceKind = null } = opts;
+  // 수동 발송 모드: targetDate("YYYY-MM-DD") + forceKind("week"|"d1") 지정 시
+  //   - 해당 날짜의 영업회의에 강제로 그 종류의 알림 발송
+  //   - isMonday/d1 체크 우회 (정규 cron 누락 시 보완 발송용)
+  const manualMode = !!(targetDate || forceKind);
   if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) {
     return { skipped: 'no_firebase_config' };
   }
@@ -746,13 +1026,16 @@ async function sendSalesMeetingReminders(env, opts = {}) {
   // 오늘 KST 날짜
   const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
   const todayStr = nowKst.toISOString().slice(0, 10);
+  const todayDow = nowKst.getUTCDay(); // 0=일, 1=월, ..., 6=토
   const addDays = (n) => {
     const d = new Date(nowKst);
     d.setUTCDate(d.getUTCDate() + n);
     return d.toISOString().slice(0, 10);
   };
-  const d7 = addDays(7);
   const d1 = addDays(1);
+  // 오늘이 월요일이면 → 이번주(월~일) 범위 영업회의가 WEEK 알림 대상
+  const isMonday = todayDow === 1;
+  const weekEndStr = isMonday ? addDays(6) : null;
 
   // meetings 조회
   const url = `${env.FIREBASE_DB_URL}/meetings.json?auth=${env.FIREBASE_DB_SECRET}`;
@@ -767,44 +1050,89 @@ async function sendSalesMeetingReminders(env, opts = {}) {
     if (!m || !m.title || !m.date) continue;
     if (!String(m.title).includes('영업회의')) continue;
 
+    // 알림 종류 판정 (WEEK: 해당주 월요일 09시 / D-1: 전일 09시)
     let kind = null;
-    if (m.date === d7) kind = 'D-7';
-    else if (m.date === d1) kind = 'D-1';
+    if (manualMode) {
+      // 수동 발송 모드 — targetDate 지정 시 그 날짜만, forceKind 로 종류 결정
+      if (targetDate && m.date !== targetDate) continue;
+      if (m.date < todayStr) continue;  // 과거 회의는 발송 안 함
+      if (forceKind === 'week' || forceKind === 'WEEK') kind = 'WEEK';
+      else if (forceKind === 'd1' || forceKind === 'D-1' || forceKind === 'd-1') kind = 'D-1';
+      else continue;  // forceKind 없으면 skip
+    } else {
+      if (isMonday && m.date >= todayStr && m.date <= weekEndStr) kind = 'WEEK';
+      else if (m.date === d1) kind = 'D-1';
+    }
     if (!kind) continue;
 
     // 멱등성: 이미 발송됐으면 skip (force=true 면 무시)
-    const logKey = kind === 'D-7' ? 'd7' : 'd1';
+    const logKey = kind === 'WEEK' ? 'week' : 'd1';
     if (!force && m.notifyLog && m.notifyLog[logKey]) {
       skipped.push({ mid, title: m.title, date: m.date, kind, reason: 'already_sent', sentAt: m.notifyLog[logKey].sentAt });
       continue;
     }
 
-    // 메시지 빌드
-    const dateObj = new Date(m.date + 'T00:00:00+09:00');
-    const dayKr = ['일','월','화','수','목','금','토'][dateObj.getUTCDay()];
-    const month = dateObj.getUTCMonth() + 1;
-    const day = dateObj.getUTCDate();
-    const time = m.time || '09:00';
+    // 공통: 날짜·시간·장소 포맷 (m.date 는 KST 기준 "YYYY-MM-DD")
+    const [, monthStr, dayStr] = m.date.split('-');
+    const month = parseInt(monthStr, 10);
+    const day = parseInt(dayStr, 10);
+    // 요일 — UTC 자정으로 Date 만들어 getUTCDay() (timezone 변환 없이 표시일 그대로)
+    const dayKr = ['일','월','화','수','목','금','토'][new Date(m.date + 'T00:00:00Z').getUTCDay()];
+    const timeStr = formatKoreanTime(m.time || '09:00');
     const location = m.location || '본사 2층 회의실';
-    const headline = kind === 'D-7'
-      ? `📢 영업회의 일정 알림 — D-7 (1주일 전)`
-      : `⏰ 영업회의 내일 진행 — D-1 알림`;
 
-    const message = {
-      body: `@all ${headline}`,
-      connectColor: kind === 'D-7' ? '#2563eb' : '#dc2626',
-      connectInfo: [{
-        title: m.title,
-        description: [
-          `일시: ${month}월 ${day}일(${dayKr}) ${time}`,
-          `장소: ${location}`,
-          `참석대상: 전 영업담당자`,
-          '',
-          '영업회의 공지드립니다. 영업담당자 분들께서는 일정을 확인하시어 불참자 없이 반드시 전원 참석해주시기 바랍니다.',
-          '참석 여부를 사전에 체크 부탁드립니다.',
-        ].join('\n'),
-      }],
-    };
+    // 메시지 빌드 (kind 별 분기)
+    let message;
+    if (kind === 'WEEK') {
+      // 해당주 월요일 09시 — 참석/불참 체크 요청
+      message = {
+        body: `영업회의 일정 알림`,
+        connectColor: '#2563eb',
+        connectInfo: [{
+          title: m.title,
+          description: [
+            `일시: ${month}월 ${day}일(${dayKr}) ${timeStr}`,
+            `장소: ${location}`,
+            `참석대상: 전 영업담당자`,
+            '',
+            '영업회의 공지드립니다. 영업담당자 분들께서는 일정을 확인하시어 불참자 없이 반드시 전원 참석해주시기 바랍니다.',
+            '참석 여부를 사전에 체크 부탁드립니다.',
+            '',
+            '※ 참석/불참 체크는 「영업운영시스템」에서 직접 진행해 주시고, 불참 시에는 반드시 사유를 입력해 주시기 바랍니다.',
+          ].join('\n'),
+        }],
+      };
+    } else {
+      // D-1 — 전일 09시 — 확정 인원 브리핑
+      const { attendees, confirmed, declined, unchecked } = classifyMeetingResponses(m);
+      const totalCount = attendees.length;
+      const confirmedCount = confirmed.length;
+      const confirmedListStr = confirmed.map(n => `${n}님`).join(', ');
+      const lines = [
+        `일시: ${month}월 ${day}일(${dayKr}) ${timeStr}`,
+        `장소: ${location}`,
+        `참석대상: ${confirmedListStr ? `${confirmedListStr} 참석` : '확정 인원 없음'}`,
+        '',
+        totalCount > 0
+          ? `영업사원 ${totalCount}명 중 ${confirmedCount}명 참석${confirmedListStr ? ` (${confirmedListStr})` : ''}`
+          : '참석 대상자가 등록되어 있지 않습니다.',
+      ];
+      declined.forEach(d => {
+        const reason = d.reason ? d.reason : '사유 미입력';
+        lines.push(`${d.name}님 (${reason}으로 인하여 참석 불가)`);
+      });
+      unchecked.forEach(n => {
+        lines.push(`${n}님 영업회의 참석 미체크로 인하여 참석여부 확인 불가`);
+      });
+      message = {
+        body: `영업회의 확정 인원 안내 (내일)`,
+        connectColor: '#dc2626',
+        connectInfo: [{
+          title: m.title,
+          description: lines.join('\n'),
+        }],
+      };
+    }
 
     // dryRun 이면 발송 skip, 미리보기만 반환
     if (dryRun) {
@@ -845,7 +1173,15 @@ async function sendSalesMeetingReminders(env, opts = {}) {
     }
   }
 
-  return { todayStr, d7, d1, sentCount: sent.length, sent, skippedCount: skipped.length, skipped };
+  const salesMeetingCount = Object.values(meetings).filter(m => m && m.title && String(m.title).includes('영업회의')).length;
+  return {
+    todayStr, d1, weekEndStr, isMonday,
+    manualMode, targetDate, forceKind,
+    totalMeetings: Object.keys(meetings).length,
+    salesMeetingCount,
+    sentCount: sent.length, sent,
+    skippedCount: skipped.length, skipped,
+  };
 }
 
 // === VPS 프록시 (한국 Lightsail Seoul → K-APT 직접 접근) ===

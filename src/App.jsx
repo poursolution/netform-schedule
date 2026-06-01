@@ -3708,6 +3708,10 @@ const SETTLEMENT_BADGE_STYLE = {
           const assignees = s.ptAssignee.split(/[\/,+&]/).map(a => a.trim());
           if (!assignees.includes(assignee)) return false;
           if (skipDateFilter) return true; // 전체 조회 — 정산 필터 없음
+          // 연도만 선택 + 분기 "전체" 시 → 연도 범위로만 필터링 (isQuarterSettlementTarget 는 qKey=null 이면 항상 false 반환하므로 우회)
+          if (!qKeyForStats) {
+            return s.date >= range.start && s.date <= range.end;
+          }
           return isQuarterSettlementTarget(s, assignee, qKeyForStats, getQuarterSettlementOptions(qKeyForStats));
         });
         
