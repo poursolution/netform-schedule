@@ -2216,31 +2216,57 @@ const SETTLEMENT_BADGE_STYLE = {
       };
       
       // 회의 관련 함수들
+      // 참석자 이름 유효성 — 깨진 문자(mojibake) 방지 가드.
+      //   정상: 한글 음절을 포함하고, 한글/영문/숫자/공백/가운뎃점만으로 구성.
+      //   비정상 예: "Ÿ◇◇◇◇" (인코딩 깨짐) → 한글 음절 없음 + 허용외 문자 → 거부.
+      const isValidAttendeeName = (name) => {
+        if (typeof name !== 'string') return false;
+        const n = name.trim();
+        if (!n) return false;
+        if (!/[가-힣]/.test(n)) return false;                 // 한글 음절 1개 이상 필수
+        if (!/^[가-힣A-Za-z0-9··\s]+$/.test(n)) return false; // 허용 문자만
+        return true;
+      };
+      // 회의 attendees/responses 를 저장 직전 정제 — 깨진 이름 제거 + responses 동기화.
+      const sanitizeMeeting = (meeting) => {
+        const rawAttendees = Array.isArray(meeting.attendees) ? meeting.attendees : [];
+        const cleanAttendees = [...new Set(rawAttendees.filter(isValidAttendeeName).map(n => n.trim()))];
+        const dropped = rawAttendees.filter(n => !cleanAttendees.includes(typeof n === 'string' ? n.trim() : n));
+        if (dropped.length > 0) {
+          console.warn('[meeting] 깨진/중복 참석자 이름 제거:', dropped, '→ 유지:', cleanAttendees);
+        }
+        // responses 는 유효 참석자만 보존 (기존 응답 유지, 없으면 미정)
+        const srcResponses = (meeting.responses && typeof meeting.responses === 'object') ? meeting.responses : {};
+        const cleanResponses = {};
+        for (const name of cleanAttendees) {
+          const existing = srcResponses[name];
+          cleanResponses[name] = (existing && typeof existing === 'object') ? existing : { status: '미정', reason: '' };
+        }
+        return { ...meeting, attendees: cleanAttendees, responses: cleanResponses };
+      };
+
       const addMeetingSchedule = (meeting) => {
-        const newMeetingData = {
+        const newMeetingData = sanitizeMeeting({
           ...meeting,
           id: `meeting_${Date.now()}`,
           type: 'meeting',
           createdAt: new Date().toISOString(),
           responses: {}
-        };
-        // 참석자들 초기 응답 설정
-        (meeting.attendees || []).forEach(name => {
-          newMeetingData.responses[name] = { status: '미정', reason: '' };
         });
-        
+
         if (firebaseEnabled && database) {
           database.ref(`meetings/${newMeetingData.id}`).set(newMeetingData);
         } else {
           setMeetingSchedules(prev => [...prev, newMeetingData]);
         }
       };
-      
+
       const updateMeetingSchedule = (meeting) => {
+        const cleaned = sanitizeMeeting(meeting);
         if (firebaseEnabled && database) {
-          database.ref(`meetings/${meeting.id}`).set(meeting);
+          database.ref(`meetings/${cleaned.id}`).set(cleaned);
         } else {
-          setMeetingSchedules(prev => prev.map(m => m.id === meeting.id ? meeting : m));
+          setMeetingSchedules(prev => prev.map(m => m.id === cleaned.id ? cleaned : m));
         }
       };
       
