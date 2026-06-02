@@ -2470,60 +2470,54 @@ const SETTLEMENT_BADGE_STYLE = {
         setHiworksSyncLoading(false);
       };
       
-      // 오전 8시 이후 첫 접속 시 자동 동기화
+      // 접속 시 하이웍스 휴가 항상 로딩
+      //   주의: 이 동작은 하이웍스에서 새로 긁어오는 게 아니라 Firebase 동기화 노드를 "읽기"만 함(가벼움).
+      //   hiworksVacations state 는 새로고침 시 빈 배열로 초기화되므로, 하루 1회 제한을 두면
+      //   "오늘 이미 동기화 후 새로고침 → 휴가가 싹 사라짐" 버그가 발생함. → 매 접속마다 항상 다시 로딩.
       useEffect(() => {
-        const autoSyncHiworks = async () => {
-          const now = new Date();
-          const hour = now.getHours();
-          const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-          const lastSyncDate = localStorage.getItem('hiworksSyncDate');
-          
-          // 오전 8시 이후 + 오늘 아직 동기화 안했으면 자동 동기화
-          if (hour >= 8 && lastSyncDate !== todayStr) {
-            try {
-              const response = await fetch(HIWORKS_VACATION_URL);
-              const result = await response.json();
-              
-              const targetUsers = ['이승우', '황윤선', '이필선', '한준엽', '한인규', '조현식', '김성민', '정정훈', '조재연'];
-              
-              if (result && result.data) {
-                const allVacations = [];
-                
-                Object.keys(result.data).forEach(monthKey => {
-                  const monthData = result.data[monthKey];
-                  if (Array.isArray(monthData)) {
-                    monthData.forEach(v => {
-                      if (v.date >= '2026-02-19' && v.approval_status === '결재완료' && targetUsers.includes(v.user_name)) {
-                        allVacations.push({
-                          id: `hiworks_${v.office_user_no}_${v.date}_${v.start_time}`,
-                          date: v.date,
-                          userName: v.user_name,
-                          type: v.vacation_type_title,
-                          dayType: v.type,
-                          hours: v.hours,
-                          startTime: v.start_time,
-                          endTime: v.end_time,
-                          source: 'hiworks'
-                        });
-                      }
-                    });
-                  }
-                });
-                
-                allVacations.sort((a, b) => a.date.localeCompare(b.date));
-                setHiworksVacations(allVacations);
-                setHiworksLastSync(now.toLocaleString());
-                localStorage.setItem('hiworksSyncDate', todayStr);
-                console.log(`하이웍스 휴가 자동 동기화 완료: ${allVacations.length}건`);
-              }
-            } catch (error) {
-              console.error('하이웍스 휴가 자동 동기화 오류:', error);
+        const loadHiworksVacations = async () => {
+          try {
+            const response = await fetch(HIWORKS_VACATION_URL);
+            const result = await response.json();
+
+            const targetUsers = ['이승우', '황윤선', '이필선', '한준엽', '한인규', '조현식', '김성민', '정정훈', '조재연'];
+
+            if (result && result.data) {
+              const allVacations = [];
+
+              Object.keys(result.data).forEach(monthKey => {
+                const monthData = result.data[monthKey];
+                if (Array.isArray(monthData)) {
+                  monthData.forEach(v => {
+                    if (v.date >= '2026-02-19' && (v.approval_status === '결재완료' || v.approval_status === '결재중') && targetUsers.includes(v.user_name)) {
+                      allVacations.push({
+                        id: `hiworks_${v.office_user_no}_${v.date}_${v.start_time}`,
+                        date: v.date,
+                        userName: v.user_name,
+                        type: v.vacation_type_title,
+                        dayType: v.type,
+                        hours: v.hours,
+                        startTime: v.start_time,
+                        endTime: v.end_time,
+                        source: 'hiworks'
+                      });
+                    }
+                  });
+                }
+              });
+
+              allVacations.sort((a, b) => a.date.localeCompare(b.date));
+              setHiworksVacations(allVacations);
+              setHiworksLastSync(new Date().toLocaleString());
+              console.log(`하이웍스 휴가 로딩 완료: ${allVacations.length}건`);
             }
+          } catch (error) {
+            console.error('하이웍스 휴가 로딩 오류:', error);
           }
         };
-        
+
         // 2초 후 실행 (다른 데이터 로드 완료 대기)
-        const timer = setTimeout(autoSyncHiworks, 2000);
+        const timer = setTimeout(loadHiworksVacations, 2000);
         return () => clearTimeout(timer);
       }, []);
 
