@@ -230,7 +230,8 @@ function requireAuth(req, res, next) {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '1.1.0',
+    version: '1.2.0',
+    buildTag: 'parallel-verify-2026-06-04',  // 배포 확인용 마커 (병렬화 반영 여부 식별)
     ourTechnologies: OUR_TECHNOLOGIES,
     ourPatentCount: OUR_PATENT_NUMBERS.size,
     hasAuth: AUTH_TOKEN !== 'change-me-in-production',

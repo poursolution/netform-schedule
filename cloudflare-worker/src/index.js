@@ -2097,19 +2097,30 @@ async function notifyAnnouncementDecision(env, { scheduleId, siteName, assignee,
   const label = quarterLabelFromDate(ptDate);
   const base = env.ALLOWED_ORIGIN || 'https://schedules-cip.pages.dev';
   const link = `${base}/decide.html?pt=${encodeURIComponent(scheduleId)}&assignee=${encodeURIComponent(assignee || '')}`;
+  // 업체(요청사) — PT 에서 조회 (있으면 메시지에 표시)
+  let requester = '';
+  if (env.FIREBASE_DB_URL && env.FIREBASE_DB_SECRET) {
+    try {
+      const u = `${env.FIREBASE_DB_URL}/pt/${scheduleId}/requester.json?auth=${env.FIREBASE_DB_SECRET}`;
+      const r = await fetch(u);
+      if (r.ok) requester = (await r.json()) || '';
+    } catch (_) {}
+  }
   const msg = {
     body: '⚠️ 공고문 미확인 — 정산대상 결정 필요',
     connectColor: '#f59e0b',
     connectInfo: [{
       title: `${siteName || '단지명 미입력'} — ${assignee || '담당자 미상'}`,
       description: [
+        `담당자: ${assignee || '-'}`,
+        requester ? `업체(요청사): ${requester}` : null,
         `진행일: ${ptDate || '-'} (${label})`,
         '사유: 공고미확인 (K-APT 공고문에 우리 공법/특허 미확인)',
         '',
         `👉 이 PT를 [${label}] 정산대상으로 넣을지 결정해주세요.`,
         '   아래 링크 → [정산대상] / [정산대상 아님] 선택',
         link,
-      ].join('\n'),
+      ].filter(Boolean).join('\n'),
     }],
   };
   for (const name of RECIPIENTS) {

@@ -38,6 +38,7 @@
       <div class="info">
         <div><b>현장</b> <span id="site">-</span></div>
         <div><b>담당자</b> <span id="assignee">-</span></div>
+        <div><b>업체</b> <span id="requester">-</span></div>
         <div><b>진행일</b> <span id="date">-</span> <span id="qtr" style="color:#2563eb;font-weight:600"></span></div>
         <div><b>사유</b> 공고미확인</div>
         <div><b>현재</b> <span id="cur">-</span></div>
@@ -70,6 +71,7 @@ async function load(){
     const label = quarterLabel(pt.date);
     $('site').textContent = pt.siteName || '-';
     $('assignee').textContent = assignee;
+    $('requester').textContent = pt.requester || '-';
     $('date').textContent = pt.date || '-';
     $('qtr').textContent = '('+label+')';
     $('qtr2').textContent = '['+label+']';
