@@ -3129,13 +3129,8 @@ const SETTLEMENT_BADGE_STYLE = {
                     });
                   } catch {}
                 }
-                // [신규] 정산 검토자(송보람·한준엽)에게 정산대상 결정 요청 — 결정 링크 포함
-                notifyAnnouncementUnconfirmed({
-                  ptId: scheduleId,
-                  assignee: targetAssignee,
-                  siteName: updatedSchedule.siteName,
-                  ptDate: updatedSchedule.date,
-                }).catch(() => {});
+                // 정산 검토자(송보람·한준엽) 결정 알림은 워커(notifyAnnouncementDecision)에서
+                // 모든 검증 경로 공통으로 발송 — 앱 중복 발송 방지 위해 여기선 호출하지 않음.
               }
             }).catch(() => {});
           }

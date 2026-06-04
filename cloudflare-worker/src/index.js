@@ -1312,6 +1312,16 @@ async function verifyViaVps(env, args) {
       totalFound: result.totalCandidates || 1,
       sampleTitles,
     }));
+    // [신규] 정산 검토자(송보람·한준엽)에게 정산대상 결정 요청 — 결정 딥링크 포함.
+    //   모든 검증 경로(결과입력·재검증모달·일괄)가 이 함수를 타므로 여기 한 곳에서 처리.
+    if (args.scheduleId) {
+      await notifyAnnouncementDecision(env, {
+        scheduleId: args.scheduleId,
+        siteName: args.siteName,
+        assignee: args.assignee,
+        ptDate: args.ptDate,
+      });
+    }
   }
   return result;
 }
@@ -2077,6 +2087,42 @@ function buildNoMatchMsg({ siteName, assignee, ptDate, by, bidNo, totalFound, sa
       ].filter(Boolean).join('\n'),
     }],
   };
+}
+
+// [신규] 공고미확인 → 송보람·한준엽 개인채널로 정산대상 결정 요청 (결정 딥링크 포함)
+//   링크 클릭 시 앱이 ?settleDecision=<ptId>&assignee=<name> 로 결정 모달을 열고
+//   [정산대상]/[정산대상 아님(공고미확인)] 을 실제 정산데이터에 반영.
+function quarterLabelFromDate(dateStr) {
+  const m = String(dateStr || '').match(/^(\d{4})-(\d{2})/);
+  if (!m) return '해당 분기';
+  return `${m[1]}년 ${Math.ceil(parseInt(m[2], 10) / 3)}분기`;
+}
+async function notifyAnnouncementDecision(env, { scheduleId, siteName, assignee, ptDate }) {
+  const RECIPIENTS = ['송보람', '한준엽'];
+  const label = quarterLabelFromDate(ptDate);
+  const base = env.ALLOWED_ORIGIN || 'https://schedules-cip.pages.dev';
+  const link = `${base}/?settleDecision=${encodeURIComponent(scheduleId)}&assignee=${encodeURIComponent(assignee || '')}`;
+  const msg = {
+    body: '⚠️ 공고문 미확인 — 정산대상 결정 필요',
+    connectColor: '#f59e0b',
+    connectInfo: [{
+      title: `${siteName || '단지명 미입력'} — ${assignee || '담당자 미상'}`,
+      description: [
+        `진행일: ${ptDate || '-'} (${label})`,
+        '사유: 공고미확인 (K-APT 공고문에 우리 공법/특허 미확인)',
+        '',
+        `👉 이 PT를 [${label}] 정산대상으로 넣을지 결정해주세요.`,
+        '   아래 링크 → [정산대상] / [정산대상 아님] 선택',
+        link,
+      ].join('\n'),
+    }],
+  };
+  for (const name of RECIPIENTS) {
+    try {
+      const url = await fetchUserJandiWebhook(env, name);
+      if (url) await notifyJandiToUrl(url, msg);
+    } catch (e) { console.warn('[decision-notify] 발송 실패', name, e.message); }
+  }
 }
 
 // === Helpers ===
