@@ -1306,13 +1306,8 @@ async function verifyViaVps(env, args) {
     } else if (result.pageTextLength) {
       sampleTitles = `K-APT ${result.pageTextLength}자 파싱 완료, 우리 공법/특허 미발견`;
     }
-    await notifyJandi(env, buildNoMatchMsg({
-      siteName: args.siteName, assignee: args.assignee,
-      ptDate: args.ptDate, by: args.by, bidNo: bidNum,
-      totalFound: result.totalCandidates || 1,
-      sampleTitles,
-    }));
-    // [신규] 정산 검토자(송보람·한준엽)에게 정산대상 결정 요청 — 결정 딥링크 포함.
+    // [변경] 옛 '공고문에 우리 공법/특허 미확인'(관리자채널) 발송 제거 — 중복 방지.
+    //   대신 송보람·한준엽에게 '정산대상 결정' 메시지 하나만 발송(결정 전용 페이지 링크 포함).
     //   모든 검증 경로(결과입력·재검증모달·일괄)가 이 함수를 타므로 여기 한 곳에서 처리.
     if (args.scheduleId) {
       await notifyAnnouncementDecision(env, {
@@ -2101,7 +2096,7 @@ async function notifyAnnouncementDecision(env, { scheduleId, siteName, assignee,
   const RECIPIENTS = ['송보람', '한준엽'];
   const label = quarterLabelFromDate(ptDate);
   const base = env.ALLOWED_ORIGIN || 'https://schedules-cip.pages.dev';
-  const link = `${base}/?settleDecision=${encodeURIComponent(scheduleId)}&assignee=${encodeURIComponent(assignee || '')}`;
+  const link = `${base}/decide.html?pt=${encodeURIComponent(scheduleId)}&assignee=${encodeURIComponent(assignee || '')}`;
   const msg = {
     body: '⚠️ 공고문 미확인 — 정산대상 결정 필요',
     connectColor: '#f59e0b',

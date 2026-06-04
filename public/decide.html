@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>정산대상 결정 — 공고미확인 PT</title>
+<style>
+  :root { --line:#e2e8f0; --muted:#64748b; --ink:#1e293b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',sans-serif; background:#f1f5f9; color:var(--ink); }
+  .wrap { max-width:480px; margin:0 auto; padding:20px 16px 40px; }
+  .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(0,0,0,.08); padding:22px; }
+  h1 { font-size:18px; margin:0 0 4px; color:#b45309; }
+  .sub { font-size:12px; color:var(--muted); margin-bottom:18px; }
+  .info { background:#f8fafc; border:1px solid var(--line); border-radius:10px; padding:14px 16px; font-size:14px; line-height:2; margin-bottom:18px; }
+  .info b { display:inline-block; width:64px; color:var(--muted); font-weight:600; }
+  .q { font-size:15px; font-weight:700; margin:0 0 12px; }
+  .q .qtr { color:#2563eb; }
+  .btns { display:flex; gap:10px; }
+  button { flex:1; padding:15px; border:none; border-radius:10px; font-size:15px; font-weight:700; cursor:pointer; color:#fff; }
+  .ok { background:#16a34a; } .no { background:#dc2626; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .state { margin-top:16px; font-size:14px; text-align:center; min-height:20px; }
+  .done { padding:14px; border-radius:10px; text-align:center; font-weight:700; font-size:15px; }
+  .done.ok { background:#dcfce7; color:#166534; }
+  .done.no { background:#fee2e2; color:#991b1b; }
+  .err { color:#dc2626; }
+  .loading { color:var(--muted); text-align:center; padding:24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" id="card">
+    <div class="loading" id="loading">불러오는 중…</div>
+    <div id="content" style="display:none">
+      <h1>⚠️ 정산대상 결정</h1>
+      <div class="sub">K-APT 공고문에서 우리 공법/특허가 확인되지 않은 PT입니다.</div>
+      <div class="info">
+        <div><b>현장</b> <span id="site">-</span></div>
+        <div><b>담당자</b> <span id="assignee">-</span></div>
+        <div><b>진행일</b> <span id="date">-</span> <span id="qtr" style="color:#2563eb;font-weight:600"></span></div>
+        <div><b>사유</b> 공고미확인</div>
+        <div><b>현재</b> <span id="cur">-</span></div>
+      </div>
+      <p class="q">이 PT를 <span class="qtr" id="qtr2"></span> 정산대상으로 넣을까요?</p>
+      <div class="btns">
+        <button class="ok" id="btnOk">정산대상</button>
+        <button class="no" id="btnNo">정산대상 아님</button>
+      </div>
+      <div class="state" id="state"></div>
+    </div>
+    <div id="result" style="display:none"></div>
+  </div>
+</div>
+<script>
+const DB = 'https://test-168a4-default-rtdb.asia-southeast1.firebasedatabase.app';
+const qs = new URLSearchParams(location.search);
+// 신규 ?pt= / 구버전 ?settleDecision= 둘 다 지원
+const ptId = qs.get('pt') || qs.get('settleDecision');
+const assignee = qs.get('assignee') || '';
+
+function quarterLabel(d){ const m=String(d||'').match(/^(\d{4})-(\d{2})/); if(!m) return '해당 분기'; return m[1]+'년 '+Math.ceil(parseInt(m[2],10)/3)+'분기'; }
+const $ = id => document.getElementById(id);
+
+async function load(){
+  if(!ptId || !assignee){ $('loading').innerHTML='<span class="err">잘못된 링크입니다 (PT/담당자 정보 없음).</span>'; return; }
+  try{
+    const pt = await (await fetch(DB+'/pt/'+encodeURIComponent(ptId)+'.json')).json();
+    if(!pt){ $('loading').innerHTML='<span class="err">PT를 찾을 수 없습니다.</span>'; return; }
+    const label = quarterLabel(pt.date);
+    $('site').textContent = pt.siteName || '-';
+    $('assignee').textContent = assignee;
+    $('date').textContent = pt.date || '-';
+    $('qtr').textContent = '('+label+')';
+    $('qtr2').textContent = '['+label+']';
+    const stl = (pt.settlement && pt.settlement[assignee]) || {};
+    $('cur').textContent = stl.requested ? '정산대상(요청됨)' : (stl.excludedReason ? '제외('+stl.excludedReason+')' : '미결정');
+    $('loading').style.display='none';
+    $('content').style.display='block';
+  }catch(e){ $('loading').innerHTML='<span class="err">불러오기 실패: '+e.message+'</span>'; }
+}
+
+async function decide(include){
+  $('btnOk').disabled=true; $('btnNo').disabled=true;
+  $('state').textContent='처리 중…';
+  const now = new Date().toISOString();
+  const patch = include
+    ? { requested:true, requestedAt:now, status:'requested', excludedReason:null, requestedBy:'결정페이지' }
+    : { requested:false, status:'excluded', excludedReason:'공고미확인' };
+  try{
+    const r = await fetch(DB+'/pt/'+encodeURIComponent(ptId)+'/settlement/'+encodeURIComponent(assignee)+'.json',
+      { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(patch) });
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    $('content').style.display='none';
+    const res=$('result'); res.style.display='block';
+    res.innerHTML = include
+      ? '<div class="done ok">✅ 정산대상으로 처리했습니다.</div>'
+      : '<div class="done no">정산대상에서 제외했습니다. (사유: 공고미확인)</div>';
+  }catch(e){
+    $('state').innerHTML='<span class="err">처리 실패: '+e.message+'</span>';
+    $('btnOk').disabled=false; $('btnNo').disabled=false;
+  }
+}
+$('btnOk').onclick=()=>decide(true);
+$('btnNo').onclick=()=>decide(false);
+load();
+</script>
+</body>
+</html>
