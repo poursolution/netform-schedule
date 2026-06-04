@@ -3782,6 +3782,9 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
     const allCandidates = [];
     const seen = new Set();
     const variations = generateAptNameVariations(siteName);
+    // [속도] data.go.kr 검색을 변형×연도 병렬 호출 (기존: 순차 15~30회 → 수십초 병목).
+    //   JSON API(serviceKey 인증) 라 동시 호출해도 rate-limit 부담 적음.
+    const searchJobs = [];
     for (const variation of variations) {
       for (const y of [year, year - 1, year - 2]) {
         const params = new URLSearchParams({
@@ -3793,20 +3796,23 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
           type: 'json',
         });
         const url = `https://apis.data.go.kr/1613000/ApHusBidResultNoticeInfoOfferServiceV2/getHsmpNmSearchV2?${params}`;
-        try {
-          const resp = await fetch(url, { headers: { 'User-Agent': 'POUR-Verify/1.0', 'Accept': 'application/json' } });
-          if (!resp.ok) continue;
-          const data = await resp.json();
-          const items = data?.response?.body?.items;
-          if (!items) continue;
-          const arr = Array.isArray(items) ? items : [items];
-          for (const it of arr) {
-            if (!seen.has(it.bidNum)) {
-              seen.add(it.bidNum);
-              allCandidates.push(it);
-            }
-          }
-        } catch (e) { /* continue */ }
+        searchJobs.push(
+          fetch(url, { headers: { 'User-Agent': 'POUR-Verify/1.0', 'Accept': 'application/json' } })
+            .then(r => (r.ok ? r.json() : null))
+            .catch(() => null)
+        );
+      }
+    }
+    const searchResults = await Promise.all(searchJobs);
+    for (const data of searchResults) {
+      const items = data?.response?.body?.items;
+      if (!items) continue;
+      const arr = Array.isArray(items) ? items : [items];
+      for (const it of arr) {
+        if (!seen.has(it.bidNum)) {
+          seen.add(it.bidNum);
+          allCandidates.push(it);
+        }
       }
     }
 
@@ -3875,9 +3881,10 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
     let firstMatch = null;
     const attempts = [];
 
-    for (let rank = 0; rank < top3.length; rank++) {
-      if (rank > 0) await new Promise(r => setTimeout(r, 1500)); // rate-limit 완화: 후보간 1.5초 대기
-      const bid = top3[rank];
+    // [속도] 상위 후보들을 병렬 스크래핑 (기존: 후보당 ~5초 + 1.5초 간격 순차 → 수십초 병목).
+    //   후보별 독립 context 로 동시에 열어 한 번에 처리. firstMatch 는 결과 취합 후 순위순으로 선정.
+    const scrapeResults = await Promise.all(top3.map(async (bid, idx) => {
+      const rank = idx + 1;
       let context = null;
       try {
         context = await browser.newContext({
@@ -3887,37 +3894,33 @@ async function handleBySiteName({ siteName, assignee, ptDate, by, dataGoKrKey },
         });
         const page = await context.newPage();
         await page.goto('https://www.k-apt.go.kr/', { waitUntil: 'domcontentloaded', timeout: 20000 });
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(800);
         const detailUrl = `https://www.k-apt.go.kr/bid/bidDetail.do?bidNum=${encodeURIComponent(bid.bidNum)}`;
         await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await page.waitForTimeout(2500);
+        await page.waitForTimeout(2000);
 
         const pageText = await page.evaluate(() => document.body?.innerText || '');
         const matched = findOurInText(pageText);
         const verdictRank = verdictAnalyze(pageText);
-        attempts.push({
-          rank: rank + 1,
-          bidNum: bid.bidNum,
-          bidKaptname: bid.bidKaptname,
-          bidTitle: bid.bidTitle,
-          bidRegdate: bid.bidRegdate,
-          nameScore: Number(bid._nameScore.toFixed(3)),
-          timeScore: Number(bid._timeScore.toFixed(3)),
-          totalScore: Number(bid._totalScore.toFixed(3)),
-          pageTextLength: pageText.length,
-          matched,
-          verdictRank: { verdict: verdictRank.verdict, ourScore: verdictRank.ourScore, competitorScore: verdictRank.competitorScore },
-        });
-        if (matched) {
-          firstMatch = { rank: rank + 1, bid, matched, pageText };
-          await context.close();
-          break;
-        }
         await context.close();
+        return {
+          rank, bid, matched, pageText,
+          attempt: {
+            rank, bidNum: bid.bidNum, bidKaptname: bid.bidKaptname, bidTitle: bid.bidTitle, bidRegdate: bid.bidRegdate,
+            nameScore: Number(bid._nameScore.toFixed(3)), timeScore: Number(bid._timeScore.toFixed(3)), totalScore: Number(bid._totalScore.toFixed(3)),
+            pageTextLength: pageText.length, matched,
+            verdictRank: { verdict: verdictRank.verdict, ourScore: verdictRank.ourScore, competitorScore: verdictRank.competitorScore },
+          },
+        };
       } catch (e) {
-        attempts.push({ rank: rank + 1, bidNum: bid.bidNum, bidKaptname: bid.bidKaptname, error: e.message });
         if (context) await context.close().catch(() => {});
+        return { rank, bid, matched: null, error: e.message, attempt: { rank, bidNum: bid.bidNum, bidKaptname: bid.bidKaptname, error: e.message } };
       }
+    }));
+    scrapeResults.sort((a, b) => a.rank - b.rank);
+    for (const r of scrapeResults) attempts.push(r.attempt);
+    for (const r of scrapeResults) {
+      if (r.matched) { firstMatch = { rank: r.rank, bid: r.bid, matched: r.matched, pageText: r.pageText }; break; }
     }
 
     if (firstMatch) {
