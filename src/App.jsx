@@ -697,6 +697,8 @@ const SETTLEMENT_BADGE_STYLE = {
       const [jandiUserWebhooks, setJandiUserWebhooks] = useState({});
       const [jandiEnabled, setJandiEnabled] = useState(true);
       const [showJandiModal, setShowJandiModal] = useState(false);
+      // 공고미확인 → 정산대상 결정 모달 (잔디 딥링크로 진입): { ptId, assignee } | null
+      const [settleDecisionModal, setSettleDecisionModal] = useState(null);
       // 크로스체크 "찌르기" 상태: { [cardId_assignee]: 'busy'|'ok'|'fail' }
       const [pokingAdmin, setPokingAdmin] = useState({});
 
@@ -2521,6 +2523,23 @@ const SETTLEMENT_BADGE_STYLE = {
         return () => clearTimeout(timer);
       }, []);
 
+      // 잔디 딥링크(?settleDecision=<ptId>&assignee=<name>) 진입 시 정산대상 결정 모달 오픈
+      //   로그인 후 1회 처리, URL 은 정리해 새로고침 재오픈 방지
+      useEffect(() => {
+        if (!isLoggedIn) return;
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const ptId = params.get('settleDecision');
+          const assignee = params.get('assignee');
+          if (ptId && assignee) {
+            setSettleDecisionModal({ ptId, assignee });
+            // URL 정리 (파라미터 제거)
+            const cleanUrl = `${window.location.origin}${window.location.pathname}`;
+            window.history.replaceState({}, '', cleanUrl);
+          }
+        } catch (_) {}
+      }, [isLoggedIn]);
+
       const handleLogout = () => {
         setIsLoggedIn(false);
         setCurrentUser(null);
@@ -3110,6 +3129,13 @@ const SETTLEMENT_BADGE_STYLE = {
                     });
                   } catch {}
                 }
+                // [신규] 정산 검토자(송보람·한준엽)에게 정산대상 결정 요청 — 결정 링크 포함
+                notifyAnnouncementUnconfirmed({
+                  ptId: scheduleId,
+                  assignee: targetAssignee,
+                  siteName: updatedSchedule.siteName,
+                  ptDate: updatedSchedule.date,
+                }).catch(() => {});
               }
             }).catch(() => {});
           }
@@ -3350,6 +3376,74 @@ const SETTLEMENT_BADGE_STYLE = {
           console.warn('[송보람 알림] 발송 실패', e);
           return { ok: false, error: e.message };
         }
+      };
+
+      // === 공고미확인 → 정산대상 결정 플로우 ===
+      // PT 진행일로 분기 키/라벨 산출
+      const quarterFromDate = (dateStr) => {
+        const m = String(dateStr || '').match(/^(\d{4})-(\d{2})/);
+        if (!m) return { key: null, label: '해당 분기' };
+        const yr = m[1];
+        const q = Math.ceil(parseInt(m[2], 10) / 3);
+        return { key: `${yr}-Q${q}`, label: `${yr}년 ${q}분기` };
+      };
+      // 잔디 메시지에 넣을 결정 딥링크 (송보람/한준엽이 눌러 결정 모달 진입)
+      const buildSettleDecisionLink = (ptId, assignee) => {
+        const base = `${window.location.origin}${window.location.pathname}`;
+        return `${base}?settleDecision=${encodeURIComponent(ptId)}&assignee=${encodeURIComponent(assignee)}`;
+      };
+      // 공고미확인 알림을 송보람 + 한준엽 개인채널로 발송 (결정 링크 포함)
+      const notifyAnnouncementUnconfirmed = async ({ ptId, assignee, siteName, ptDate }) => {
+        const { label } = quarterFromDate(ptDate);
+        const link = buildSettleDecisionLink(ptId, assignee);
+        const RECIPIENTS = ['송보람', '한준엽'];
+        const msg = {
+          body: '⚠️ 공고문 미확인 — 정산대상 결정 필요',
+          connectColor: '#f59e0b',
+          connectInfo: [{
+            title: `${siteName || '단지명 미입력'} — ${assignee || '담당자 미상'}`,
+            description: [
+              `진행일: ${ptDate || '-'} (${label})`,
+              `사유: 공고미확인 (K-APT 공고문에 우리 공법/특허 미확인)`,
+              '',
+              `👉 이 PT를 [${label}] 정산대상으로 넣을지 결정해주세요.`,
+              '   아래 링크 → [정산대상] / [정산대상 아님] 선택',
+              link,
+            ].join('\n'),
+          }],
+        };
+        const results = [];
+        for (const name of RECIPIENTS) {
+          const hook = jandiUserWebhooks?.[name];
+          if (!hook?.url || hook.enabled === false) { results.push({ name, skipped: true }); continue; }
+          try {
+            await fetch(hook.url, {
+              method: 'POST', mode: 'no-cors',
+              headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+              body: JSON.stringify(msg),
+            });
+            results.push({ name, ok: true });
+          } catch (e) { results.push({ name, ok: false, error: e.message }); }
+        }
+        return results;
+      };
+      // 결정 반영: include=true → 정산대상(requested), false → 제외(excludedReason='공고미확인')
+      const applySettleDecision = async (ptId, assignee, include) => {
+        if (!ptId || !assignee) return { error: 'missing' };
+        const nowISO = new Date().toISOString();
+        const patch = include
+          ? { requested: true, requestedAt: nowISO, status: 'requested', excludedReason: null, requestedBy: '공고미확인-검토승인' }
+          : { requested: false, status: 'excluded', excludedReason: '공고미확인' };
+        try {
+          if (firebaseEnabled && database) {
+            await database.ref(`pt/${ptId}/settlement/${assignee}`).update(patch);
+          }
+          setPtSchedules(prev => prev.map(ps => ps.id === ptId ? ({
+            ...ps,
+            settlement: { ...(ps.settlement || {}), [assignee]: { ...(ps.settlement?.[assignee] || {}), ...patch } },
+          }) : ps));
+          return { ok: true, patch };
+        } catch (e) { console.warn('[settle-decision] failed', e); return { ok: false, error: e.message }; }
       };
 
       // Settlement derived fields 자동 저장 (#3 status · #6 excludedReason · #9 calculatedAmount)
@@ -17928,6 +18022,53 @@ tr.suppressed td.fname{color:#64748b;}
               </div>
             </div>
           )}
+
+          {/* 공고미확인 → 정산대상 결정 모달 (잔디 딥링크 진입) */}
+          {settleDecisionModal && (() => {
+            const dpt = ptSchedules.find(p => p.id === settleDecisionModal.ptId);
+            const dAssignee = settleDecisionModal.assignee;
+            const { label: qLabel } = quarterFromDate(dpt?.date);
+            const curStl = dpt?.settlement?.[dAssignee] || {};
+            const closeModal = () => setSettleDecisionModal(null);
+            const decide = async (include) => {
+              const r = await applySettleDecision(settleDecisionModal.ptId, dAssignee, include);
+              if (r?.ok) {
+                alert(include
+                  ? `[${qLabel}] 정산대상으로 포함 처리했습니다. (${dpt?.siteName || ''} — ${dAssignee})`
+                  : `정산대상에서 제외했습니다. (사유: 공고미확인)`);
+                closeModal();
+              } else {
+                alert('처리 실패: ' + (r?.error || '알 수 없음'));
+              }
+            };
+            return (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10003, padding: '20px' }} onClick={closeModal}>
+                <div style={{ background: 'white', borderRadius: '16px', width: '460px', maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }} onClick={e => e.stopPropagation()}>
+                  <div style={{ fontSize: '18px', fontWeight: '700', color: '#b45309', marginBottom: '4px' }}>⚠️ 공고문 미확인 — 정산대상 결정</div>
+                  <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '16px' }}>K-APT 공고문에서 우리 공법/특허가 확인되지 않았습니다.</div>
+                  {!dpt ? (
+                    <div style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>
+                      PT 정보를 불러오는 중이거나 찾을 수 없습니다.<br/>(PT id: {settleDecisionModal.ptId})
+                    </div>
+                  ) : (
+                    <div style={{ background: '#f8fafc', borderRadius: '10px', padding: '14px', marginBottom: '18px', fontSize: '13px', lineHeight: 1.8 }}>
+                      <div><b>현장</b> : {dpt.siteName || '-'}</div>
+                      <div><b>담당</b> : {dAssignee}</div>
+                      <div><b>진행일</b> : {dpt.date || '-'} <span style={{ color: '#2563eb', fontWeight: 600 }}>({qLabel})</span></div>
+                      <div><b>사유</b> : 공고미확인</div>
+                      <div><b>현재 상태</b> : {curStl.requested ? '정산대상(요청됨)' : (curStl.excludedReason ? `제외(${curStl.excludedReason})` : '미결정')}</div>
+                    </div>
+                  )}
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#1e293b', marginBottom: '10px' }}>이 PT를 [{qLabel}] 정산대상으로 넣을까요?</div>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button disabled={!dpt} onClick={() => decide(true)} style={{ flex: 1, padding: '12px', border: 'none', borderRadius: '8px', background: dpt ? '#16a34a' : '#cbd5e1', color: 'white', fontSize: '14px', fontWeight: 700, cursor: dpt ? 'pointer' : 'not-allowed' }}>정산대상</button>
+                    <button disabled={!dpt} onClick={() => decide(false)} style={{ flex: 1, padding: '12px', border: 'none', borderRadius: '8px', background: dpt ? '#dc2626' : '#cbd5e1', color: 'white', fontSize: '14px', fontWeight: 700, cursor: dpt ? 'pointer' : 'not-allowed' }}>정산대상 아님</button>
+                  </div>
+                  <button onClick={closeModal} style={{ width: '100%', marginTop: '10px', padding: '10px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '13px', fontWeight: 600, color: '#64748b', cursor: 'pointer' }}>닫기</button>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* 전날 회의 강제 체크 모달 */}
           {showMeetingForceCheckModal && pendingMeetingsForUser.length > 0 && (
