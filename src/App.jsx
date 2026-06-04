@@ -2893,12 +2893,17 @@ const SETTLEMENT_BADGE_STYLE = {
 
         const updatedSchedule = { ...schedule, ...scheduleUpdate };
 
-        // Firebase 저장
-        if (firebaseEnabled && database) {
-          database.ref(`pt/${scheduleId}`).update(scheduleUpdate);
+        // [성능] 결과 저장 시 pt 노드 쓰기를 한 번의 multi-path update 로 합침.
+        //   기존: 기본필드/예외/검증/정산을 각각 따로 write → ptRef.on('value') 가 매번 깨어나
+        //         495건 전체 재처리 + 거대 컴포넌트 전체 재렌더 (한 번 클릭에 3~4회).
+        //   개선: 흩어진 쓰기를 deferredPt 에 모아 함수 끝에서 단일 write → 리스너 1회만 깨어남.
+        //         + 중간 await 제거로 낙관적 setState 들이 React 배칭되어 재렌더 횟수도 감소.
+        const deferredPt = {};
+        for (const [k, v] of Object.entries(scheduleUpdate)) {
+          deferredPt[`pt/${scheduleId}/${k}`] = v;
         }
 
-        // 로컬 상태 업데이트
+        // 로컬 상태 업데이트 (낙관적 — 서버 echo 전 즉시 반영)
         setPtSchedules(prev => prev.map(s => s.id === scheduleId ? updatedSchedule : s));
 
         // === 예외 신청 처리 (영업적 승리 / 공고문 없는 현장) ===
@@ -2908,9 +2913,7 @@ const SETTLEMENT_BADGE_STYLE = {
             reason: resultReasonData.reason || '',
             requestedBy: currentUser?.name || targetAssignee,
           });
-          if (firebaseEnabled && database) {
-            database.ref(`pt/${scheduleId}/exceptionRequests/${targetAssignee}`).set(exceptionReq);
-          }
+          deferredPt[`pt/${scheduleId}/exceptionRequests/${targetAssignee}`] = exceptionReq;
           setPtSchedules(prev => prev.map(s => s.id === scheduleId
             ? { ...s, exceptionRequests: { ...(s.exceptionRequests || {}), [targetAssignee]: exceptionReq } }
             : s));
@@ -2981,7 +2984,7 @@ const SETTLEMENT_BADGE_STYLE = {
               }
               if (ver.history) verPatch[`${histPath}/${histRef.key}`] = ver.history;
               if (ver.auxHistory && auxHistRef) verPatch[`${histPath}/${auxHistRef.key}`] = ver.auxHistory;
-              await database.ref().update(verPatch);
+              Object.assign(deferredPt, verPatch);  // [성능] 즉시 write 대신 누적 → 함수 끝 단일 write
               // 로컬 state 동기화
               setPtSchedules(prev => prev.map(s => s.id === scheduleId ? ({
                 ...s,
@@ -3044,8 +3047,8 @@ const SETTLEMENT_BADGE_STYLE = {
             settlementPatch[`settlement/${targetAssignee}/excludedReason`] = 'unverified';
           }
 
-          if (firebaseEnabled && database) {
-            database.ref(`pt/${scheduleId}`).update(settlementPatch).catch(() => {});
+          for (const [k, v] of Object.entries(settlementPatch)) {
+            deferredPt[`pt/${scheduleId}/${k}`] = v;  // [성능] 즉시 write 대신 누적
           }
           // 로컬 state 동기화
           setPtSchedules(prev => prev.map(s => s.id === scheduleId ? ({
@@ -3110,6 +3113,11 @@ const SETTLEMENT_BADGE_STYLE = {
               }
             }).catch(() => {});
           }
+        }
+
+        // [성능] 누적된 pt 쓰기를 단일 multi-path write 로 한 번에 반영 (리스너 1회만 깨어남)
+        if (Object.keys(deferredPt).length > 0 && firebaseEnabled && database) {
+          database.ref().update(deferredPt).catch(() => {});
         }
 
         // === 무 결과 → 정산요청 confirm (스펙 #9 calculatedAmount 저장 추가) ===
