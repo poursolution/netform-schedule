@@ -29,6 +29,6 @@ binding = "BROWSER"
 [ai]
 binding = "AI"
 
-# CORS 허용 도메인
-[env.production]
-vars = { ALLOWED_ORIGIN = "https://schedules-cip.pages.dev" }
+# CORS: 단일 환경(top-level)으로 통일 — 과거 [env.production] 은 배포 모호성(Multiple environments
+# 경고로 deploy 중단)만 유발하고 라이브(top-level) 에는 적용되지도 않아 제거함.
+# ALLOWED_ORIGIN 미설정 시 코드가 '*' 로 동작(기존 라이브와 동일).
