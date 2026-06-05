@@ -1348,8 +1348,10 @@ const SETTLEMENT_BADGE_STYLE = {
         if (!briefingCustomPriceAssignees.includes(assignee)) return base;
         const address = schedule?.address || '';
         const rule = briefingCustomRegionPriceRules.find(r => r.keywords.some(keyword => address.includes(keyword)));
+        // 박시현·이헌정 등 별도단가 대상: 가격(rule.price)만 적용하고, 화면 지역명은
+        // 김현조처럼 깔끔한 도시명(base.region) 유지 — "경기 1분류 별도" 표기 제거.
         return rule
-          ? { ...base, region: rule.region, price: rule.price, overridden: true }
+          ? { ...base, price: rule.price }
           : base;
       };
 
@@ -14000,7 +14002,7 @@ tr.suppressed td.fname{color:#64748b;}
                                   <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
                                     background: price === 70000 ? '#dbeafe' : price === 100000 ? '#dcfce7' : price === 130000 ? '#fef3c7' : '#f1f5f9',
                                     color: price === 70000 ? '#1d4ed8' : price === 100000 ? '#16a34a' : price === 130000 ? '#d97706' : '#64748b'
-                                  }}>{overridden ? `${region} 별도` : region}</span>
+                                  }}>{region}</span>
                                 </div>
                                 <span style={{ fontSize: '13px', color: '#2563eb', fontWeight: '600' }}>{s.assignee}</span>
                               </div>
