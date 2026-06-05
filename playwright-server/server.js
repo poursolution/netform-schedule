@@ -230,8 +230,8 @@ function requireAuth(req, res, next) {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '1.2.0',
-    buildTag: 'parallel-verify-2026-06-04',  // 배포 확인용 마커 (병렬화 반영 여부 식별)
+    version: '1.3.0',
+    buildTag: 'city-guard-2026-06-04',  // 배포 확인용 마커 (병렬화 + 시/군 매칭 가드)
     ourTechnologies: OUR_TECHNOLOGIES,
     ourPatentCount: OUR_PATENT_NUMBERS.size,
     hasAuth: AUTH_TOKEN !== 'change-me-in-production',
@@ -1837,6 +1837,17 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
     // 복합 매칭 — 변형별로 스코어 계산, 단 지역 stripped 된 variant는 해당 지역이 PT에도 있어야 인정
     const composite = (parsedSite, pt, evParsedAddress) => {
       const addr = pt.address || '';
+      // [시/군 가드] 공고문 주소와 PT 주소의 시/군 "핵심명"이 명확히 다르면 매칭 거부.
+      //   같은 단지명(대동다숲·한신2차·쌍용예가·중앙하이츠 등)이 다른 도시에 있는 오매칭 차단.
+      //   광역시/특별시 약어 차이(광주광역시↔광주시)는 핵심명만 비교해 무시. 한쪽이라도 주소가 없으면 통과(보수적).
+      const cityCore = (a) => {
+        const m = String(a || '').match(/([가-힣]{2,4}?)(특별자치시|특별시|광역시|특별자치도|시|군)(?![가-힣])/);
+        return m ? m[1] : '';
+      };
+      const evCity = cityCore(evParsedAddress), ptCity = cityCore(addr);
+      if (evCity && ptCity && evCity !== ptCity) {
+        return { score: 0, matchedBy: `city-mismatch(${evCity}≠${ptCity})` };
+      }
       const variants = variantsOf(parsedSite);
       let bestName = 0, bestAddr = 0, bestVariant = null;
       for (const v of variants) {
