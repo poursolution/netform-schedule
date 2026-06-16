@@ -1388,6 +1388,18 @@ const SETTLEMENT_BADGE_STYLE = {
         'jjy': { password: '', name: '조재연', isAdmin: false, canManagePasswords: false },
       });
 
+      // 한인규 퇴사 처리: 2026-06-17부터 로그인 차단 (휴가·정산 등 기존 기록은 그대로 보존)
+      //   차단 시작일을 바꾸려면 아래 날짜만 수정
+      const BLOCKED_LOGIN_FROM = { '한인규': '2026-06-17' };
+      const isAccountLoginBlocked = (account) => {
+        if (!account) return false;
+        const fromDate = BLOCKED_LOGIN_FROM[account.name];
+        if (!fromDate) return false;
+        const now = new Date();
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        return todayStr >= fromDate;
+      };
+
       // 초기 샘플 데이터 (빈 배열 - Firebase에서 로드)
       const initialPtSchedules = [];
       const initialBriefingSchedules = [];
@@ -1838,6 +1850,11 @@ const SETTLEMENT_BADGE_STYLE = {
             // Firebase users/ 아직 로드 안 됨 — 삭제하지 말고 다음 render 기다림
             return;
           } else if (account.password === password) {
+            if (isAccountLoginBlocked(account)) {
+              // 차단된 계정 — 자동 로그인 토큰 제거 후 중단
+              localStorage.removeItem('autoLogin');
+              return;
+            }
             setCurrentUser({ id, ...account });
             setIsLoggedIn(true);
             // 모든 사용자에게 전체 보기 기본값
@@ -2313,6 +2330,10 @@ const SETTLEMENT_BADGE_STYLE = {
       const handleLogin = () => {
         const account = userAccounts[loginId];
         if (account && account.password === loginPw) {
+          if (isAccountLoginBlocked(account)) {
+            setLoginError('비활성화된 계정입니다. 관리자에게 문의하세요.');
+            return;
+          }
           setCurrentUser({ id: loginId, ...account });
           setIsLoggedIn(true);
           setShowLoginModal(false);
@@ -7972,7 +7993,7 @@ const SETTLEMENT_BADGE_STYLE = {
                           ) : (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                               {currentUser && (currentUser.isAdmin || currentUser.id === 'hjy') && (() => {
-                                const dayMembers = ['조재연', '한준엽', '이필선', '정정훈', '김성민', '한인규', '황윤선'];
+                                const dayMembers = ['조재연', '한준엽', '이필선', '정정훈', '김성민', '황윤선'];
                                 const assignedSet = new Set();
                                 selectedSchedules.forEach(s => {
                                   if (s.type === 'pt') {
@@ -8128,7 +8149,7 @@ const SETTLEMENT_BADGE_STYLE = {
                         ) : (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                             {currentUser && (currentUser.isAdmin || currentUser.id === 'hjy') && (() => {
-                              const dayMembers = ['조재연', '한준엽', '이필선', '정정훈', '김성민', '한인규', '황윤선'];
+                              const dayMembers = ['조재연', '한준엽', '이필선', '정정훈', '김성민', '황윤선'];
                               const assignedSet = new Set();
                               selectedSchedules.forEach(s => {
                                 if (s.type === 'pt') {
