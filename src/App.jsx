@@ -5724,7 +5724,7 @@ const SETTLEMENT_BADGE_STYLE = {
         return priority[type] ?? 99;
       };
 
-      const isUnassigned = (s) => s.type === 'pt' ? !s.ptAssignee : s.type === 'briefing' ? !s.assignee : s.type === 'personal' ? (!s.assignees || s.assignees.length === 0) : false;
+      const isUnassigned = (s) => s.type === 'pt' ? !s.ptAssignee : s.type === 'briefing' ? !s.assignee : (s.type === 'personal' || s.type === 'asq') ? (!s.assignees || s.assignees.length === 0) : false;
 
       const getSchedulesForDate = (day) => {
         if (!day) return [];
