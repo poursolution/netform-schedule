@@ -1860,6 +1860,33 @@ app.post('/admin/jandi-pt-match', requireAuth, async (req, res) => {
         if (as > bestAddr) bestAddr = as;
       }
 
+      // [주소 정확 매칭] 공고문 실주소(evParsedAddress)와 PT 주소의 도로명+건물번호가
+      //   일치하면 단지명이 달라도 "같은 주소 = 같은 단지" 로 인정 (2순위 주소 검증).
+      //   시/군 핵심명이 명확히 다르면 (동명 도로 오매칭) 인정 안 함. 위 시/군 가드를
+      //   이미 통과한 상태지만, 한쪽 시/군이 약어(인천 vs 인천광역시)라 비어있는 경우도
+      //   여기서 한 번 더 방어. 도로명+번호는 식별력이 매우 높아 false positive 위험 낮음.
+      const roadCoreAX = (a) => {
+        const m = String(a || '').match(/([가-힣A-Za-z0-9]+(?:로|길))\s*(\d+)(?:-(\d+))?/);
+        return m ? { road: m[1].replace(/\s+/g, ''), main: m[2], sub: m[3] || null } : null;
+      };
+      // 시/도 핵심 (광주광역시 vs 경기 광주시 구분 — cityCore 는 둘 다 '광주' 라 못 걸러냄)
+      const sidoAX = (a) => {
+        const t = String(a || '').trim();
+        const SIDO = [['서울'],['부산'],['인천'],['대구'],['대전'],['광주'],['울산'],['세종'],['제주'],['경기'],['강원'],['충북','충청북도'],['충남','충청남도'],['전북','전라북도','전북특별자치도'],['전남','전라남도'],['경북','경상북도'],['경남','경상남도']];
+        for (const al of SIDO) for (const a2 of al) if (t.startsWith(a2)) return al[0];
+        return '';
+      };
+      const evRoad = roadCoreAX(evParsedAddress), ptRoad = roadCoreAX(addr);
+      const evSidoAX = sidoAX(evParsedAddress), ptSidoAX = sidoAX(addr);
+      const cityConflictAX = (evCity && ptCity && evCity !== ptCity)
+        || (evSidoAX && ptSidoAX && evSidoAX !== ptSidoAX);
+      const addrExact = !cityConflictAX && !!(evRoad && ptRoad
+        && evRoad.road === ptRoad.road && evRoad.main === ptRoad.main
+        && (!evRoad.sub || !ptRoad.sub || evRoad.sub === ptRoad.sub));
+      // 도로명+건물번호 정확 일치는 단지명 정확 일치만큼 강한 신호 → 0.97 부여.
+      //   (brand-only 파일명의 0.97 임계값 강화 필터도 통과해야 하므로.)
+      if (addrExact) return { score: Math.max(0.97, bestName), matchedBy: 'address-exact' };
+
       // [지역 prefix 충돌] — substring 매칭이 다른 지역 동명 단지를 잡는 것 차단
       const conflictCheck = regionPrefixConflict(pt.siteName, parsedSite, evParsedAddress, pt.address);
       if (conflictCheck.conflict) {
@@ -2484,6 +2511,35 @@ app.post('/admin/jandi-unmatched-evidence', requireAuth, async (req, res) => {
         if (ns > bestName) bestName = ns;
         if (as > bestAddr) bestAddr = as;
       }
+
+      // [주소 정확 매칭] — composite #1 (jandi-pt-match) 과 동일 규칙.
+      //   공고문 실주소와 PT 주소의 도로명+건물번호 일치 시 단지명 달라도 인정.
+      //   시/군 핵심명이 다르면 (동명 도로) 거부.
+      const cityCoreAX = (a) => {
+        const m = String(a || '').match(/([가-힣]{2,4}?)(특별자치시|특별시|광역시|특별자치도|시|군)(?![가-힣])/);
+        return m ? m[1] : '';
+      };
+      const roadCoreAX = (a) => {
+        const m = String(a || '').match(/([가-힣A-Za-z0-9]+(?:로|길))\s*(\d+)(?:-(\d+))?/);
+        return m ? { road: m[1].replace(/\s+/g, ''), main: m[2], sub: m[3] || null } : null;
+      };
+      const sidoAX = (a) => {
+        const t = String(a || '').trim();
+        const SIDO = [['서울'],['부산'],['인천'],['대구'],['대전'],['광주'],['울산'],['세종'],['제주'],['경기'],['강원'],['충북','충청북도'],['충남','충청남도'],['전북','전라북도','전북특별자치도'],['전남','전라남도'],['경북','경상북도'],['경남','경상남도']];
+        for (const al of SIDO) for (const a2 of al) if (t.startsWith(a2)) return al[0];
+        return '';
+      };
+      const evCity = cityCoreAX(evParsedAddress), ptCity = cityCoreAX(addr);
+      const evSidoAX = sidoAX(evParsedAddress), ptSidoAX = sidoAX(addr);
+      const evRoad = roadCoreAX(evParsedAddress), ptRoad = roadCoreAX(addr);
+      const cityConflictAX = (evCity && ptCity && evCity !== ptCity)
+        || (evSidoAX && ptSidoAX && evSidoAX !== ptSidoAX);
+      const addrExact = !cityConflictAX && !!(evRoad && ptRoad
+        && evRoad.road === ptRoad.road && evRoad.main === ptRoad.main
+        && (!evRoad.sub || !ptRoad.sub || evRoad.sub === ptRoad.sub));
+      // 도로명+건물번호 정확 일치는 단지명 정확 일치만큼 강한 신호 → 0.97 부여.
+      if (addrExact) return { score: Math.max(0.97, bestName), matchedBy: 'address-exact' };
+
       const conflictCheck = regionPrefixConflict2(pt.siteName, parsedSite, evParsedAddress, pt.address);
       if (conflictCheck.conflict) bestName = Math.min(bestName, 0.45);
       if (bestName >= 0.95) return { score: bestName, matchedBy: conflictCheck.conflict ? 'name-regionConflict' : 'name' };
