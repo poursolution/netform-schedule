@@ -18,7 +18,9 @@ OUR_COMPANY_NAMES = "넷폼,(주)넷폼,넷폼R&D,(주)넷폼R&D,POUR솔루션,(
 #   2) 매주 월요일 09:00 KST (= 00:00 UTC) → 분기 마지막월(3/6/9/12) 마지막주 월요일만 분기정산 실행
 #   3) 매일 09:00 KST (= 00:00 UTC) · 17:00 KST (= 08:00 UTC) — 분기 확인 리마인드 (deadline 내 미확인만)
 [triggers]
-crons = ["0 17 * * *", "0 0 * * 1", "0 0,8 * * *", "15 0 * * *"]
+crons = ["0 17 * * *", "0 0 * * 1", "0 0,8 * * *", "15 0 * * *", "*/15 * * * *"]
+# 추가 "*/15 * * * *" — 15분마다 VPS(kapt-playwright-server) /health 감시.
+#   응답 없으면(연속 2회≈30분) 잔디로 다운 알림, 복구되면 복구 알림. 상태는 Firebase config/vpsHealth 보존.
 # 추가 "15 0 * * *" — 매일 09:15 KST 백업 cron (09:00 영업회의 알림 누락 대비, notifyLog 멱등성으로 중복 발송 방지)
 
 # Browser Rendering (Paid plan 필수 — K-APT PDF 다운로드용)

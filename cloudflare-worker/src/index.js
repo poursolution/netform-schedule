@@ -722,6 +722,14 @@ Rules:
     //   "0 0 * * 1"  → 매주 월요일 09:00 KST — 분기 마지막월 마지막주 월요일만 분기정산 실행
     //   "0 0,8 * * *" → 매일 09/17 KST — 분기 확인 리마인드 (deadline 내 미확인자만)
     console.log('[cron] triggered', event.cron, new Date().toISOString());
+    if (event.cron === '*/15 * * * *') {
+      // 15분마다 VPS 헬스 감시 — 죽으면 잔디 알림, 복구되면 복구 알림
+      try {
+        const hr = await checkVpsHealth(env);
+        console.log('[cron] vps health', hr);
+      } catch (e) { console.error('[cron] vps health failed', e); }
+      return;
+    }
     if (event.cron === '0 17 * * *') {
       try {
         const result = await syncRecentBids(env, 2);
@@ -1894,6 +1902,126 @@ async function countFirebaseBids(env) {
 async function notifyJandi(env, message) {
   if (!env.JANDI_WEBHOOK_URL) return { ok: false, reason: 'no_webhook' };
   return notifyJandiToUrl(env.JANDI_WEBHOOK_URL, message);
+}
+
+// === VPS 헬스 감시 (cron: */15) ===
+// VPS(kapt-playwright-server)가 죽으면 K-APT 검증·잔디 공고문 매칭이 전부 멈추므로
+// 관리자가 AWS 콘솔을 계속 들여다보지 않아도 되도록 잔디로 자동 알림.
+//
+// 상태는 Firebase config/vpsHealth 에 보존 (cron 은 stateless):
+//   { status:'up'|'down', failCount, since, lastCheckAt, detail, alerted, lastAlertAt }
+// 알림 정책 (스팸 방지):
+//   - 연속 2회 실패(≈30분) 시 최초 DOWN 알림 1회 (일시적 blip 무시)
+//   - DOWN 지속 시 6시간마다 재알림 (계속 죽어있음 리마인드)
+//   - UP 복구 시 복구 알림 1회
+async function checkVpsHealth(env) {
+  if (!env.VPS_URL) return { skipped: 'no_vps_url' };
+
+  // 1) VPS /health 호출 (10초 타임아웃)
+  let up = false, detail = '';
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 10000);
+    const resp = await fetch(`${env.VPS_URL.replace(/\/$/, '')}/health`, { method: 'GET', signal: ctl.signal });
+    clearTimeout(t);
+    up = resp.ok;
+    detail = up ? 'ok' : `HTTP ${resp.status}`;
+  } catch (e) {
+    up = false;
+    detail = e.name === 'AbortError' ? 'timeout(10s)' : (e.message || 'fetch_failed');
+  }
+
+  // 2) 이전 상태 로드 (Firebase 없으면 dedup 없이 조용히 통과 — 오알림보다 무알림이 안전)
+  const canPersist = !!(env.FIREBASE_DB_URL && env.FIREBASE_DB_SECRET);
+  const stateUrl = canPersist
+    ? `${env.FIREBASE_DB_URL}/config/vpsHealth.json?auth=${env.FIREBASE_DB_SECRET}`
+    : null;
+  let prev = {};
+  if (stateUrl) {
+    try {
+      const r = await fetch(stateUrl);
+      if (r.ok) prev = (await r.json()) || {};
+    } catch (e) { console.warn('[vpsHealth] state load failed', e.message); }
+  }
+
+  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const REALERT_MS = 6 * 60 * 60 * 1000;  // 6시간
+  const FAIL_THRESHOLD = 2;               // 연속 2회 실패 시 최초 알림
+
+  let next, action = 'none';
+  if (up) {
+    // 복구 알림 — 직전이 down 이고 다운 알림을 실제로 보냈던 경우만
+    if (prev.status === 'down' && prev.alerted) {
+      await notifyJandi(env, buildVpsHealthMsg(true, env, { since: prev.since }));
+      action = 'recovered';
+    }
+    next = {
+      status: 'up', failCount: 0,
+      since: prev.status === 'up' && prev.since ? prev.since : now,
+      lastCheckAt: now, detail, alerted: false, lastAlertAt: null,
+    };
+  } else {
+    const failCount = (prev.status === 'down' ? (prev.failCount || 0) : 0) + 1;
+    const since = prev.status === 'down' && prev.since ? prev.since : now;
+    let alerted = !!prev.alerted;
+    let lastAlertAt = prev.lastAlertAt || null;
+    const dueRealert = lastAlertAt && (nowMs - new Date(lastAlertAt).getTime()) >= REALERT_MS;
+    if ((failCount >= FAIL_THRESHOLD && !alerted) || (alerted && dueRealert)) {
+      await notifyJandi(env, buildVpsHealthMsg(false, env, { since, detail, failCount }));
+      alerted = true;
+      lastAlertAt = now;
+      action = 'alerted_down';
+    }
+    next = { status: 'down', failCount, since, lastCheckAt: now, detail, alerted, lastAlertAt };
+  }
+
+  // 3) 상태 저장
+  if (stateUrl) {
+    try {
+      await fetch(stateUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(next),
+      });
+    } catch (e) { console.warn('[vpsHealth] state save failed', e.message); }
+  }
+
+  return { up, detail, action, failCount: next.failCount };
+}
+
+function buildVpsHealthMsg(recovered, env, { since, detail, failCount } = {}) {
+  if (recovered) {
+    return {
+      body: '✅ VPS 복구됨 — K-APT 검증·잔디 매칭 정상화',
+      connectColor: '#16a34a',
+      connectInfo: [{
+        title: 'kapt-playwright-server 정상 응답 확인',
+        description: [
+          `다운 시작(추정): ${since || '-'}`,
+          `복구 확인: 방금`,
+          '',
+          'PT 승리 검증·잔디 공고문 자동매칭이 다시 작동합니다.',
+        ].join('\n'),
+      }],
+    };
+  }
+  return {
+    body: '🔴 VPS 응답 없음 — K-APT 검증·잔디 매칭 중단',
+    connectColor: '#dc2626',
+    connectInfo: [{
+      title: `${env.VPS_URL || 'VPS'} /health 실패`,
+      description: [
+        `사유: ${detail || '-'}`,
+        `연속 실패: ${failCount || '-'}회`,
+        `다운 시작(추정): ${since || '-'}`,
+        '',
+        '👉 조치: AWS EC2(서울 ap-northeast-2) 인스턴스 상태 확인 → 중지됐으면 시작.',
+        '   IP 바뀌면 Worker VPS_URL 시크릿 갱신 필요.',
+        '이 상태에선 PT 승리 검증·잔디 공고문 매칭이 멈춰 있습니다.',
+      ].join('\n'),
+    }],
+  };
 }
 
 // 지정한 URL 로 발송 (담당자별 개인 webhook 용). 재시도 정책 동일.
