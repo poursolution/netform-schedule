@@ -4248,7 +4248,8 @@ const SETTLEMENT_BADGE_STYLE = {
       };
 
       // 분기별 엑셀 내보내기 함수 (대표님 보고용)
-      const exportQuarterlyExcel = async (year, quarterStr, exportSettlementFilter = 'all') => {
+      // includeAmounts=false → 금액 기준·금액 컬럼 전부 제외한 버전 (외부 공유용)
+      const exportQuarterlyExcel = async (year, quarterStr, exportSettlementFilter = 'all', includeAmounts = true) => {
         const quarterRanges = {
           '1분기': { start: `${year}-01-01`, end: `${year}-03-31`, label: '1분기' },
           '2분기': { start: `${year}-04-01`, end: `${year}-06-30`, label: '2분기' },
@@ -4334,6 +4335,7 @@ const SETTLEMENT_BADGE_STYLE = {
                 assigneeData[assignee].items.push({
                   date: s.date || '',
                   siteName: (s.siteName || '').replace(/,/g, ' '),
+                  address: (s.address || '').replace(/,/g, ' '),
                   workType: (s.workType || '').replace(/,/g, ' '),
                   result,
                   amount,
@@ -4368,30 +4370,32 @@ const SETTLEMENT_BADGE_STYLE = {
             csv += `========================================\n`;
             csv += `[${name}] ${data.items.length}건 / ${formatMoney(data.totalAmount)}원\n`;
             csv += `========================================\n`;
-            csv += `순번,날짜,현장명,공종,결과,금액,경쟁사,사유\n`;
-            
+            csv += `순번,날짜,현장명,주소,공종,결과,금액,경쟁사,사유\n`;
+
             data.items.sort((a, b) => (a.date || '').localeCompare(b.date || '')).forEach((item, idx) => {
-              csv += `${idx + 1},${item.date},${item.siteName},${item.workType},${item.result},${formatMoney(item.amount)}원,${item.competitor},${item.reason}\n`;
+              csv += `${idx + 1},${item.date},${item.siteName},${item.address},${item.workType},${item.result},${formatMoney(item.amount)}원,${item.competitor},${item.reason}\n`;
             });
-            csv += `소계,,,${data.items.length}건,,${formatMoney(data.totalAmount)}원\n`;
+            csv += `소계,,,,${data.items.length}건,,${formatMoney(data.totalAmount)}원\n`;
           });
           
         } else {
           // 전체 보고서 CSV (기존 형식)
-          csv += `PT 실적 보고서\n`;
+          csv += includeAmounts ? `PT 실적 보고서\n` : `PT 실적 보고서 (금액 제외)\n`;
           csv += `\n`;
           csv += `기간,${year}년 ${range.label} (${range.start} ~ ${range.end})\n`;
           csv += `대상,${assigneeLabel}\n`;
           csv += `작성일,${reportDate}\n`;
           csv += `\n`;
-          
-          // 금액 기준 안내
-          csv += `[금액 기준]\n`;
-          csv += `승,${formatMoney(resultAmount['승'])}원\n`;
-          csv += `무,${formatMoney(resultAmount['무'])}원\n`;
-          csv += `패,${formatMoney(resultAmount['패'])}원\n`;
-          csv += `지원,${formatMoney(resultAmount['지원'])}원\n`;
-          csv += `\n`;
+
+          // 금액 기준 안내 (금액 제외 버전에서는 생략)
+          if (includeAmounts) {
+            csv += `[금액 기준]\n`;
+            csv += `승,${formatMoney(resultAmount['승'])}원\n`;
+            csv += `무,${formatMoney(resultAmount['무'])}원\n`;
+            csv += `패,${formatMoney(resultAmount['패'])}원\n`;
+            csv += `지원,${formatMoney(resultAmount['지원'])}원\n`;
+            csv += `\n`;
+          }
           
           // 담당자별 통계 계산
           const stats = {};
@@ -4446,26 +4450,34 @@ const SETTLEMENT_BADGE_STYLE = {
           csv += `지원,${totalSupport}건\n`;
           csv += `미정,${totalPending}건\n`;
           csv += `승률,${totalWinRate}%\n`;
-          csv += `총 금액,${formatMoney(grandTotalAmount)}원\n`;
+          if (includeAmounts) csv += `총 금액,${formatMoney(grandTotalAmount)}원\n`;
           csv += `\n`;
-          
+
           // 담당자별 상세
           csv += `[담당자별 실적]\n`;
-          csv += `담당자,승,무,패,지원,미정,총건수,승률,금액\n`;
-          
+          csv += includeAmounts
+            ? `담당자,승,무,패,지원,미정,총건수,승률,금액\n`
+            : `담당자,승,무,패,지원,미정,총건수,승률\n`;
+
           const sortedStats = Object.entries(stats).sort((a, b) => b[1].totalAmount - a[1].totalAmount);
-          
+
           sortedStats.forEach(([name, st]) => {
-            csv += `${name},${st.wins},${st.draws},${st.losses},${st.support},${st.pending},${st.total},${st.winRate}%,${formatMoney(st.totalAmount)}원\n`;
+            csv += includeAmounts
+              ? `${name},${st.wins},${st.draws},${st.losses},${st.support},${st.pending},${st.total},${st.winRate}%,${formatMoney(st.totalAmount)}원\n`
+              : `${name},${st.wins},${st.draws},${st.losses},${st.support},${st.pending},${st.total},${st.winRate}%\n`;
           });
-          
+
           if (Object.keys(stats).length > 1) {
-            csv += `합계,${totalWins},${totalDraws},${totalLosses},${totalSupport},${totalPending},${totalCount},${totalWinRate}%,${formatMoney(grandTotalAmount)}원\n`;
+            csv += includeAmounts
+              ? `합계,${totalWins},${totalDraws},${totalLosses},${totalSupport},${totalPending},${totalCount},${totalWinRate}%,${formatMoney(grandTotalAmount)}원\n`
+              : `합계,${totalWins},${totalDraws},${totalLosses},${totalSupport},${totalPending},${totalCount},${totalWinRate}%\n`;
           }
           
           // 상세 내역
           csv += '\n\n[상세 내역]\n';
-          csv += '날짜,현장명,공종,담당자,요청사,결과,본인영업,금액,경쟁사,사유\n';
+          csv += includeAmounts
+            ? '날짜,현장명,주소,공종,담당자,요청사,결과,본인영업,금액,경쟁사,사유\n'
+            : '날짜,현장명,주소,공종,담당자,요청사,결과,본인영업,경쟁사,사유\n';
           
           quarterSchedules.sort((a, b) => (a.date || '').localeCompare(b.date || '')).forEach(s => {
             const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
@@ -4491,12 +4503,15 @@ const SETTLEMENT_BADGE_STYLE = {
               }
               
               const siteName = (s.siteName || '').replace(/,/g, ' ');
+              const address = (s.address || '').replace(/,/g, ' ');
               const workType = (s.workType || '').replace(/,/g, ' ');
               const requester = (s.requester || '').replace(/,/g, ' ');
               const reasonText = reason.replace(/,/g, ' ').replace(/\n/g, ' ');
               const competitorText = competitor.replace(/,/g, ' ');
-              
-              csv += `${s.date || ''},${siteName},${workType},${assignee},${requester},${result},${isSelfSales ? 'O' : ''},${formatMoney(amount)}원,${competitorText},${reasonText}\n`;
+
+              csv += includeAmounts
+                ? `${s.date || ''},${siteName},${address},${workType},${assignee},${requester},${result},${isSelfSales ? 'O' : ''},${formatMoney(amount)}원,${competitorText},${reasonText}\n`
+                : `${s.date || ''},${siteName},${address},${workType},${assignee},${requester},${result},${isSelfSales ? 'O' : ''},${competitorText},${reasonText}\n`;
             });
           });
         }
@@ -4507,7 +4522,8 @@ const SETTLEMENT_BADGE_STYLE = {
         link.href = URL.createObjectURL(blob);
         const fileAssignee = selectedAssignee === 'all' ? '전체' : selectedAssignee;
         const fileFilter = exportSettlementFilter === 'requested' ? '_정산요청' : '';
-        link.download = `PT실적보고서_${year}년_${range.label}_${fileAssignee}${fileFilter}.csv`;
+        const fileAmount = includeAmounts ? '' : '_금액제외';
+        link.download = `PT실적보고서_${year}년_${range.label}_${fileAssignee}${fileFilter}${fileAmount}.csv`;
         link.click();
         
         setShowExportDropdown(false);
@@ -8965,6 +8981,7 @@ const SETTLEMENT_BADGE_STYLE = {
                   return (
                     <div style={{ display: 'flex', gap: '4px', marginLeft: isMobile ? '0' : 'auto', alignItems: 'center' }}>
                       <button onClick={() => exportQuarterlyExcel(expYear, exportQuarter, 'all')} style={{ padding: '7px 12px', borderRadius: '6px', border: '1px solid #16a34a', fontSize: '11px', fontWeight: '600', cursor: 'pointer', background: '#f0fdf4', color: '#16a34a' }}>Excel</button>
+                      <button onClick={() => exportQuarterlyExcel(expYear, exportQuarter, 'all', false)} title="금액 기준·금액 컬럼을 뺀 버전 (외부 공유용)" style={{ padding: '7px 12px', borderRadius: '6px', border: '1px solid #0d9488', fontSize: '11px', fontWeight: '600', cursor: 'pointer', background: '#f0fdfa', color: '#0d9488' }}>Excel(금액제외)</button>
                       <button onClick={() => exportToPDF(expYear, exportQuarter)} style={{ padding: '7px 12px', borderRadius: '6px', border: '1px solid #dc2626', fontSize: '11px', fontWeight: '600', cursor: 'pointer', background: '#fef2f2', color: '#dc2626' }}>PDF</button>
                       <button onClick={() => exportToPPT(expYear, exportQuarter)} style={{ padding: '7px 12px', borderRadius: '6px', border: '1px solid #2563eb', fontSize: '11px', fontWeight: '600', cursor: 'pointer', background: '#eff6ff', color: '#2563eb' }}>PPT</button>
                       {hasUnconfirmed && (
@@ -9442,7 +9459,7 @@ const SETTLEMENT_BADGE_STYLE = {
                           }).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
                           const detailRows = [
                             ['PT 상세 목록'],
-                            ['날짜', '현장명', '공종', '담당자', '결과', '경쟁사', '사유'],
+                            ['날짜', '현장명', '주소', '공종', '담당자', '결과', '경쟁사', '사유'],
                             ...detailPts.map(s => {
                               const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
                               const results = assignees.map(a => {
@@ -9457,11 +9474,11 @@ const SETTLEMENT_BADGE_STYLE = {
                                 const rd = s.resultReasons?.[a] || {};
                                 return rd.competitor || '';
                               }).filter(r => r).join(', ');
-                              return [s.date, s.siteName || '', s.workType || '', s.ptAssignee || '', results, competitors || s.competitor || '', reasons];
+                              return [s.date, s.siteName || '', s.address || '', s.workType || '', s.ptAssignee || '', results, competitors || s.competitor || '', reasons];
                             })
                           ];
                           const ws4 = XLSX.utils.aoa_to_sheet(detailRows);
-                          ws4['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 20 }, { wch: 14 }, { wch: 20 }, { wch: 16 }, { wch: 30 }];
+                          ws4['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 30 }, { wch: 20 }, { wch: 14 }, { wch: 20 }, { wch: 16 }, { wch: 30 }];
                           XLSX.utils.book_append_sheet(wb, ws4, 'PT상세');
 
                           // 시트4: 업체별 현황 (등급별 그룹핑)
@@ -19932,6 +19949,15 @@ tr.suppressed td.fname{color:#64748b;}
                 alert('Excel 생성 실패: ' + e.message);
               }
             };
+            // 금액 제외 버전 — 정산금액·단가 컬럼 없이 실적만 (외부 공유용)
+            const handleDownloadExcelNoAmount = () => {
+              try {
+                const blob = generateExcelBlob(report, { includeAmounts: false });
+                downloadBlob(blob, `${baseFilename}_금액제외.xlsx`);
+              } catch (e) {
+                alert('Excel 생성 실패: ' + e.message);
+              }
+            };
             const handleDownloadPDF = async () => {
               setQuarterReportBusy(true);
               try {
@@ -20342,6 +20368,11 @@ tr.suppressed td.fname{color:#64748b;}
                         <button onClick={handleDownloadExcel} disabled={quarterReportBusy}
                           style={{ flex: 1, padding: 10, background: '#16a34a', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', minWidth: 100 }}>
                           📑 Excel만
+                        </button>
+                        <button onClick={handleDownloadExcelNoAmount} disabled={quarterReportBusy}
+                          title="정산금액·단가 컬럼을 뺀 실적 전용 버전 (외부 공유용)"
+                          style={{ flex: 1, padding: 10, background: '#0d9488', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', minWidth: 100 }}>
+                          📑 Excel (금액 제외)
                         </button>
                         <button onClick={handleDownloadPDF} disabled={quarterReportBusy}
                           style={{ flex: 1, padding: 10, background: '#dc2626', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', minWidth: 100 }}>

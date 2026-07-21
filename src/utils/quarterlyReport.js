@@ -210,6 +210,17 @@ function getVerifyReason(s, assignee) {
   return '미검증 (K-APT 미통과 · 증빙 없음 · 공고번호 미입력)';
 }
 
+// === 금액 미반영 사유 라벨 (calculateSettlementAmount reason → 한글) ===
+const EXCLUSION_REASON_LABELS = {
+  loss: '패 (POUR 공법 미입찰 — 0원)',
+  self_sales: '본인영업 (정산 제외)',
+  vendor_self_pt: '자체PT (협약사 자체 진행 — 정산 제외)',
+  draw_support_excluded: '주담 무승부 — 지원자 예외승인 없음 (0원)',
+  cancelled_notice: '취소공고 (발주처 공고 취소 — 재공고 대기)',
+  settlement_excluded: '정산예외 (관리자 판단 정산 제외)',
+  supervision_pending_input: '감리 금액 미입력 (수동 입력 대기)',
+};
+
 // === 확정일 추출 (우선순위 fallback) ===
 //   1. settlement.{a}.finalConfirmedAt (Phase 4 최종확정)
 //   2. settlement.{a}.requestedAt (정산요청 시점)
@@ -235,6 +246,18 @@ export function aggregateQuarterlyReport(allData, year, quarter, opts = {}) {
   const SETTLEMENT_RESULTS = new Set(['승', '무', '지원', '감리']);
   const ptVerified = [];
   const ptUnverified = [];
+  // 금액 미반영 내역 — PT 진행일이 분기 안인데 정산금액에 안 잡힌 건 + 사유
+  const ptExcludedItems = [];
+  const pushExcluded = (s, a, reason, result) => {
+    ptExcludedItems.push({
+      date: s.date,
+      siteName: s.siteName || '',
+      address: s.address || '',
+      assignee: a,
+      result: result || '',
+      reason,
+    });
+  };
   // 주말출근(토/일) — PT 진행일 기준 분기 귀속, 결과 무관
   //   PT 결과(승/무/지원/패) 와 정산 fallback 체인 무관 — 단순 출근일 집계.
   //   범위: PT 진행일(s.date)이 분기 안에 있으면 카운트.
@@ -261,7 +284,17 @@ export function aggregateQuarterlyReport(allData, year, quarter, opts = {}) {
 
   ptSchedules.forEach(s => {
     if (!s.date) { debugStats.skippedNoDate++; return; }
-    if (s.kaptVerified?.status === 'cancelled') { debugStats.skippedCancelled++; return; }
+    const inQuarter = inRange(s.date, range);
+    if (s.kaptVerified?.status === 'cancelled') {
+      debugStats.skippedCancelled++;
+      if (inQuarter) {
+        parseAssignees(s.ptAssignee).forEach(a => {
+          if (!SETTLEMENT_ASSIGNEES_SET.has(a)) return;
+          pushExcluded(s, a, EXCLUSION_REASON_LABELS.cancelled_notice, getPtResult(s, a));
+        });
+      }
+      return;
+    }
 
     // 분기정산 모달과 동일: pt.date 기준 분기 귀속 + grace 룰
     // 주말출근 — PT 진행일 in range, 결과/requested 무관 (취소공고는 제외)
@@ -286,6 +319,20 @@ export function aggregateQuarterlyReport(allData, year, quarter, opts = {}) {
       if (!SETTLEMENT_ASSIGNEES_SET.has(a)) { debugStats.skippedNonSettlementAssignee++; return; }
       if (!isQuarterSettlementTarget(s, a, quarterKey, opts)) {
         debugStats.skippedOutOfQuarter++;
+        // \ubd84\uae30 \ub0b4 PT\uc778\ub370 \uc9d1\uacc4 \ub300\uc0c1\uc774 \uc544\ub2cc \uac74 \u2192 \ubbf8\ubc18\uc601 \uc0ac\uc720 \uae30\ub85d
+        if (inQuarter) {
+          const stl0 = s.settlement?.[a] || {};
+          const calc0 = calculateSettlementAmount(s, a);
+          let reason;
+          if (s.selfPT) reason = EXCLUSION_REASON_LABELS.vendor_self_pt;
+          else if (stl0.completed === true) reason = '\uc815\uc0b0\uc644\ub8cc (\uae30\uc9c0\uae09 \u2014 \ubcf8 \ubd84\uae30 \uc9d1\uacc4 \uc81c\uc678)';
+          else if (stl0.superseded === true || stl0.status === 'superseded') reason = '\uc911\ubcf5\ub300\uccb4 \uac74 (\ub2e4\ub978 \uac74\uc73c\ub85c \ub300\uccb4)';
+          else if (calc0.reason && EXCLUSION_REASON_LABELS[calc0.reason]) reason = EXCLUSION_REASON_LABELS[calc0.reason];
+          else if (calc0.result === '\ud328') reason = EXCLUSION_REASON_LABELS.loss;
+          else if (!calc0.result) reason = '\uacb0\uacfc \ubbf8\uc785\ub825 (\uc2b9/\ubb34/\ud328 \uc785\ub825 \uc804)';
+          else reason = '\uc815\uc0b0 \ubbf8\uc694\uccad (\uc815\uc0b0\uc694\uccad\u00b7\uc218\ub3d9\uac80\uc99d \uc804 \u2014 \ucc28\uae30 \uc9d1\uacc4 \ub300\uc0c1)';
+          pushExcluded(s, a, reason, calc0.result || getPtResult(s, a));
+        }
         return;
       }
       const rawResult = getPtResult(s, a);
@@ -295,7 +342,16 @@ export function aggregateQuarterlyReport(allData, year, quarter, opts = {}) {
         ? { amount: 500000, result: '\uc2b9', reason: null }
         : calculateSettlementAmount(s, a);
       const effectiveResult = exceptionApproved ? '\uc2b9' : (calc.result || rawResult);
-      if (!SETTLEMENT_RESULTS.has(effectiveResult)) { debugStats.skippedNonSettlementResult++; return; }
+      if (!SETTLEMENT_RESULTS.has(effectiveResult)) {
+        debugStats.skippedNonSettlementResult++;
+        if (inQuarter) {
+          const reason = (calc.reason && EXCLUSION_REASON_LABELS[calc.reason])
+            || (calc.result === '\ud328' ? EXCLUSION_REASON_LABELS.loss : null)
+            || (!rawResult ? '\uacb0\uacfc \ubbf8\uc785\ub825 (\uc2b9/\ubb34/\ud328 \uc785\ub825 \uc804)' : '\uc815\uc0b0 \ub300\uc0c1 \uacb0\uacfc \uc544\ub2d8');
+          pushExcluded(s, a, reason, calc.result || rawResult);
+        }
+        return;
+      }
 
       const confirmDate = extractConfirmDate(s, a);
       const stl = s.settlement?.[a] || {};
@@ -305,6 +361,7 @@ export function aggregateQuarterlyReport(allData, year, quarter, opts = {}) {
         confirmDate,
         bidNo: s.bidNo || '',
         siteName: s.siteName || '',
+        address: s.address || '',
         assignee: a,
         result: exceptionApproved ? effectiveResult : calc.result,
         rawResult,
@@ -382,17 +439,23 @@ export function aggregateQuarterlyReport(allData, year, quarter, opts = {}) {
     annualLeaveDays: summary.reduce((s, r) => s + r.annualLeaveDays, 0),
   };
 
+  ptExcludedItems.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
   return {
     range, summary, byAssignee,
     ptVerified, ptUnverified, totals,
+    ptExcludedItems,
     weekendItems, weekendByAssignee,
     year, quarter, debugStats,
   };
 }
 
-// === Excel 생성 (2 시트: 표지·요약 + PT 상세) ===
-export function generateExcelBlob(report) {
+// === Excel 생성 (표지·요약 + 주말출근 + PT상세 + 금액미반영) ===
+//   opts.includeAmounts === false → 정산금액·단가 컬럼 전부 제외한 버전 생성
+export function generateExcelBlob(report, opts = {}) {
+  const includeAmounts = opts.includeAmounts !== false;  // 기본: 금액 포함
   const { range, summary, byAssignee, totals, year } = report;
+  const excludedItems = report.ptExcludedItems || [];
   const wb = XLSX.utils.book_new();
   wb.Props = {
     Title: `${year}년 ${range.label} PT 실적 보고서`,
@@ -402,18 +465,15 @@ export function generateExcelBlob(report) {
   };
 
   // ----- Sheet1: 표지 + 담당자별 요약 -----
-  const summaryRows = summary.map(r => [
-    r.assignee, r.ptCount, r.ptWin, r.ptDraw, r.ptSupport, r.settlementAmount,
-    r.weekendCount, r.annualLeaveDays,
-  ]);
-  const totalRow = [
-    '합계',
-    totals.ptCount, totals.ptWin, totals.ptDraw, totals.ptSupport, totals.settlementAmount,
-    totals.weekendCount, totals.annualLeaveDays,
-  ];
+  const summaryRows = summary.map(r => includeAmounts
+    ? [r.assignee, r.ptCount, r.ptWin, r.ptDraw, r.ptSupport, r.settlementAmount, r.weekendCount, r.annualLeaveDays]
+    : [r.assignee, r.ptCount, r.ptWin, r.ptDraw, r.ptSupport, r.weekendCount, r.annualLeaveDays]);
+  const totalRow = includeAmounts
+    ? ['합계', totals.ptCount, totals.ptWin, totals.ptDraw, totals.ptSupport, totals.settlementAmount, totals.weekendCount, totals.annualLeaveDays]
+    : ['합계', totals.ptCount, totals.ptWin, totals.ptDraw, totals.ptSupport, totals.weekendCount, totals.annualLeaveDays];
 
   const sheet1Data = [
-    [`${year}년 ${range.label} PT 실적 보고서`],
+    [`${year}년 ${range.label} PT 실적 보고서${includeAmounts ? '' : ' (금액 제외)'}`],
     [`기간: ${range.start} ~ ${range.end} (분기정산 대상 기준)`],
     [`발송일: ${new Date().toISOString().slice(0,10)} · 수신: 김유림(yurim@netformrnd.com)`],
     [],
@@ -421,37 +481,65 @@ export function generateExcelBlob(report) {
     ['항목', '값'],
     ['총 정산 대상 건수', totals.ptCount + '건'],
     ['결과 분포', `승 ${totals.ptWin} / 무 ${totals.ptDraw} / 지원 ${totals.ptSupport}`],
-    ['총 정산금액', totals.settlementAmount.toLocaleString() + '원'],
+    ...(includeAmounts ? [['총 정산금액', totals.settlementAmount.toLocaleString() + '원']] : []),
     ['주말출근 (토/일)', `${totals.weekendCount}회 → 연차 ${totals.annualLeaveDays}일 (1.5배 환산)`],
+    ['금액 미반영', `${excludedItems.length}건 (사유별 상세: '금액미반영' 시트)`],
     [],
     ['【 담당자별 실적 】'],
-    ['담당자', 'PT건수', '승', '무', '지원', '정산금액(원)', '주말출근(회)', '연차환산(일·1.5배)'],
+    includeAmounts
+      ? ['담당자', 'PT건수', '승', '무', '지원', '정산금액(원)', '주말출근(회)', '연차환산(일·1.5배)']
+      : ['담당자', 'PT건수', '승', '무', '지원', '주말출근(회)', '연차환산(일·1.5배)'],
     ...summaryRows,
     totalRow,
     [],
     ['【 PT 결과 판정 기준 】'],
-    ['결과', '기준', '정산 단가'],
-    ['승', 'POUR 공법 단독 입찰', '500,000원'],
-    ['무', 'POUR 공법 + 타공법 동시 입찰', '250,000원'],
-    ['지원', '한 현장 2명 이상 — 주영업 외 지원', '250,000원 (주담 패배 시 0원)'],
-    ['패', 'POUR 공법 미입찰', '0원'],
-    ['감리', '감리 공종 (공고문 요구 없음)', '한준엽/관리자 수동 입력 금액'],
+    ...(includeAmounts ? [
+      ['결과', '기준', '정산 단가'],
+      ['승', 'POUR 공법 단독 입찰', '500,000원'],
+      ['무', 'POUR 공법 + 타공법 동시 입찰', '250,000원'],
+      ['지원', '한 현장 2명 이상 — 주영업 외 지원', '250,000원 (주담 패배 시 0원)'],
+      ['패', 'POUR 공법 미입찰', '0원'],
+      ['감리', '감리 공종 (공고문 요구 없음)', '한준엽/관리자 수동 입력 금액'],
+    ] : [
+      ['결과', '기준'],
+      ['승', 'POUR 공법 단독 입찰'],
+      ['무', 'POUR 공법 + 타공법 동시 입찰'],
+      ['지원', '한 현장 2명 이상 — 주영업 외 지원'],
+      ['패', 'POUR 공법 미입찰'],
+      ['감리', '감리 공종 (공고문 요구 없음)'],
+    ]),
     [],
     ['※ 집계 기준: 관리자 분기정산 화면과 동일 (정산요청/수동검증 · 완료 제외)'],
     ['※ 자체PT(selfPT) · 본인영업 건은 정산 제외 (0원 처리)'],
     ['※ 취소공고 건은 집계 제외'],
+    [],
+    ['【 금액 미반영 기준 】 — 아래 사유에 해당하면 정산금액 0원 또는 집계 제외'],
+    ['사유', '설명'],
+    ['패', 'POUR 공법 미입찰 — 0원'],
+    ['결과 미입력', '담당자 결과(승/무/패) 입력 전'],
+    ['본인영업', '담당자 본인 영업 건 — 정산 제외'],
+    ['자체PT', '협약사 자체 진행 PT — 정산 제외'],
+    ['취소공고', '발주처 공고 취소 — 재공고 대기'],
+    ['주담 무·지원 미승인', '주담당 무승부 시 지원자는 관리자 예외승인 필요'],
+    ['정산예외', '관리자 판단으로 정산 대상 제외'],
+    ['정산 미요청', '정산요청·수동검증 전 — 차기 분기 집계 대상'],
+    ['정산완료', '이미 지급 완료 — 본 분기 집계 제외'],
+    ['감리 금액 미입력', '감리 건은 수동 입력 금액 확정 전까지 0원'],
+    ['※ 건별 상세는 "금액미반영" 시트 참조'],
   ];
   const ws1 = XLSX.utils.aoa_to_sheet(sheet1Data);
-  ws1['!cols'] = [
-    { wch: 12 }, { wch: 10 }, { wch: 6 }, { wch: 6 }, { wch: 8 }, { wch: 16 }, { wch: 12 }, { wch: 14 },
-  ];
-  // 제목/소제목 행: 8 컬럼 전부 머지
+  ws1['!cols'] = includeAmounts
+    ? [{ wch: 12 }, { wch: 10 }, { wch: 6 }, { wch: 6 }, { wch: 8 }, { wch: 16 }, { wch: 12 }, { wch: 14 }]
+    : [{ wch: 12 }, { wch: 10 }, { wch: 6 }, { wch: 6 }, { wch: 8 }, { wch: 12 }, { wch: 14 }];
+  // 제목/소제목 행: 전체 컬럼 머지 (금액 유무에 따라 행/컬럼 수 달라지므로 동적 계산)
+  const lastCol = includeAmounts ? 7 : 6;
+  const assigneeHeaderRow = sheet1Data.findIndex(r => r[0] === '【 담당자별 실적 】');
   ws1['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } },
-    { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } },
-    { s: { r: 2, c: 0 }, e: { r: 2, c: 7 } },
-    { s: { r: 4, c: 0 }, e: { r: 4, c: 7 } },
-    { s: { r: 11, c: 0 }, e: { r: 11, c: 7 } },
+    { s: { r: 0, c: 0 }, e: { r: 0, c: lastCol } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: lastCol } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: lastCol } },
+    { s: { r: 4, c: 0 }, e: { r: 4, c: lastCol } },
+    { s: { r: assigneeHeaderRow, c: 0 }, e: { r: assigneeHeaderRow, c: lastCol } },
   ];
   XLSX.utils.book_append_sheet(wb, ws1, '표지·요약');
 
@@ -481,30 +569,63 @@ export function generateExcelBlob(report) {
     ['※ 자체PT·본인영업·취소공고 건은 제외 · 패배 건은 금액 0원이므로 제외'],
     [],
     ['【 담당자별 합계 】'],
-    ['담당자', 'PT 건수', '승', '무', '지원', '정산금액(원)'],
-    ...summary.map(r => [r.assignee, r.ptCount, r.ptWin, r.ptDraw, r.ptSupport, r.settlementAmount]),
-    ['합계', totals.ptCount, totals.ptWin, totals.ptDraw, totals.ptSupport, totals.settlementAmount],
+    includeAmounts
+      ? ['담당자', 'PT 건수', '승', '무', '지원', '정산금액(원)']
+      : ['담당자', 'PT 건수', '승', '무', '지원'],
+    ...summary.map(r => includeAmounts
+      ? [r.assignee, r.ptCount, r.ptWin, r.ptDraw, r.ptSupport, r.settlementAmount]
+      : [r.assignee, r.ptCount, r.ptWin, r.ptDraw, r.ptSupport]),
+    includeAmounts
+      ? ['합계', totals.ptCount, totals.ptWin, totals.ptDraw, totals.ptSupport, totals.settlementAmount]
+      : ['합계', totals.ptCount, totals.ptWin, totals.ptDraw, totals.ptSupport],
     [],
     ['【 담당자별 상세 】'],
   ];
   SETTLEMENT_ASSIGNEES.forEach(a => {
     const items = byAssignee[a].ptItems;
     const subSum = items.reduce((s, r) => s + r.amount, 0);
-    ptData.push([`■ ${a} (${items.length}건 · ${subSum.toLocaleString()}원)`]);
+    ptData.push([includeAmounts
+      ? `■ ${a} (${items.length}건 · ${subSum.toLocaleString()}원)`
+      : `■ ${a} (${items.length}건)`]);
     if (items.length === 0) {
       ptData.push(['  - 해당 분기 정산 대상 PT 없음']);
     } else {
-      ptData.push(['확정일', 'PT일', '공고번호', '단지명', '결과', '정산상태', '정산금액(원)', '비고']);
-      items.forEach(r => ptData.push([
-        r.confirmDate, r.date, r.bidNo, r.siteName, r.result,
-        r.settlementStatus, r.amount, r.note,
-      ]));
+      ptData.push(includeAmounts
+        ? ['확정일', 'PT일', '공고번호', '단지명', '주소', '결과', '정산상태', '정산금액(원)', '비고']
+        : ['확정일', 'PT일', '공고번호', '단지명', '주소', '결과', '정산상태', '비고']);
+      items.forEach(r => ptData.push(includeAmounts
+        ? [r.confirmDate, r.date, r.bidNo, r.siteName, r.address, r.result, r.settlementStatus, r.amount, r.note]
+        : [r.confirmDate, r.date, r.bidNo, r.siteName, r.address, r.result, r.settlementStatus, r.note]));
     }
     ptData.push([]);
   });
   const ws2 = XLSX.utils.aoa_to_sheet(ptData);
-  ws2['!cols'] = [{wch:12},{wch:12},{wch:14},{wch:28},{wch:6},{wch:10},{wch:14},{wch:25}];
+  ws2['!cols'] = includeAmounts
+    ? [{wch:12},{wch:12},{wch:14},{wch:28},{wch:30},{wch:6},{wch:10},{wch:14},{wch:25}]
+    : [{wch:12},{wch:12},{wch:14},{wch:28},{wch:30},{wch:6},{wch:10},{wch:25}];
   XLSX.utils.book_append_sheet(wb, ws2, 'PT상세');
+
+  // ----- Sheet3: 금액 미반영 내역 (0원 · 집계 제외 건 + 사유) -----
+  const exData = [
+    [`${year}년 ${range.label} 금액 미반영 내역`],
+    [`총 ${excludedItems.length}건 — PT 진행일이 분기 내인 건 중 정산금액에 반영되지 않은 건과 그 사유`],
+    [],
+    ['PT일', '단지명', '주소', '담당자', '결과', '미반영 사유'],
+  ];
+  if (excludedItems.length === 0) {
+    exData.push(['해당 분기 금액 미반영 건 없음']);
+  } else {
+    excludedItems.forEach(x => exData.push([
+      x.date, x.siteName, x.address, x.assignee, x.result || '-', x.reason,
+    ]));
+  }
+  const ws3 = XLSX.utils.aoa_to_sheet(exData);
+  ws3['!cols'] = [{wch:12},{wch:28},{wch:30},{wch:10},{wch:8},{wch:44}];
+  ws3['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
+  ];
+  XLSX.utils.book_append_sheet(wb, ws3, '금액미반영');
 
   const wbout = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
   return new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
