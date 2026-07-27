@@ -38,12 +38,38 @@ import { sendJandiNotification } from './utils/jandi.js';
 import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculateSettlementAmount, EXCLUSION_REASONS, shouldAutoTransitionToTarget, buildAutoTransitionPatch, AUTO_TRANSITION_START } from './utils/settlement.js';
 import { aggregateQuarterSettlement, isQuarterSettlementTarget } from './utils/quarterlySettlementCore.js';
 import { buildVerificationOnResultClick, VERIFICATION_STATUS } from './utils/verification.js';
+import { hasFullDataViewAccess } from './utils/accessControl.js';
 
 const getQuarterSettlementOptions = (quarterKey) => ({
   // 이전 분기에 정산요청됐지만 아직 지급완료되지 않은 건은
   // 지급될 때까지 현재 분기 정산에 이월한다.
   includeLegacyCarryover: /^\d{4}-Q[1-4]$/.test(String(quarterKey || '')),
 });
+
+// 운영 화면에서는 숨기되 기능 코드는 유지한다. 필요 시 한 곳만 바꿔 다시 노출 가능.
+const SHOW_ADVANCED_ADMIN_TOOLS = false;
+
+const AppIcon = ({ name, size = 20, strokeWidth = 1.8, className = '' }) => {
+  const paths = {
+    calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>,
+    performance: <><path d="M4 20V11M10 20V6M16 20V3M22 20H2" /><path d="m4 8 5-4 5 2 6-5" /></>,
+    documentHelp: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6M9.5 13a2.5 2.5 0 1 1 3.1 2.4c-.8.3-1.1.8-1.1 1.6M11.5 20h.01" /></>,
+    receipt: <><path d="M5 3v18l3-2 4 2 4-2 3 2V3l-3 2-4-2-4 2Z" /><circle cx="12" cy="12" r="3.2" /><path d="M10.4 11.1h3.2M10.7 12.6h2.6M12 9.8v4.4" /></>,
+    funnel: <><path d="M3 4h18l-7 8v6l-4 2v-8Z" /></>,
+    lock: <><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3" /></>,
+    settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></>,
+    home: <><path d="m3 11 9-8 9 8" /><path d="M5 10v11h14V10M9 21v-6h6v6" /></>,
+    user: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
+    plus: <><path d="M12 5v14M5 12h14" /></>,
+  };
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      {paths[name] || paths.documentHelp}
+    </svg>
+  );
+};
 
 // 패배 사유 분류기 (대표 보고용 분석 리포트)
 //   resultReasons.{assignee}.reason 자유 텍스트 → 카테고리 매핑
@@ -603,7 +629,7 @@ const SETTLEMENT_BADGE_STYLE = {
       };
       const [showDashboard, setShowDashboard] = useState(true);
       // 메인 접근 권한 체크 (admin, 이승우, 황윤선만)
-      const canAccessMain = (acc) => acc.isAdmin || acc.name === '이승우' || acc.name === '황윤선';
+      const canAccessMain = (acc) => hasFullDataViewAccess(acc);
       const [salesSchedules, setSalesSchedules] = useState([]);
       const [showSalesModal, setShowSalesModal] = useState(false);
       const [editingSales, setEditingSales] = useState(null);
@@ -1858,8 +1884,8 @@ const SETTLEMENT_BADGE_STYLE = {
             }
             setCurrentUser({ id, ...account });
             setIsLoggedIn(true);
-            // 모든 사용자에게 전체 보기 기본값
-            setSelectedAssignee('all');
+            // 전체조회 권한자는 전체, 일반 사용자는 본인 데이터로 시작
+            setSelectedAssignee(hasFullDataViewAccess(account) ? 'all' : account.name);
             // 메인 접근 불가 사용자는 마이페이지로 이동
             if (!canAccessMain(account)) {
               setShowDashboard(false);
@@ -2343,8 +2369,8 @@ const SETTLEMENT_BADGE_STYLE = {
           setLoginPw('');
           // 자동 로그인 저장
           localStorage.setItem('autoLogin', JSON.stringify({ id: loginId, password: loginPw }));
-          // 모든 사용자에게 전체 보기 기본값
-          setSelectedAssignee('all');
+          // 전체조회 권한자는 전체, 일반 사용자는 본인 데이터로 시작
+          setSelectedAssignee(hasFullDataViewAccess(account) ? 'all' : account.name);
           // 메인 접근 불가 사용자는 마이페이지로 이동
           if (!canAccessMain(account)) {
             setShowDashboard(false);
@@ -4279,7 +4305,7 @@ const SETTLEMENT_BADGE_STYLE = {
         // 내보낼 담당자 목록 결정
         let exportAssignees = [];
         if (selectedAssignee === 'all') {
-          if (currentUser?.isAdmin) {
+          if (hasFullDataViewAccess(currentUser)) {
             exportAssignees = assigneeList;
           } else {
             exportAssignees = [currentUser?.name];
@@ -4559,7 +4585,7 @@ const SETTLEMENT_BADGE_STYLE = {
         
         let exportAssignees = [];
         if (selectedAssignee === 'all') {
-          exportAssignees = currentUser?.isAdmin ? assigneeList : [currentUser?.name];
+          exportAssignees = hasFullDataViewAccess(currentUser) ? assigneeList : [currentUser?.name];
         } else {
           exportAssignees = [selectedAssignee];
         }
@@ -4748,7 +4774,7 @@ const SETTLEMENT_BADGE_STYLE = {
         
         let exportAssignees = [];
         if (selectedAssignee === 'all') {
-          exportAssignees = currentUser?.isAdmin ? assigneeList : [currentUser?.name];
+          exportAssignees = hasFullDataViewAccess(currentUser) ? assigneeList : [currentUser?.name];
         } else {
           exportAssignees = [selectedAssignee];
         }
@@ -5955,20 +5981,13 @@ const SETTLEMENT_BADGE_STYLE = {
       };
       const availableYears = getAvailableYears();
       
-      // 팀장용 팀원 필터 함수 (한준엽 하드코딩)
-      const teamLeaderName = '한준엽';
-      const teamMembersList = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '황윤선'];
-      const isCurrentUserTeamLeader = currentUser?.name === teamLeaderName;
-      
-      const isTeamMemberSchedule = (schedule) => {
-        if (!isCurrentUserTeamLeader) return true;
-        if (!schedule.ptAssignee) return false;
-        const assignees = schedule.ptAssignee.split(/[\/,+&]/).map(a => a.trim());
-        return assignees.some(a => teamMembersList.includes(a));
-      };
-      
       const filteredPtByAssignee = (selectedAssignee === 'all' 
-        ? (isCurrentUserTeamLeader ? ptSchedules.filter(isTeamMemberSchedule) : ptSchedules)
+        ? (hasFullDataViewAccess(currentUser)
+            ? ptSchedules
+            : ptSchedules.filter(s => {
+                if (!s.ptAssignee) return false;
+                return s.ptAssignee.split(/[\/,+&]/).map(a => a.trim()).includes(currentUser?.name);
+              }))
         : ptSchedules.filter(s => {
             if (!s.ptAssignee) return false;
             const assignees = s.ptAssignee.split(/[\/,+&]/).map(a => a.trim());
@@ -6453,21 +6472,25 @@ const SETTLEMENT_BADGE_STYLE = {
                 return (
                   <>
                     {/* === 상단 필수 (관리자 핵심 액션) === */}
-                    <AdminBtnWrap caption="김유림 급여 반영용 집계">
-                      <button onClick={() => setShowQuarterReportModal(true)} style={baseBtn}
-                        title="김유림에게 분기 종합 보고서 발송 (PT 정산 + 주말출근)"
-                      >분기보고서</button>
-                    </AdminBtnWrap>
-                    <AdminBtnWrap caption="대표 보고용 승률·패인">
-                      <button onClick={() => setShowAnalysisReport(true)} style={baseBtn}
-                        title="대표 보고용 분석 리포트 — 공종별 승률 / 공법 경쟁 / 패배 원인"
-                      >분석</button>
-                    </AdminBtnWrap>
-                    <AdminBtnWrap caption="운영 투입 전 자동 검사">
-                      <button onClick={() => setShowUATModal(true)} style={baseBtn}
-                        title="UAT — 8가지 운영 시나리오 자동 검증 (운영 투입 전)"
-                      >UAT</button>
-                    </AdminBtnWrap>
+                    {SHOW_ADVANCED_ADMIN_TOOLS && (
+                      <>
+                        <AdminBtnWrap caption="김유림 급여 반영용 집계">
+                          <button onClick={() => setShowQuarterReportModal(true)} style={baseBtn}
+                            title="김유림에게 분기 종합 보고서 발송 (PT 정산 + 주말출근)"
+                          >분기보고서</button>
+                        </AdminBtnWrap>
+                        <AdminBtnWrap caption="대표 보고용 승률·패인">
+                          <button onClick={() => setShowAnalysisReport(true)} style={baseBtn}
+                            title="대표 보고용 분석 리포트 — 공종별 승률 / 공법 경쟁 / 패배 원인"
+                          >분석</button>
+                        </AdminBtnWrap>
+                        <AdminBtnWrap caption="운영 투입 전 자동 검사">
+                          <button onClick={() => setShowUATModal(true)} style={baseBtn}
+                            title="UAT — 8가지 운영 시나리오 자동 검증 (운영 투입 전)"
+                          >UAT</button>
+                        </AdminBtnWrap>
+                      </>
+                    )}
 
                     {/* === 드롭다운 A: 감사·이슈 (피드백 목록 / 예외 / 로그) === */}
                     <AdminBtnWrap caption="피드백 · 예외 · 로그">
@@ -8952,7 +8975,9 @@ const SETTLEMENT_BADGE_STYLE = {
                 </div>
                 {/* 담당자 */}
                 <select value={selectedAssignee} onChange={(e) => { setSelectedAssignee(e.target.value); setDashboardView('overview'); setShowWorkTypeAnalysis(false); setShowLossReasonAnalysis(false); }} style={{ padding: '9px 28px 9px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: selectedAssignee === 'all' ? 'white' : '#BBE1FA', color: selectedAssignee === 'all' ? '#64748b' : '#0F4C75', outline: 'none', appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center', backgroundSize: '16px', minWidth: '90px' }}>
-                  {(() => { return (<><option value="all">전체</option>{assigneeList.map(a => <option key={a} value={a}>{a}</option>)}</>); })()}
+                  {hasFullDataViewAccess(currentUser)
+                    ? <><option value="all">전체</option>{assigneeList.map(a => <option key={a} value={a}>{a}</option>)}</>
+                    : <option value={currentUser?.name}>{currentUser?.name}</option>}
                 </select>
                 {/* 연도 */}
                 <select value={exportYear} onChange={(e) => setExportYear(e.target.value)} style={{ padding: '9px 28px 9px 12px', borderRadius: '8px', border: exportYear === 'all' ? '2px solid #3282B8' : '1px solid #e2e8f0', fontSize: '13px', fontWeight: '600', cursor: 'pointer', background: exportYear === 'all' ? '#BBE1FA' : 'white', color: exportYear === 'all' ? '#0F4C75' : '#1e293b', outline: 'none', appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center', backgroundSize: '16px', minWidth: '85px' }}>
@@ -9146,7 +9171,7 @@ const SETTLEMENT_BADGE_STYLE = {
                     {/* 담당자별 카드 (개요/분석 탭 위) */}
                     <div style={{ marginBottom: '16px' }}>
                       <div style={{ fontSize: '13px', fontWeight: '700', color: '#64748b', marginBottom: '8px' }}>담당자별</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : `repeat(${(() => { const isTeamLeader = currentUser?.name === '한준엽'; const teamMembers = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '황윤선']; const displayList = isTeamLeader ? assigneeList.filter(a => teamMembers.includes(a)) : assigneeList; return Math.min(displayList.length + 1, 10); })()}, 1fr)`, gap: '10px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : `repeat(${Math.min(assigneeList.length + 1, 10)}, 1fr)`, gap: '10px' }}>
                         {/* 전체 카드 */}
                         {(() => {
                           const isActive = previewAssignee === null;
@@ -9166,9 +9191,9 @@ const SETTLEMENT_BADGE_STYLE = {
                         })()}
                         {/* 개별 담당자 카드 */}
                         {(() => {
-                          const isTeamLeader = currentUser?.name === '한준엽';
-                          const teamMembers = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '황윤선'];
-                          const displayList = isTeamLeader ? assigneeList.filter(a => teamMembers.includes(a)) : assigneeList;
+                          const displayList = hasFullDataViewAccess(currentUser)
+                            ? assigneeList
+                            : assigneeList.filter(a => a === currentUser?.name);
                           return displayList.map(a => {
                             const st = getPerformanceStats(a, exportYear, exportQuarter);
                             const an = getPtAnalysis(a, ptSchedules);
@@ -9204,9 +9229,9 @@ const SETTLEMENT_BADGE_STYLE = {
                     {dashboardView === 'summary' && (() => {
                       const periodLabel = exportYear === 'all' ? '전체' : exportQuarter ? `${exportYear} ${exportQuarter}` : `${exportYear}`;
                       // 담당자별 실적 테이블
-                      const isTeamLeader = currentUser?.name === '한준엽';
-                      const teamMembers = ['한준엽', '조재연', '이필선', '한인규', '정정훈', '김성민', '황윤선'];
-                      const displayList = isTeamLeader ? assigneeList.filter(a => teamMembers.includes(a)) : assigneeList;
+                      const displayList = hasFullDataViewAccess(currentUser)
+                        ? assigneeList
+                        : assigneeList.filter(a => a === currentUser?.name);
                       const assigneeStats = displayList.map(a => {
                         const st = getPerformanceStats(a, exportYear, exportQuarter);
                         return { name: a, ...st };
@@ -12136,10 +12161,12 @@ tr.suppressed td.fname{color:#64748b;}
                 const team1 = ['한준엽', '조재연', '정정훈', '김성민'];
                 const team2 = ['이필선'];
                 const team3 = ['조현식', '한인규'];
-                const allMembers = [...team1, ...team2, ...team3];
+                const leaders = ['이승우', '황윤선'];
+                const allMembers = [...leaders, ...team1, ...team2, ...team3];
                 const isAdmin = currentUser?.isAdmin === true;
-                const viewingUser = (isAdmin && (!myPageUser || !allMembers.includes(myPageUser))) ? allMembers[0] : (myPageUser || currentUser.name);
-                const getTeamName = (name) => team1.includes(name) ? '영업1팀' : team2.includes(name) ? '영업2팀' : team3.includes(name) ? '영업3팀' : '';
+                const canViewAllData = hasFullDataViewAccess(currentUser);
+                const viewingUser = (canViewAllData && (!myPageUser || !allMembers.includes(myPageUser))) ? allMembers[0] : (myPageUser || currentUser.name);
+                const getTeamName = (name) => leaders.includes(name) ? '영업관리' : team1.includes(name) ? '영업1팀' : team2.includes(name) ? '영업2팀' : team3.includes(name) ? '영업3팀' : '';
                 const todayStr = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
 
                 // PT 데이터 필터링
@@ -12238,7 +12265,7 @@ tr.suppressed td.fname{color:#64748b;}
                 const criticalPts = myUnconfirmedPts.filter(s => getDaysSincePt(s) >= 90);
 
                 // 관리자용: 담당자별 미확정 PT 카운트
-                const adminUnconfirmedByPerson = isAdmin ? (() => {
+                const adminUnconfirmedByPerson = canViewAllData ? (() => {
                   const team1 = ['한준엽', '조재연', '정정훈', '김성민'];
                   const team2 = ['이필선'];
                   const team3 = ['조현식', '한인규'];
@@ -12255,7 +12282,7 @@ tr.suppressed td.fname{color:#64748b;}
                   }).filter(p => p.count > 0);
                 })() : [];
 
-                const adminTotalUnconfirmed = isAdmin ? adminUnconfirmedByPerson.reduce((sum, p) => sum + p.count, 0) : 0;
+                const adminTotalUnconfirmed = canViewAllData ? adminUnconfirmedByPerson.reduce((sum, p) => sum + p.count, 0) : 0;
 
                 // 월별 트렌드 (최근 6개월)
                 const monthlyTrend = (() => {
@@ -12627,40 +12654,69 @@ tr.suppressed td.fname{color:#64748b;}
                 const totalActionItems = pipelineWarnings.length + unenteredPts.length + kaptReviewNeededPts.length + settlementRequestNeededPts.length;
 
                 return (
-                  <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', gap: 14, flexDirection: 'column' }}>
-                    {/* Hero header */}
-                    <div style={{ background: 'white', borderRadius: isMobile ? 16 : 20, padding: isMobile ? '16px 16px 14px' : '20px 22px 18px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                          <button onClick={() => { setShowMyPage(false); setShowDashboard(true); }} style={{ background: '#f2f4f8', border: 'none', fontSize: 11, fontWeight: 600, color: '#64748b', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, marginBottom: 12 }}>{'\u2190'} 돌아가기</button>
-                          <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, letterSpacing: 2, textTransform: 'uppercase' }}>WELCOME</div>
-                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginTop: 4 }}>
-                            <span style={{ fontSize: isMobile ? 22 : 26, fontWeight: 800, color: '#1a1a2e', letterSpacing: -0.5 }}>{viewingUser}</span>
-                            <span style={{ fontSize: 14, color: '#94a3b8' }}>님</span>
+                  <div className="mypage-shell" style={{ maxWidth: 900, margin: '0 auto', display: 'flex', gap: 14, flexDirection: 'column' }}>
+                    {/* 이미지 레퍼런스 기반 모바일 CRM 헤더 */}
+                    <div className="mypage-overview" style={{ background: 'white', borderRadius: isMobile ? 18 : 22, padding: isMobile ? 14 : 20, boxShadow: '0 8px 28px rgba(15,23,42,0.06)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                          <div style={{ width: 38, height: 38, borderRadius: 12, background: '#4f63f6', color: 'white', display: 'grid', placeItems: 'center', fontSize: 16, fontWeight: 900, boxShadow: '0 8px 18px rgba(79,99,246,0.28)', flexShrink: 0 }}>
+                            {(viewingUser || 'A').slice(0, 1)}
                           </div>
-                          <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2, fontWeight: 500 }}>{getTeamName(viewingUser)}</div>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 15, fontWeight: 850, color: '#172033', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>POUR 영업관리</div>
+                            <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>{getTeamName(viewingUser) || '영업팀'}</div>
+                          </div>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                          {/* 본인 비밀번호 변경 — 내 마이페이지일 때만 노출 */}
-                          {currentUser?.name === viewingUser && (
-                            <button
-                              onClick={() => setShowMyPasswordModal(true)}
-                              title="비밀번호 변경"
-                              style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 12, fontWeight: 600, color: '#475569', background: '#ffffff', cursor: 'pointer' }}>
-                              비밀번호 변경
-                            </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                          {canViewAllData && (
+                            <select value={viewingUser} onChange={(e) => setMyPageUser(e.target.value)} aria-label="담당자 선택" style={{ maxWidth: 104, padding: '7px 25px 7px 9px', borderRadius: 9, border: '1px solid #e6eaf2', fontSize: 11, background: '#f8fafc', fontWeight: 700, color: '#1f2937', outline: 'none' }}>
+                              {allMembers.map(name => <option key={name} value={name}>{name}</option>)}
+                            </select>
                           )}
-                        {isAdmin && (
-                          <select value={viewingUser} onChange={(e) => setMyPageUser(e.target.value)} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 12, background: '#f8fafc', fontWeight: 600, color: '#1a1a2e', outline: 'none' }}>
-                            {allMembers.map(name => <option key={name} value={name}>{name}</option>)}
-                          </select>
-                        )}
+                          <button className="mypage-icon-button" onClick={() => setShowMyPasswordModal(true)} aria-label="내 설정">
+                            <AppIcon name="settings" size={19} />
+                          </button>
                         </div>
                       </div>
-                      {/* Action summary banner */}
-                      <div style={{ marginTop: 12, background: '#eff6ff', borderRadius: 10, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
-                        <span style={{ fontSize: 11, fontWeight: 600, color: '#3b82f6' }}>오늘 처리할 업무 {todaySchedules.length + totalActionItems}건</span>
+
+                      <div className="mypage-hero" style={{ position: 'relative', overflow: 'hidden', borderRadius: 18, padding: isMobile ? '19px 18px' : '22px 24px', color: 'white', background: 'linear-gradient(135deg, #3f73ee 0%, #5d5be9 100%)', boxShadow: '0 16px 30px rgba(79,99,246,0.20)' }}>
+                        <div style={{ position: 'absolute', width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.09)', right: -70, top: -105 }} />
+                        <div style={{ position: 'relative' }}>
+                          <div style={{ fontSize: 11, opacity: 0.78, fontWeight: 700 }}>좋은 아침이에요, {getTeamName(viewingUser) || '영업팀'}</div>
+                          <div style={{ fontSize: isMobile ? 21 : 24, lineHeight: 1.32, fontWeight: 900, letterSpacing: '-0.6px', marginTop: 5 }}>
+                            {viewingUser}님,<br />오늘 할 일이 {todaySchedules.length + totalActionItems}건 있어요.
+                          </div>
+                          <div style={{ fontSize: 11, opacity: 0.78, marginTop: 8 }}>
+                            오늘 일정 {todaySchedules.length}건 · 결과 미입력 {unenteredPts.length}건 · 정산요청 필요 {settlementRequestNeededPts.length}건
+                          </div>
+                          <button onClick={() => {
+                            if (totalActionItems > 0) {
+                              setShowMyPage(false); setShowPerformance(true); setShowDashboard(false); setShowMeetingView(false); setShowSalesView(false);
+                              setSelectedAssignee(viewingUser); setPreviewAssignee(viewingUser); setSiteListTab(unenteredPts.length > 0 ? 'all' : 'unverified');
+                            }
+                          }} style={{ marginTop: 14, padding: '8px 13px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.55)', background: 'rgba(255,255,255,0.12)', color: 'white', fontSize: 11, fontWeight: 800, cursor: 'pointer', backdropFilter: 'blur(6px)' }}>
+                            오늘 할 일 보기 →
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: 18 }}>
+                        <div style={{ fontSize: 13, fontWeight: 850, color: '#1f2937', marginBottom: 10 }}>빠른 작업</div>
+                        <div className="mypage-quick-grid" style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(3, minmax(0, 1fr))' : 'repeat(6, minmax(0, 1fr))', gap: 8 }}>
+                          {[
+                            { label: '오늘 일정', icon: 'calendar', tone: 'blue', onClick: () => { setShowMyPage(false); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); } },
+                            { label: 'PT 실적', icon: 'performance', tone: 'mint', onClick: () => { setShowMyPage(false); setShowPerformance(true); setShowDashboard(false); setShowMeetingView(false); setShowSalesView(false); setSelectedAssignee(viewingUser); setPreviewAssignee(viewingUser); } },
+                            { label: '미확정 PT', icon: 'documentHelp', tone: 'peach', onClick: () => { setUnconfirmedPtFilter('all'); setUnconfirmedPtQuarter('all'); setUnconfirmedPtAssignee(viewingUser); setShowUnconfirmedPtModal(true); } },
+                            { label: '정산요청', icon: 'receipt', tone: 'peach', onClick: () => { setShowMyPage(false); setShowPerformance(true); setShowDashboard(false); setShowMeetingView(false); setShowSalesView(false); setSelectedAssignee(viewingUser); setPreviewAssignee(viewingUser); setSettlementFilter('pending'); } },
+                            { label: '파이프라인', icon: 'funnel', tone: 'mint', onClick: () => { setPipelineAssigneeFilter(viewingUser); setPipelineSource('mypage'); setShowMyPage(false); setShowSalesView(true); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); } },
+                            { label: '비밀번호', icon: 'lock', tone: 'lavender', onClick: () => setShowMyPasswordModal(true) },
+                          ].map((item) => (
+                            <button className="mypage-quick-action" key={item.label} onClick={item.onClick}>
+                              <span className={`mypage-quick-icon tone-${item.tone}`}><AppIcon name={item.icon} size={20} /></span>
+                              <span className="mypage-quick-label">{item.label}</span>
+                            </button>
+                          ))}
+                        </div>
                       </div>
 
                       {/* 분기 정산 확인 알림 배너 */}
@@ -18186,30 +18242,19 @@ tr.suppressed td.fname{color:#64748b;}
           {/* Bottom Navigation — 모바일 앱 느낌 (상단 nav 유지, 추가 접근 경로) */}
           {isMobile && isLoggedIn && (() => {
             const navItems = [
-              { key: 'home', label: '홈', icon: '🏠', active: showDashboard, onClick: () => { setShowDashboard(true); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); } },
-              { key: 'perf', label: '실적', icon: '📊', active: showPerformance, onClick: () => { setShowDashboard(false); setShowPerformance(true); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); } },
-              { key: 'settle', label: '정산', icon: '💰', active: showPerformance && settlementFilter === 'target', onClick: () => { setShowDashboard(false); setShowPerformance(true); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); setSettlementFilter('target'); } },
-              { key: 'my', label: '마이', icon: '👤', active: showMyPage, onClick: () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(true); setMyPageUser(currentUser?.name || null); } },
+              { key: 'home', label: '홈', icon: 'home', active: showDashboard, onClick: () => { setShowDashboard(true); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); } },
+              { key: 'perf', label: '실적', icon: 'performance', active: showPerformance, onClick: () => { setShowDashboard(false); setShowPerformance(true); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); setSettlementFilter('all'); } },
+              { key: 'add', label: '', icon: 'plus', primary: true, active: false, onClick: () => { setAddTypeModalDate(null); setShowAddTypeModal(true); } },
+              { key: 'schedule', label: '일정', icon: 'calendar', active: !showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage, onClick: () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); updatePageTitle('일정'); } },
+              { key: 'my', label: '마이', icon: 'user', active: showMyPage, onClick: () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(true); setMyPageUser(currentUser?.name || null); } },
             ];
             return (
-              <div style={{
-                position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 9998,
-                background: 'white', borderTop: '1px solid #e2e8f0',
-                display: 'flex', justifyContent: 'space-around', alignItems: 'stretch',
-                padding: '6px 0 max(6px, env(safe-area-inset-bottom))',
-                boxShadow: '0 -2px 8px rgba(0,0,0,0.06)',
-              }}>
+              <div className="mobile-app-nav">
                 {navItems.map(it => (
-                  <button key={it.key} onClick={it.onClick}
-                    style={{
-                      flex: 1, background: 'transparent', border: 'none', padding: '6px 4px',
-                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'pointer',
-                      color: it.active ? '#2563eb' : '#94a3b8',
-                      fontSize: 10, fontWeight: 700,
-                    }}>
-                    <span style={{ fontSize: 18, lineHeight: 1 }}>{it.icon}</span>
-                    <span>{it.label}</span>
-                    {it.active && <span style={{ position: 'absolute', bottom: 0, width: '40%', height: 3, background: '#2563eb', borderRadius: '2px 2px 0 0' }} />}
+                  <button key={it.key} onClick={it.onClick} aria-label={it.label || '일정 추가'}
+                    className={`mobile-app-nav__item${it.active ? ' is-active' : ''}${it.primary ? ' is-primary' : ''}`}>
+                    <span className="mobile-app-nav__icon"><AppIcon name={it.icon} size={it.primary ? 25 : 21} strokeWidth={it.primary ? 2.1 : 1.75} /></span>
+                    {it.label && <span>{it.label}</span>}
                   </button>
                 ))}
               </div>
