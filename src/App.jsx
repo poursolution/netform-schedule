@@ -40,7 +40,9 @@ import { aggregateQuarterSettlement, isQuarterSettlementTarget } from './utils/q
 import { buildVerificationOnResultClick, VERIFICATION_STATUS } from './utils/verification.js';
 
 const getQuarterSettlementOptions = (quarterKey) => ({
-  includeLegacyCarryover: quarterKey === '2026-Q1',
+  // 이전 분기에 정산요청됐지만 아직 지급완료되지 않은 건은
+  // 지급될 때까지 현재 분기 정산에 이월한다.
+  includeLegacyCarryover: /^\d{4}-Q[1-4]$/.test(String(quarterKey || '')),
 });
 
 // 패배 사유 분류기 (대표 보고용 분석 리포트)
@@ -18294,7 +18296,7 @@ tr.suppressed td.fname{color:#64748b;}
                 });
               })();
 
-              // 상황 4: 정산 귀속은 PT 진행일 기준으로 고정
+              // 상황 4: 이전 분기 미지급 건은 현재 분기로 이월
               (() => {
                 const sample = {
                   id: '__quarter_basis_check__',
@@ -18303,16 +18305,16 @@ tr.suppressed td.fname{color:#64748b;}
                   result: '승',
                   settlement: { 한준엽: { requested: true, requestedAt: '2026-05-05T09:00:00.000Z' } },
                 };
-                const inQ1 = isQuarterSettlementTarget(sample, '한준엽', '2026-Q1');
-                const inQ2 = isQuarterSettlementTarget(sample, '한준엽', '2026-Q2');
-                const pass = inQ1 && !inQ2;
+                const inQ1 = isQuarterSettlementTarget(sample, '한준엽', '2026-Q1', getQuarterSettlementOptions('2026-Q1'));
+                const inQ2 = isQuarterSettlementTarget(sample, '한준엽', '2026-Q2', getQuarterSettlementOptions('2026-Q2'));
+                const pass = inQ1 && inQ2;
                 scenarios.push({
                   id: 4,
-                  name: '분기 귀속 → PT 진행일 기준',
+                  name: '이전 분기 미지급 → 현재 분기 이월',
                   pass,
-                  failed: pass ? [] : [{ problem: '3월 PT가 Q1에만 귀속되지 않음' }],
-                  expected: '정산요청·확정 시점과 무관하게 PT 진행일이 속한 분기로 귀속',
-                  note: '공용 분기 대상 함수로 합성 데이터 검증',
+                  failed: pass ? [] : [{ problem: '3월 미지급 PT가 2분기에 이월되지 않음' }],
+                  expected: '지급완료 전까지 이전 분기 정산요청 건을 현재 분기에 포함',
+                  note: '공용 분기 대상 함수와 실제 화면 옵션으로 합성 데이터 검증',
                 });
               })();
 

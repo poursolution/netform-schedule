@@ -57,6 +57,7 @@ export function isQuarterSettlementTarget(pt, assignee, quarterKey, opts = {}) {
 
   const inRange = pt.date >= bounds.start && pt.date <= bounds.end;
   const carryoverExcluded = new Set(opts.carryoverExcludedAssignees || []);
+  // 이전 분기에서 지급되지 않은 정산요청 건은 완료 처리될 때까지 이월한다.
   const includeLegacyCarryover = opts.includeLegacyCarryover === true
     && pt.date < bounds.start
     && !carryoverExcluded.has(assignee);

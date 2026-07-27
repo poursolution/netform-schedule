@@ -2495,7 +2495,7 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
 
   // 2) 담당자별 집계 — 사용자 정의 룰
   //    분기 정산 대상 = pt.date 가 해당 분기 안 + settlement.{a}.requested=true (또는 manualVerified) + completed != true
-  //    2026-Q1 만 레거시 이월분 포함, 한인규는 정산 대상에서 제외
+  //    이전 분기 미지급 정산요청 건도 지급완료 전까지 현재 분기에 이월
   const VALID_ASSIGNEES = new Set([
     '한준엽', '조재연', '정정훈', '김성민', '이필선', '황윤선',
   ]);
@@ -2515,7 +2515,7 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
     for (const assignee of tokens) {
       if (!VALID_ASSIGNEES.has(assignee)) continue;
       const inQuarter = ptDate >= _qStartDate && ptDate <= _qEndDate;
-      const includeLegacyCarryover = quarterKey === '2026-Q1' && ptDate < _qStartDate;
+      const includeLegacyCarryover = ptDate < _qStartDate;
       if (!inQuarter && !includeLegacyCarryover) continue;
       const stl = pt.settlement?.[assignee] || {};
       // 정산요청 OR 수동검증 안 됐으면 분기 정산 대상 아님 (담당자가 명시적으로 정산요청 누른 것만)

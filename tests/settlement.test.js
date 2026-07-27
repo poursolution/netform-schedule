@@ -117,6 +117,50 @@ test('quarter attribution is based on PT date, not request date', () => {
   assert.equal(isQuarterSettlementTarget(pt, '한준엽', '2026-Q2'), false);
 });
 
+test('an unpaid prior-quarter request carries into the current quarter', () => {
+  const priorQuarterPt = makePt({
+    date: '2026-03-24',
+    settlement: {
+      한준엽: {
+        requested: true,
+        requestedAt: '2026-03-25T09:00:00.000Z',
+      },
+    },
+  });
+
+  assert.equal(
+    isQuarterSettlementTarget(priorQuarterPt, '한준엽', '2026-Q2', {
+      includeLegacyCarryover: true,
+    }),
+    true,
+  );
+  const result = aggregateQuarterSettlement([priorQuarterPt], '2026-Q2', {
+    includeLegacyCarryover: true,
+  });
+  assert.equal(result.totals.totalCount, 1);
+  assert.equal(result.totals.totalEstimated, 500000);
+});
+
+test('a paid prior-quarter request never carries into the current quarter', () => {
+  const paidPriorQuarterPt = makePt({
+    date: '2026-03-24',
+    settlement: {
+      한준엽: {
+        requested: true,
+        completed: true,
+        status: 'completed',
+      },
+    },
+  });
+
+  assert.equal(
+    isQuarterSettlementTarget(paidPriorQuarterPt, '한준엽', '2026-Q2', {
+      includeLegacyCarryover: true,
+    }),
+    false,
+  );
+});
+
 test('quarter confirmation deadline is the 30th of the following month', () => {
   const q2Deadline = getQuarterClosingDate('2026-Q2');
   assert.equal(q2Deadline.getFullYear(), 2026);
