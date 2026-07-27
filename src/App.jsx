@@ -7,7 +7,6 @@ import {
   buildMailtoLink,
   getQuarterDeadline,
   buildReportHTML,
-  getSettlementQuarterForPt,
 } from './utils/quarterlyReport.js';
 import {
   setJandiConfig,
@@ -36,7 +35,7 @@ import {
   buildExceptionResultMessage,
 } from './utils/exceptions.js';
 import { sendJandiNotification } from './utils/jandi.js';
-import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculateSettlementAmount, EXCLUSION_REASONS, shouldAutoTransitionToTarget, buildAutoTransitionPatch, AUTO_TRANSITION_START, getResultConfirmDate } from './utils/settlement.js';
+import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculateSettlementAmount, EXCLUSION_REASONS, shouldAutoTransitionToTarget, buildAutoTransitionPatch, AUTO_TRANSITION_START } from './utils/settlement.js';
 import { aggregateQuarterSettlement, isQuarterSettlementTarget } from './utils/quarterlySettlementCore.js';
 import { buildVerificationOnResultClick, VERIFICATION_STATUS } from './utils/verification.js';
 
@@ -16092,6 +16091,7 @@ tr.suppressed td.fname{color:#64748b;}
                       updates[`${base}/completedAt`] = null;
                       updates[`${base}/completedBy`] = null;
                       updates[`${base}/completedQuarter`] = null;
+                      updates[`${base}/status`] = 'confirmed';
                     }
                     if (Object.keys(updates).length) {
                       try {
@@ -16102,6 +16102,7 @@ tr.suppressed td.fname{color:#64748b;}
                           const cur = ps.settlement?.[assignee] || {};
                           const next = { ...cur };
                           delete next.completed; delete next.completedAt; delete next.completedBy; delete next.completedQuarter;
+                          next.status = 'confirmed';
                           return { ...ps, settlement: { ...(ps.settlement || {}), [assignee]: next } };
                         }));
                       } catch (_) {}
@@ -16158,6 +16159,8 @@ tr.suppressed td.fname{color:#64748b;}
                   updates[`pt/${t.ptId}/settlement/${t.assignee}/completed`] = true;
                   updates[`pt/${t.ptId}/settlement/${t.assignee}/completedAt`] = nowISO;
                   updates[`pt/${t.ptId}/settlement/${t.assignee}/completedBy`] = by;
+                  updates[`pt/${t.ptId}/settlement/${t.assignee}/completedQuarter`] = monthlySettlementMonth;
+                  updates[`pt/${t.ptId}/settlement/${t.assignee}/status`] = 'completed';
                 });
                 await database.ref().update(updates);
                 // 로컬 state 즉시 갱신 (UI 빠른 반영)
@@ -16166,7 +16169,7 @@ tr.suppressed td.fname{color:#64748b;}
                   if (ptTargets.length === 0) return ps;
                   const newSettlement = { ...(ps.settlement || {}) };
                   ptTargets.forEach(t => {
-                    newSettlement[t.assignee] = { ...(newSettlement[t.assignee] || {}), completed: true, completedAt: nowISO, completedBy: by };
+                    newSettlement[t.assignee] = { ...(newSettlement[t.assignee] || {}), completed: true, completedAt: nowISO, completedBy: by, completedQuarter: monthlySettlementMonth, status: 'completed' };
                   });
                   return { ...ps, settlement: newSettlement };
                 }));
@@ -18291,15 +18294,25 @@ tr.suppressed td.fname{color:#64748b;}
                 });
               })();
 
-              // 상황 4: 과거 PT 를 이번 분기에 확정 → 확정일 기준으로 분기 귀속 되는지
+              // 상황 4: 정산 귀속은 PT 진행일 기준으로 고정
               (() => {
+                const sample = {
+                  id: '__quarter_basis_check__',
+                  date: '2026-03-15',
+                  ptAssignee: '한준엽',
+                  result: '승',
+                  settlement: { 한준엽: { requested: true, requestedAt: '2026-05-05T09:00:00.000Z' } },
+                };
+                const inQ1 = isQuarterSettlementTarget(sample, '한준엽', '2026-Q1');
+                const inQ2 = isQuarterSettlementTarget(sample, '한준엽', '2026-Q2');
+                const pass = inQ1 && !inQ2;
                 scenarios.push({
                   id: 4,
-                  name: '과거 PT 를 이번 분기에 확정 → 확정일 기준 귀속',
-                  pass: true,
-                  failed: [],
-                  expected: 'PT 진행일이 아니라 "결과 입력일·정산요청일·최종확정일" 기준으로 분기 귀속',
-                  note: '코드 레벨 확인됨 (확정일 4단계 fallback 체인)',
+                  name: '분기 귀속 → PT 진행일 기준',
+                  pass,
+                  failed: pass ? [] : [{ problem: '3월 PT가 Q1에만 귀속되지 않음' }],
+                  expected: '정산요청·확정 시점과 무관하게 PT 진행일이 속한 분기로 귀속',
+                  note: '공용 분기 대상 함수로 합성 데이터 검증',
                 });
               })();
 
@@ -19941,18 +19954,18 @@ tr.suppressed td.fname{color:#64748b;}
             const allFinalConfirmed = activeAssignees.length > 0 && missingFinalConfirm.length === 0;
             const hasSettlementData = activeAssignees.length > 0;
 
-            const handleDownloadExcel = () => {
+            const handleDownloadExcel = async () => {
               try {
-                const blob = generateExcelBlob(report);
+                const blob = await generateExcelBlob(report);
                 downloadBlob(blob, `${baseFilename}.xlsx`);
               } catch (e) {
                 alert('Excel 생성 실패: ' + e.message);
               }
             };
             // 금액 제외 버전 — 정산금액·단가 컬럼 없이 실적만 (외부 공유용)
-            const handleDownloadExcelNoAmount = () => {
+            const handleDownloadExcelNoAmount = async () => {
               try {
-                const blob = generateExcelBlob(report, { includeAmounts: false });
+                const blob = await generateExcelBlob(report, { includeAmounts: false });
                 downloadBlob(blob, `${baseFilename}_금액제외.xlsx`);
               } catch (e) {
                 alert('Excel 생성 실패: ' + e.message);
@@ -20053,7 +20066,7 @@ tr.suppressed td.fname{color:#64748b;}
               if (!window.confirm(confirmMsg)) return;
               setQuarterReportBusy(true);
               try {
-                const blob = generateExcelBlob(report);
+                const blob = await generateExcelBlob(report);
                 downloadBlob(blob, `${baseFilename}.xlsx`);
                 await generateAndDownloadPDF(report, `${baseFilename}.pdf`);
                 // 발송 이력 기록 — reportVersion 자동 증가 + history 누적

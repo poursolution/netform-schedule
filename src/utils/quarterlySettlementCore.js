@@ -12,13 +12,16 @@ const EXCLUDED_REASONS = new Set([
   'self_sales',
   'draw_support_excluded',
   'cancelled_notice',
+  'settlement_excluded',
 ]);
 
 export function parseAssigneeTokens(value) {
-  return String(value || '')
-    .split(/[\/,+&]/)
-    .map(t => t.trim())
-    .filter(Boolean);
+  return [...new Set(
+    String(value || '')
+      .split(/[\/,+&;\n]/)
+      .map(t => t.trim())
+      .filter(Boolean)
+  )];
 }
 
 export function parseQuarterKey(quarterKey) {
@@ -61,8 +64,10 @@ export function isQuarterSettlementTarget(pt, assignee, quarterKey, opts = {}) {
 
   const stl = pt.settlement?.[assignee] || {};
   if (!(stl.requested === true || stl.manualVerified === true)) return false;
-  if (stl.completed === true) return false;
+  if (stl.completed === true || stl.status === 'completed') return false;
   if (stl.superseded === true || stl.status === 'superseded') return false;
+  const calc = calculateSettlementAmount(pt, assignee);
+  if (!calc.result || EXCLUDED_REASONS.has(calc.reason)) return false;
   return true;
 }
 

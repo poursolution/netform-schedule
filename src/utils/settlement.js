@@ -48,6 +48,12 @@ export const SETTLEMENT_AMOUNTS = {
   EXCLUDED: 0,
 };
 
+function parseUniqueAssignees(value) {
+  return [...new Set(
+    String(value || '').split(/[\/,+&;\n]/).map(t => t.trim()).filter(Boolean)
+  )];
+}
+
 // ===== 결과 파생 =====
 
 /**
@@ -68,7 +74,7 @@ export function deriveAssigneeResult(pt, assignee, opts = {}) {
   let raw = null;
   if (pt.results && pt.results[assignee] !== undefined) raw = pt.results[assignee];
   else {
-    const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+    const tokens = parseUniqueAssignees(pt.ptAssignee);
     if (tokens.length <= 1) raw = pt.result || null;
   }
   if (!raw) return null;
@@ -149,7 +155,7 @@ export function calculateSettlementAmount(pt, assignee, opts = {}) {
   //   사용자 룰 변경 (2026-04-30, 이승우 대표 공지):
   //   "지원 현장이 있는 경우 승이어도 25만원 지급. 총 75만원 나가는 게 아니라 25씩 나누라는 얘기"
   //   1분기 포함 모든 분기 소급 적용 (calculateSettlementAmount 가 호출되는 모든 보고서/모달 자동 반영)
-  const ptTokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+  const ptTokens = parseUniqueAssignees(pt.ptAssignee);
   const isMultiAssigneePt = ptTokens.length > 1;
 
   if (result === '승') {
@@ -181,32 +187,32 @@ export function getSettlementStatus(pt, assignee) {
   const hasResult = !!(pt.results?.[assignee] || pt.result);
   if (!hasResult) return SETTLEMENT_STATUS.UNSETTLED;
 
-  // 1) 명시적 status 필드 우선
-  if (stl.status && Object.values(SETTLEMENT_STATUS).includes(stl.status)) {
-    return stl.status;
-  }
-
-  // 2) 제외 케이스
+  // 제외 규칙은 저장된 상태보다 우선한다. 정산요청 후 정산예외/취소로 바뀐
+  // 레거시 데이터가 stale status='requested' 로 보이는 것을 방지한다.
   const calc = calculateSettlementAmount(pt, assignee);
   if (calc.reason) return SETTLEMENT_STATUS.EXCLUDED;
 
-  // 3) 결과 없음 → 정산 대상 아님
+  // 결과 없음 → 정산 대상 아님
   if (!calc.result) return SETTLEMENT_STATUS.UNSETTLED;
 
-  // 4) 패배 → 제외 (정산 아님)
+  // 패배 → 제외 (정산 아님)
   if (calc.result === '패') return SETTLEMENT_STATUS.EXCLUDED;
 
-  // 5) K-APT 검증 상태 — needs_review 이면 검토필요
+  // boolean 플래그와 status 중 더 진행된 상태를 우선한다.
+  // 일부 과거 데이터는 둘 중 하나만 저장되어 있다.
+  if (stl.completed || stl.status === SETTLEMENT_STATUS.COMPLETED) return SETTLEMENT_STATUS.COMPLETED;
+  if (stl.confirmed || stl.status === SETTLEMENT_STATUS.CONFIRMED) return SETTLEMENT_STATUS.CONFIRMED;
+
+  // K-APT 검증 상태 — needs_review 이면 검토필요
   if (pt.kaptVerified?.status === 'needs_review' && !stl.reviewBypassedBy) {
     // 잔디 공고문이 있으면 검토 통과로 간주
     const hasJandiEvidence = pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0;
     if (!hasJandiEvidence) return SETTLEMENT_STATUS.NEEDS_REVIEW;
   }
 
-  // 6) 기존 flag 역산
-  if (stl.completed) return SETTLEMENT_STATUS.COMPLETED;
-  if (stl.confirmed) return SETTLEMENT_STATUS.CONFIRMED;
-  if (stl.requested) return SETTLEMENT_STATUS.REQUESTED;
+  if (stl.requested || stl.status === SETTLEMENT_STATUS.REQUESTED) return SETTLEMENT_STATUS.REQUESTED;
+  if (stl.status === SETTLEMENT_STATUS.NEEDS_REVIEW) return SETTLEMENT_STATUS.NEEDS_REVIEW;
+  if (stl.status === SETTLEMENT_STATUS.EXCLUDED) return SETTLEMENT_STATUS.EXCLUDED;
 
   return SETTLEMENT_STATUS.UNSETTLED;
 }
@@ -350,7 +356,7 @@ export function shouldAutoTransitionToTarget(pt, assignee) {
 
   // 감리는 검증·결과 무관 — ptAssignee 에 포함된 담당자면 자동 대상
   const isSupervision = /감리/.test((pt.workType || '') + '|' + (pt.siteName || ''));
-  const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+  const tokens = parseUniqueAssignees(pt.ptAssignee);
   if (isSupervision && tokens.includes(assignee)) return true;
 
   // 일반 PT: 결과 있고 검증 완료
@@ -429,11 +435,11 @@ export function isQuarterlySettlementTime(now = new Date()) {
   );
 }
 
-// ===== 실적 확정일 기준 분기 귀속 (resultConfirmDate) =====
+// ===== 확정일 메타데이터 =====
 //
-// 운영 원칙:
-//   정산 귀속 기준은 PT 진행일이 아니라 담당자가 실적을 확정한 날짜.
-//   예: 2025-12-20 PT 라도 2026-04-08 에 확정되면 2026-Q2 귀속.
+// 운영 원칙(2026-07 통일):
+//   정산 귀속은 quarterlySettlementCore 와 동일하게 PT 진행일 기준이다.
+//   아래 확정일은 담당자 확인 이력/표시용이며 분기 선정에는 사용하지 않는다.
 //
 // 실적 확정일 추출 우선순위 (가장 강한 신호 → 약한 신호):
 //   1. settlement.{assignee}.finalConfirmedAt    (Phase 4 최종확정 — 담당자 명시적 확정)
@@ -476,19 +482,19 @@ export function getQuarterKeyByConfirmDate(confirmDate) {
 }
 
 /**
- * PT + assignee 가 어느 분기에 귀속되는지 (확정일 기준)
+ * PT + assignee 가 어느 분기에 귀속되는지 (PT 진행일 기준)
  */
 export function getAssigneeQuarterKey(pt, assignee) {
-  const cd = getResultConfirmDate(pt, assignee);
-  return getQuarterKeyByConfirmDate(cd);
+  void assignee;
+  return getQuarterKeyByConfirmDate(pt?.date);
 }
 
 /**
- * 분기 마감일 — 분기 종료 다음달 마지막주 월요일
- *   Q1 (1-3월) → 4월 마지막주 월요일
- *   Q2 (4-6월) → 7월 마지막주 월요일
- *   Q3 (7-9월) → 10월 마지막주 월요일
- *   Q4 (10-12월) → 다음해 1월 마지막주 월요일
+ * 분기 확인 마감일 — 분기 종료 다음달 30일
+ *   Q1 (1-3월) → 4월 30일
+ *   Q2 (4-6월) → 7월 30일
+ *   Q3 (7-9월) → 10월 30일
+ *   Q4 (10-12월) → 다음해 1월 30일
  *
  * 반환: Date 객체
  */
@@ -499,7 +505,7 @@ export function getQuarterClosingDate(quarterKey) {
   let closingYear = p.year;
   let closingMonth = p.endMonth + 1;
   if (closingMonth > 12) { closingMonth = 1; closingYear += 1; }
-  return getLastMondayOfMonth(closingYear, closingMonth);
+  return new Date(closingYear, closingMonth - 1, 30);
 }
 
 /**
@@ -516,23 +522,20 @@ export function getPayrollMonthByQuarterKey(quarterKey) {
 }
 
 /**
- * PT+assignee 가 해당 분기 마감 전까지 집계 대상인지
- *  - 확정일이 분기 범위 안
- *  - 확정일이 마감일(다음달 마지막주 월요일) 이전
+ * PT+assignee 가 해당 분기 집계 범위인지 (PT 진행일 기준)
  *
  * now 파라미터로 현재 시각 주입 가능 (과거 분기 재집계 등).
  */
 export function isInQuarterSettlementScope(pt, assignee, quarterKey, now = new Date()) {
-  const cd = getResultConfirmDate(pt, assignee);
-  if (!cd) return false;
-  const qk = getQuarterKeyByConfirmDate(cd);
+  void assignee;
+  const ptDate = pt?.date;
+  if (!ptDate) return false;
+  const qk = getQuarterKeyByConfirmDate(ptDate);
   if (qk !== quarterKey) return false;
-  // 마감일 체크 — 현재가 마감일 이후면 해당 분기 마감 (확정일 제한 없음)
-  // 현재가 마감일 이전이면 확정일 자체가 현재 이전이어야 집계 대상
+  // 미래 PT가 현재 분기 집계에 선반영되지 않도록 현재일까지만 허용한다.
   const closing = getQuarterClosingDate(quarterKey);
   if (!closing) return true;
-  if (now > closing) return true; // 마감 이후 재집계 요청 — 분기 내 확정건 모두 포함
-  // 마감 이전 호출 — 확정일이 현재 이전인 건만
-  const cdDate = new Date(cd + 'T00:00:00');
-  return cdDate <= now;
+  if (now > closing) return true;
+  const ptDateValue = new Date(ptDate + 'T00:00:00');
+  return ptDateValue <= now;
 }

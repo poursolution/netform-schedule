@@ -835,8 +835,14 @@ function normSupersedeAddress(s) {
     .replace(/번지|동$/g, '')
     .toLowerCase();
 }
+function parseUniqueAssigneesWorker(value) {
+  return [...new Set(
+    String(value || '').split(/[\/,+&;\n]/).map(t => t.trim()).filter(Boolean)
+  )];
+}
+
 function primaryAssigneeSupersede(pt) {
-  return (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean)[0] || null;
+  return parseUniqueAssigneesWorker(pt.ptAssignee)[0] || null;
 }
 
 async function runAutoSupersede(env, opts = {}) {
@@ -2080,7 +2086,7 @@ async function autoTransitionAfterVerifyWorker(env, scheduleId, primaryAssignee)
 
   const transitioned = [];
   const notified = [];
-  const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+  const tokens = parseUniqueAssigneesWorker(pt.ptAssignee);
   // 지정 담당자가 있으면 그 사람만, 없으면 전체 체크
   const targets = primaryAssignee ? [primaryAssignee] : tokens;
 
@@ -2378,34 +2384,40 @@ function getPayrollMonthByQuarterKey(quarterKey) {
 }
 
 // pt·assignee 조합에 대한 결과 파생 (client settlement.js 와 동일한 규칙)
-function deriveResultWorker(pt, assignee) {
+export function deriveResultWorker(pt, assignee) {
   if (!pt || !assignee) return null;
   let raw = null;
   if (pt.results && pt.results[assignee] !== undefined) raw = pt.results[assignee];
   else {
-    const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+    const tokens = parseUniqueAssigneesWorker(pt.ptAssignee);
     if (tokens.length <= 1) raw = pt.result || null;
   }
   if (!raw) return null;
   // 지원자 규칙 (client deriveAssigneeResult 와 일치)
-  const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+  const tokens = parseUniqueAssigneesWorker(pt.ptAssignee);
   const main = tokens[0];
   if (raw === '지원' && main && assignee !== main) {
     const mainResult = pt.results?.[main] || pt.result;
     if (mainResult === '승') return '지원';
     if (mainResult === '무') return '제외';
     if (mainResult === '패') return '패';
-    // main 결과가 '지원' 또는 미입력 → 지원자도 그대로 '지원' 처리 (250K 인정)
-    return '지원';
+    if (mainResult === '지원') return '지원';
+    return null;
   }
   return raw;
 }
 
-function calcAmountWorker(pt, assignee) {
+export function calcAmountWorker(pt, assignee) {
   if (!pt || !assignee) return { amount: 0, result: null, reason: null };
   if (pt.selfPT) return { amount: 0, result: '제외', reason: 'vendor_self_pt' };
   const stl = pt.settlement?.[assignee] || {};
   if (stl.selfSales) return { amount: 0, result: '제외', reason: 'self_sales' };
+  if (stl.settlementExcluded === true) {
+    return { amount: 0, result: '제외', reason: 'settlement_excluded' };
+  }
+  if (pt.kaptVerified?.status === 'cancelled') {
+    return { amount: 0, result: '제외', reason: 'cancelled_notice' };
+  }
   // 감리: 자동 80K 제거 — settlement.{a}.manualAmount 가 있으면 그 값, 없으면 0 (담당자 입력 대기)
   const isSupervision = /감리/.test((pt.workType || '') + '|' + (pt.siteName || ''));
   if (isSupervision) {
@@ -2419,7 +2431,11 @@ function calcAmountWorker(pt, assignee) {
   if (!result) return { amount: 0, result: null, reason: null };
   if (result === '제외') return { amount: 0, result: '제외', reason: 'draw_support_excluded' };
   if (result === '패') return { amount: 0, result: '패', reason: 'loss' };
-  if (result === '승') return { amount: SETTLEMENT_AMOUNTS.WIN, result, reason: null };
+  if (result === '승') {
+    const tokens = parseUniqueAssigneesWorker(pt.ptAssignee);
+    const amount = tokens.length > 1 ? SETTLEMENT_AMOUNTS.SUPPORT : SETTLEMENT_AMOUNTS.WIN;
+    return { amount, result, reason: null };
+  }
   if (result === '무') return { amount: SETTLEMENT_AMOUNTS.DRAW, result, reason: null };
   if (result === '지원') return { amount: SETTLEMENT_AMOUNTS.SUPPORT, result, reason: null };
   return { amount: 0, result, reason: null };
@@ -2495,7 +2511,7 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
     if (pt.selfPT) continue; // 협약사 자체PT 통째 제외
     const ptDate = pt.date || '';
     if (!ptDate || ptDate > _qEndDate) continue;
-    const tokens = (pt.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+    const tokens = parseUniqueAssigneesWorker(pt.ptAssignee);
     for (const assignee of tokens) {
       if (!VALID_ASSIGNEES.has(assignee)) continue;
       const inQuarter = ptDate >= _qStartDate && ptDate <= _qEndDate;
@@ -2505,14 +2521,14 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
       // 정산요청 OR 수동검증 안 됐으면 분기 정산 대상 아님 (담당자가 명시적으로 정산요청 누른 것만)
       if (!(stl.requested === true || stl.manualVerified === true)) continue;
       // 이미 정산완료된 건은 다음 분기 들어가지 않게 제외
-      if (stl.completed === true) continue;
+      if (stl.completed === true || stl.status === 'completed') continue;
       // 중복 처리된(superseded) PT 도 분기 정산에서 빠짐
       if (stl.superseded === true || stl.status === 'superseded') continue;
       const confirmDate = ptDate;
       const assigneeQK = quarterKey;
       const calc = calcAmountWorker(pt, assignee);
       if (!calc.result) continue;
-      if (calc.reason === 'loss' || calc.reason === 'vendor_self_pt' || calc.reason === 'self_sales' || calc.reason === 'draw_support_excluded' || calc.reason === 'cancelled_notice') {
+      if (calc.reason === 'loss' || calc.reason === 'vendor_self_pt' || calc.reason === 'self_sales' || calc.reason === 'draw_support_excluded' || calc.reason === 'cancelled_notice' || calc.reason === 'settlement_excluded') {
         continue;
       }
 
@@ -2542,7 +2558,8 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
       }
       // 검토필요: K-APT needs_review 이고 증빙 없음
       const needsReview = pt.kaptVerified?.status === 'needs_review'
-        && !(pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0);
+        && !(pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0)
+        && stl.manualVerified !== true;
       if (needsReview) agg.reviewCount++;
       agg.estimatedAmount += calc.amount;
       if (calc.result === '승') agg.winCount++;
