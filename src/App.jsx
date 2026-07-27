@@ -16308,79 +16308,78 @@ tr.suppressed td.fname{color:#64748b;}
                     <button onClick={() => setShowMonthlySettlement(false)} style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer', color: '#94a3b8' }}>×</button>
                   </div>
 
-                  {/* 필터 바 */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
-                    <label style={{ fontSize: '12px', color: '#475569', fontWeight: '600' }}>분기:</label>
-                    {(() => {
-                      const now = new Date();
-                      const thisYear = now.getFullYear();
-                      const years = [thisYear - 1, thisYear, thisYear + 1];
-                      const opts = years.flatMap(y => [1, 2, 3, 4].map(q => `${y}-Q${q}`));
-                      return (
-                        <select
-                          value={monthlySettlementMonth}
-                          onChange={(e) => { setMonthlySettlementMonth(e.target.value); setMonthlySettlementData(null); }}
-                          style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', fontFamily: 'monospace' }}
-                        >
-                          {opts.map(o => <option key={o} value={o}>{o}</option>)}
-                        </select>
-                      );
-                    })()}
-                    <label style={{ fontSize: '12px', color: '#475569', fontWeight: '600', marginLeft: '8px' }}>상태:</label>
-                    <select
-                      value={monthlySettlementStatusFilter}
-                      onChange={(e) => setMonthlySettlementStatusFilter(e.target.value)}
-                      style={{ padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
-                    >
-                      <option value="all">전체</option>
-                      <option value="draft">초안</option>
-                      <option value="confirmed">확정</option>
-                      <option value="completed">완료</option>
-                    </select>
-                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
-                      <button onClick={loadData} disabled={monthlySettlementLoading} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', fontSize: '12px', fontWeight: '600', color: '#475569', cursor: 'pointer' }}>새로고침</button>
-                      <button onClick={triggerGenerate} disabled={monthlySettlementLoading} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2563eb', color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>지금 생성</button>
-                      <button onClick={bulkConfirm} disabled={monthlySettlementLoading || rows.length === 0} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#16a34a', color: 'white', fontSize: '12px', fontWeight: '700', cursor: rows.length === 0 ? 'not-allowed' : 'pointer', opacity: rows.length === 0 ? 0.5 : 1 }}>일괄 확정</button>
-                      <button
-                        onClick={requestFinalConfirmation}
-                        disabled={monthlySettlementLoading || !canRequestFinal}
-                        title={canRequestFinal ? '담당자 최종확정 요청 발송 (2라운드)' : '모든 담당자 자가확인 완료 + 검증요청 0건 상태여야 함'}
-                        style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: canRequestFinal ? '#7c3aed' : '#cbd5e1', color: 'white', fontSize: '12px', fontWeight: '700', cursor: canRequestFinal ? 'pointer' : 'not-allowed' }}
-                      >📝 최종확정 요청 {finalConfirmedCount > 0 ? `(${finalConfirmedCount}/${rows.length})` : ''}</button>
-                      <button
-                        onClick={bulkFinalConfirm}
-                        disabled={monthlySettlementLoading || rows.length === 0}
-                        title={finalConfirmedCount === rows.length ? '전원 최종확정 해제 (되돌리기)' : '담당자 확인 건너뛰고 관리자가 직권으로 일괄 최종확정 (긴급용)'}
-                        style={{ padding: '6px 12px', borderRadius: '6px', border: finalConfirmedCount === rows.length ? '1px solid #ef4444' : 'none', background: finalConfirmedCount === rows.length ? '#fff1f2' : '#dc2626', color: finalConfirmedCount === rows.length ? '#991b1b' : 'white', fontSize: '12px', fontWeight: '700', cursor: rows.length === 0 ? 'not-allowed' : 'pointer' }}
-                      >{finalConfirmedCount === rows.length && rows.length > 0 ? '↺ 전체 해제' : '⚡ 전체 최종확정'}</button>
-                      <button
-                        onClick={async () => {
-                          if (!window.confirm('전체 PT 의 settlement 파생 필드 (status / calculatedAmount / excludedReason) 를 재계산해 Firebase 에 영구 저장합니다.\n\n기존 값과 다르면 덮어씀. 진행?')) return;
-                          setMonthlySettlementLoading(true);
-                          try {
-                            const r = await backfillAllSettlementDerived();
-                            alert(`✅ Backfill 완료\n\nPT ${r.totalPts}건 · 저장 ${r.written}건 · 스킵 ${r.skipped}건`);
-                            await loadData();
-                          } catch (e) { alert('실패: ' + e.message); }
-                          finally { setMonthlySettlementLoading(false); }
-                        }}
-                        disabled={monthlySettlementLoading || isQuarterClosed}
-                        title={isQuarterClosed ? '분기 마감됨 — 수정 불가' : '모든 PT 에 status · calculatedAmount · excludedReason 일괄 backfill (일회성)'}
-                        style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f8fafc', color: '#475569', fontSize: '12px', fontWeight: '700', cursor: isQuarterClosed ? 'not-allowed' : 'pointer', opacity: isQuarterClosed ? 0.5 : 1 }}
-                      >🔧 Backfill</button>
-                      <button
-                        onClick={bulkCompleteAll}
-                        disabled={monthlySettlementLoading || rows.length === 0}
-                        title="이번 분기 정산대상 전체를 일괄 정산완료 처리 (각 PT settlement.completed=true)"
-                        style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: rows.length === 0 ? '#cbd5e1' : '#059669', color: 'white', fontSize: '12px', fontWeight: '700', cursor: rows.length === 0 ? 'not-allowed' : 'pointer' }}
-                      >✅ 일괄 정산완료</button>
-                      <button
-                        onClick={toggleQuarterClose}
-                        disabled={monthlySettlementLoading}
-                        title={isQuarterClosed ? '분기 마감 해제 (수정 허용)' : '분기 마감 — 이 시점 이후 Firebase 수정 차단'}
-                        style={{ padding: '6px 12px', borderRadius: '6px', border: isQuarterClosed ? '1px solid #7c3aed' : 'none', background: isQuarterClosed ? '#ede9fe' : '#0f172a', color: isQuarterClosed ? '#5b21b6' : 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
-                      >{isQuarterClosed ? '🔓 마감 해제' : '🔒 분기 마감'}</button>
+                  {/* 핵심 작업 바 — 반복 작업만 노출 */}
+                  <div className="quarterly-toolbar">
+                    <div className="quarterly-toolbar__filters">
+                      <label>분기</label>
+                      {(() => {
+                        const now = new Date();
+                        const thisYear = now.getFullYear();
+                        const years = [thisYear - 1, thisYear, thisYear + 1];
+                        const opts = years.flatMap(y => [1, 2, 3, 4].map(q => `${y}-Q${q}`));
+                        return (
+                          <select value={monthlySettlementMonth}
+                            onChange={(e) => { setMonthlySettlementMonth(e.target.value); setMonthlySettlementData(null); }}>
+                            {opts.map(o => <option key={o} value={o}>{o}</option>)}
+                          </select>
+                        );
+                      })()}
+                      <label>상태</label>
+                      <select value={monthlySettlementStatusFilter} onChange={(e) => setMonthlySettlementStatusFilter(e.target.value)}>
+                        <option value="all">전체</option>
+                        <option value="draft">초안</option>
+                        <option value="confirmed">확정</option>
+                        <option value="completed">완료</option>
+                      </select>
                     </div>
+                    <div className="quarterly-toolbar__primary">
+                      <button className="quarterly-btn is-quiet" onClick={loadData} disabled={monthlySettlementLoading}>새로고침</button>
+                      <button className="quarterly-btn is-primary" onClick={triggerGenerate} disabled={monthlySettlementLoading}>
+                        {data ? '정산 갱신' : '정산 생성'}
+                      </button>
+                      <button className={`quarterly-btn ${isQuarterClosed ? 'is-unlock' : 'is-close'}`}
+                        onClick={toggleQuarterClose} disabled={monthlySettlementLoading}
+                        title={isQuarterClosed ? '분기 마감 해제' : '분기 마감'}>
+                        {isQuarterClosed ? '마감 해제' : '분기 마감'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 저빈도 작업 — 필요할 때만 펼침 */}
+                  <div className="quarterly-secondary-actions">
+                    <details className="quarterly-action-menu">
+                      <summary>일괄 처리</summary>
+                      <div className="quarterly-action-menu__panel">
+                        <button onClick={bulkConfirm} disabled={monthlySettlementLoading || rows.length === 0}>검토 완료 건 일괄 확정</button>
+                        <button onClick={requestFinalConfirmation} disabled={monthlySettlementLoading || !canRequestFinal}
+                          title={canRequestFinal ? '담당자 최종확정 요청 발송' : '모든 담당자 자가확인 및 검증요청 처리가 필요합니다'}>
+                          담당자 최종확정 요청 {finalConfirmedCount > 0 ? `(${finalConfirmedCount}/${rows.length})` : ''}
+                        </button>
+                        <button onClick={bulkCompleteAll} disabled={monthlySettlementLoading || rows.length === 0}>일괄 정산완료</button>
+                      </div>
+                    </details>
+                    <details className="quarterly-action-menu">
+                      <summary>관리 도구</summary>
+                      <div className="quarterly-action-menu__panel is-right">
+                        <button onClick={bulkFinalConfirm} disabled={monthlySettlementLoading || rows.length === 0}>
+                          {finalConfirmedCount === rows.length && rows.length > 0 ? '전체 최종확정 해제' : '관리자 전체 최종확정'}
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm('전체 PT의 정산 파생 필드를 재계산해 Firebase에 저장합니다.\n\n기존 값과 다르면 덮어씁니다. 진행하시겠습니까?')) return;
+                            setMonthlySettlementLoading(true);
+                            try {
+                              const r = await backfillAllSettlementDerived();
+                              alert(`✅ 과거 데이터 보정 완료\n\nPT ${r.totalPts}건 · 저장 ${r.written}건 · 스킵 ${r.skipped}건`);
+                              await loadData();
+                            } catch (e) { alert('실패: ' + e.message); }
+                            finally { setMonthlySettlementLoading(false); }
+                          }}
+                          disabled={monthlySettlementLoading || isQuarterClosed}>
+                          과거 데이터 보정
+                        </button>
+                      </div>
+                    </details>
                   </div>
 
                   {/* Summary 배너 */}
@@ -16502,9 +16501,8 @@ tr.suppressed td.fname{color:#64748b;}
                                     </div>
                                   </td>
                                   <td style={{ padding: '8px', textAlign: 'center' }}>
-                                    <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                                      {/* 담당자 실적으로 바로가기 — 실적 페이지에서 해당 담당자·분기·년·승리 필터로 표시 */}
-                                      <button
+                                    <div className="quarterly-row-actions">
+                                      <button className="quarterly-review-btn"
                                         onClick={() => {
                                           // monthlySettlementMonth "2026-Q1" → 년="2026", 분기="1분기"
                                           const yMatch = String(monthlySettlementMonth || '').match(/^(\d{4})/);
@@ -16527,18 +16525,16 @@ tr.suppressed td.fname{color:#64748b;}
                                           setSiteListTab('win');
                                           setSettlementFilter('all');
                                         }}
-                                        style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #16a34a', background: '#f0fdf4', color: '#166534', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
                                         title={`${r.assignee} · ${monthlySettlementMonth} · 승리 PT 검증으로 이동`}
-                                      >📋 실적·승리 검증</button>
-                                      {r.status === 'draft' && (
-                                        <button onClick={() => updateRowStatus(r.assignee, 'confirmed')} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #93c5fd', background: '#eff6ff', color: '#1e40af', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>확정</button>
-                                      )}
-                                      {r.status === 'confirmed' && (
-                                        <button onClick={() => updateRowStatus(r.assignee, 'completed')} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #86efac', background: '#dcfce7', color: '#166534', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>완료</button>
-                                      )}
-                                      {r.status === 'completed' && (
-                                        <button onClick={() => { if (confirm('완료 상태를 다시 확정으로 되돌립니다. 진행?')) updateRowStatus(r.assignee, 'confirmed'); }} style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>되돌리기</button>
-                                      )}
+                                      >검토하기</button>
+                                      <details className="quarterly-row-menu">
+                                        <summary aria-label={`${r.assignee} 상태 변경`}>•••</summary>
+                                        <div>
+                                          {r.status === 'draft' && <button onClick={() => updateRowStatus(r.assignee, 'confirmed')}>확정 처리</button>}
+                                          {r.status === 'confirmed' && <button onClick={() => updateRowStatus(r.assignee, 'completed')}>완료 처리</button>}
+                                          {r.status === 'completed' && <button onClick={() => { if (confirm('완료 상태를 다시 확정으로 되돌립니다. 진행?')) updateRowStatus(r.assignee, 'confirmed'); }}>확정으로 되돌리기</button>}
+                                        </div>
+                                      </details>
                                     </div>
                                   </td>
                                 </tr>

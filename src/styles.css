@@ -129,3 +129,155 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   .mypage-overview { box-shadow: 0 8px 24px rgba(15,23,42,.055) !important; }
   .mypage-quick-grid { column-gap: 2px !important; row-gap: 3px !important; }
 }
+
+.quarterly-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  margin-bottom: 8px;
+  border: 1px solid #e6ebf2;
+  border-radius: 10px;
+  background: #fafbfd;
+}
+.quarterly-toolbar__filters,
+.quarterly-toolbar__primary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.quarterly-toolbar__filters label {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+.quarterly-toolbar select {
+  padding: 7px 28px 7px 9px;
+  border: 1px solid #d9e0e9;
+  border-radius: 7px;
+  background: #fff;
+  color: #263348;
+  font-size: 11px;
+  font-weight: 650;
+}
+.quarterly-btn {
+  padding: 8px 13px;
+  border: 0;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.quarterly-btn:disabled { cursor: not-allowed; opacity: .45; }
+.quarterly-btn.is-quiet { border: 1px solid #d9e0e9; background: #fff; color: #526075; }
+.quarterly-btn.is-primary { background: #2f68e9; color: #fff; }
+.quarterly-btn.is-close { background: #172033; color: #fff; }
+.quarterly-btn.is-unlock { border: 1px solid #c4b5fd; background: #f5f3ff; color: #6d28d9; }
+.quarterly-secondary-actions {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  margin: 0 0 10px;
+}
+.quarterly-action-menu { position: relative; }
+.quarterly-action-menu summary {
+  padding: 6px 10px;
+  border: 1px solid #dce2eb;
+  border-radius: 7px;
+  background: #fff;
+  color: #5a6679;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+.quarterly-action-menu summary::after { content: "⌄"; margin-left: 7px; color: #94a3b8; }
+.quarterly-action-menu[open] summary { border-color: #9db5ee; color: #285cc7; }
+.quarterly-action-menu__panel {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  min-width: 190px;
+  padding: 5px;
+  border: 1px solid #dde3ec;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(15,23,42,.14);
+}
+.quarterly-action-menu__panel button {
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #344258;
+  font-size: 11px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+.quarterly-action-menu__panel button:hover { background: #f3f6fb; }
+.quarterly-action-menu__panel button:disabled { color: #b3bdca; cursor: not-allowed; }
+.quarterly-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.quarterly-review-btn {
+  padding: 5px 10px;
+  border: 1px solid #b9cbf5;
+  border-radius: 6px;
+  background: #f3f7ff;
+  color: #2558bf;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.quarterly-row-menu { position: relative; }
+.quarterly-row-menu summary {
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #e0e5ed;
+  border-radius: 6px;
+  color: #7c8799;
+  cursor: pointer;
+  list-style: none;
+  letter-spacing: -1px;
+}
+.quarterly-row-menu > div {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 128px;
+  padding: 4px;
+  border: 1px solid #dde3ec;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(15,23,42,.13);
+}
+.quarterly-row-menu button {
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #40506a;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.quarterly-row-menu button:hover { background: #f3f6fb; }
+
+@media (max-width: 720px) {
+  .quarterly-toolbar { align-items: stretch; flex-direction: column; }
+  .quarterly-toolbar__filters, .quarterly-toolbar__primary { flex-wrap: wrap; }
+  .quarterly-toolbar__primary .quarterly-btn { flex: 1; }
+}
