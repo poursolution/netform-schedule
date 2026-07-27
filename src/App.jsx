@@ -9999,8 +9999,9 @@ const SETTLEMENT_BADGE_STYLE = {
                             return acc;
                           }, { target: 0, pending: 0, requested: 0, completed: 0 });
 
-                          // 미검증 판정 헬퍼: 정산대상(승/무/지원 + !정산완료·!selfPT·!감리·!중복) 인데 공고문·K-APT 증빙 둘 다 없으면 미검증
-                          const isUnverified = (c) => {
+                          // 검토대상 판정: 정산대상인데 공고문·K-APT 증빙이 모두 없는 건
+                          // manualVerified 여부는 별도로 나눠 "검토필요 / 검토완료" 탭에서 확인한다.
+                          const needsManualReview = (c) => {
                             const s = c.rawData;
                             if (!s) return false;
                             if (s.selfPT) return false;
@@ -10011,11 +10012,17 @@ const SETTLEMENT_BADGE_STYLE = {
                             const stl = s.settlement?.[c.manager] || {};
                             if (stl.completed || stl.selfSales) return false;
                             if (stl.superseded === true || stl.status === 'superseded') return false; // 중복 처리
-                            // manualVerified=true 면 admin 통과시킨 것 → 미검증 아님
-                            if (stl.manualVerified === true) return false;
                             const hasEvidence = s.evidenceFiles && Object.keys(s.evidenceFiles).length > 0;
                             const kaptVerified = s.kaptVerified?.status === 'verified';
                             return !hasEvidence && !kaptVerified;
+                          };
+                          const isUnverified = (c) => {
+                            if (!needsManualReview(c)) return false;
+                            return c.rawData?.settlement?.[c.manager]?.manualVerified !== true;
+                          };
+                          const isReviewCompleted = (c) => {
+                            if (!needsManualReview(c)) return false;
+                            return c.rawData?.settlement?.[c.manager]?.manualVerified === true;
                           };
 
                           // 상태 필터 적용
@@ -10025,6 +10032,7 @@ const SETTLEMENT_BADGE_STYLE = {
                             : siteListTab === 'lose' ? allRows.filter(c => c._type === 'lose')
                             : siteListTab === 'support' ? allRows.filter(c => c._type === 'support')
                             : siteListTab === 'unverified' ? allRows.filter(isUnverified)
+                            : siteListTab === 'reviewed' ? allRows.filter(isReviewCompleted)
                             : allRows.filter(c => c._type === 'inProgress');
 
                           // 정산 필터 적용 (협약사자체PT 제외, 중복(superseded) 제외, 정산완료 제외)
@@ -10052,6 +10060,7 @@ const SETTLEMENT_BADGE_STYLE = {
                             });
 
                           const unverifiedCount = allRows.filter(isUnverified).length;
+                          const reviewCompletedCount = allRows.filter(isReviewCompleted).length;
 
                           // D — 상단 월별 요약 바: 필터/월 적용된 allRows 기준 집계
                           const summaryBar = allRows.reduce((acc, c) => {
@@ -10078,7 +10087,8 @@ const SETTLEMENT_BADGE_STYLE = {
                             { key: 'lose', label: '패배', count: listKanban.lose.length },
                             { key: 'support', label: '지원', count: listKanban.support.length },
                             { key: 'inProgress', label: '진행중', count: listKanban.inProgress.length },
-                            { key: 'unverified', label: '⚠ 미검증', count: unverifiedCount, highlight: true },
+                            { key: 'unverified', label: '검토필요', count: unverifiedCount, highlight: true },
+                            { key: 'reviewed', label: '✓ 검토완료', count: reviewCompletedCount },
                           ];
                           const getStatusStyle = (type) => {
                             if (type === 'win') return { border: '#3b82f6', badge: '#dbeafe', text: '#1d4ed8', label: '승' };
@@ -10115,7 +10125,11 @@ const SETTLEMENT_BADGE_STYLE = {
                                   const highlight = tab.highlight && tab.count > 0;
                                   return (
                                   <button key={tab.key} onClick={() => setSiteListTab(tab.key)}
-                                    title={tab.key === 'unverified' ? '잔디 공고문·K-APT 검증 둘 다 없는 정산대상 (감리 제외) — 운영상 즉시 확인 필요' : undefined}
+                                    title={tab.key === 'unverified'
+                                      ? '공고문·K-APT 검증이 없어 한준엽 또는 관리자의 확인이 필요한 정산대상'
+                                      : tab.key === 'reviewed'
+                                        ? '한준엽 또는 관리자가 검토완료로 처리한 정산대상'
+                                        : undefined}
                                     style={{
                                     flex: isMobile ? '1' : '0 0 auto', padding: '8px 16px', borderRadius: '8px',
                                     border: active ? (highlight ? '2px solid #dc2626' : '1px solid #1e293b') : (highlight ? '2px solid #dc2626' : '1px solid #e2e8f0'),
@@ -10136,14 +10150,18 @@ const SETTLEMENT_BADGE_STYLE = {
                               {siteListTab === 'unverified' && (currentUser?.isAdmin || currentUser?.name === '한준엽') && filteredRows.length > 0 && (
                                 <div style={{ marginBottom: 12, padding: '12px 14px', background: '#fef2f2', border: '1.5px solid #fecaca', borderRadius: 10, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
                                   <div style={{ flex: 1, minWidth: 200, fontSize: 12, color: '#991b1b' }}>
-                                    <div style={{ fontWeight: 700, marginBottom: 2 }}>🛠 관리자 묶음 처리 ({filteredRows.length}건)</div>
+                                    <div style={{ fontWeight: 700, marginBottom: 2 }}>🛠 검토필요 묶음 처리 ({filteredRows.length}건)</div>
                                     <div style={{ fontSize: 11, color: '#b91c1c', lineHeight: 1.5 }}>
                                       현재 보이는 검토필요 건 전체에 일괄 적용. 개별 확인 불가할 때 직권 처리용.
                                     </div>
                                   </div>
                                   <button
                                     onClick={async () => {
-                                      if (!window.confirm(`${filteredRows.length}건을 "관리자 수동 승인"으로 일괄 처리합니다.\n\n각 담당자의 settlement.manualVerified = true 로 저장되어 정산 대상으로 포함됩니다.\n\n진행?`)) return;
+                                      if (!(currentUser?.isAdmin || currentUser?.name === '한준엽')) {
+                                        alert('한준엽 또는 관리자만 검토완료 처리할 수 있습니다.');
+                                        return;
+                                      }
+                                      if (!window.confirm(`${filteredRows.length}건을 "검토완료"로 일괄 처리합니다.\n\n확인된 건은 검토완료 탭으로 이동하고 정산 대상에 포함됩니다.\n\n진행?`)) return;
                                       const now = new Date().toISOString();
                                       const updates = {};
                                       filteredRows.forEach(c => {
@@ -10156,12 +10174,12 @@ const SETTLEMENT_BADGE_STYLE = {
                                       });
                                       try {
                                         await database.ref().update(updates);
-                                        alert(`✅ ${filteredRows.length}건 수동 승인 완료`);
+                                        alert(`✅ ${filteredRows.length}건 검토완료 처리`);
                                       } catch (e) { alert('처리 실패: ' + e.message); }
                                     }}
                                     style={{ padding: '8px 14px', borderRadius: 6, border: 'none', background: '#059669', color: 'white', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                                     title="manualVerified=true 로 일괄 저장 (isSettlementEligible 통과)"
-                                  >✓ 전체 수동 승인</button>
+                                  >✓ 전체 검토완료</button>
                                   <button
                                     onClick={async () => {
                                       const reason = window.prompt(`${filteredRows.length}건 전체를 "취소공고"로 일괄 표시합니다.\n\n사유를 입력해주세요 (예: 단체PT / 공고 없는 현장 / 기타):`);
@@ -10203,6 +10221,11 @@ const SETTLEMENT_BADGE_STYLE = {
                                   {unverifiedCount > 0 && (
                                     <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#fef3c7', color: '#92400e', fontWeight: '800', border: '1px solid #fcd34d' }} title="잔디 공고문·K-APT 검증 둘 다 없는 정산대상 (감리 제외)">
                                       ⚠ 검토필요 {unverifiedCount}
+                                    </span>
+                                  )}
+                                  {reviewCompletedCount > 0 && (
+                                    <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#ecfdf5', color: '#047857', fontWeight: '800', border: '1px solid #a7f3d0' }} title="한준엽 또는 관리자가 직접 검토완료로 처리한 건">
+                                      ✓ 검토완료 {reviewCompletedCount}
                                     </span>
                                   )}
                                 </div>
@@ -10391,7 +10414,7 @@ const SETTLEMENT_BADGE_STYLE = {
                                                 🚫 취소공고
                                               </span>
                                             )}
-                                            {/* 미검증 탭 — 한준엽·admin 만 [✓ 확인 통과] 버튼: manualVerified=true 마킹 즉시 미검증에서 제외 */}
+                                            {/* 검토필요 → 검토완료: 한준엽·admin 전용 */}
                                             {siteListTab === 'unverified' && (currentUser?.isAdmin || currentUser?.name === '한준엽') && card.manager && (() => {
                                               const stl = s?.settlement?.[card.manager] || {};
                                               if (stl.manualVerified === true) return null; // 이미 통과
@@ -10399,8 +10422,12 @@ const SETTLEMENT_BADGE_STYLE = {
                                                 <button
                                                   onClick={async (e) => {
                                                     e.stopPropagation();
+                                                    if (!(currentUser?.isAdmin || currentUser?.name === '한준엽')) {
+                                                      alert('한준엽 또는 관리자만 검토완료 처리할 수 있습니다.');
+                                                      return;
+                                                    }
                                                     if (!firebaseEnabled || !database) return;
-                                                    if (!window.confirm(`${card.siteName} (${card.manager}) — 검증 통과로 처리합니다.\n\n이후 미검증에서 사라지고 정산 대상에 포함됩니다. 진행?`)) return;
+                                                    if (!window.confirm(`${card.siteName} (${card.manager})을 검토완료로 처리합니다.\n\n검토완료 탭으로 이동하고 정산 대상에 포함됩니다. 진행할까요?`)) return;
                                                     try {
                                                       const nowISO = new Date().toISOString();
                                                       const enc = encodeURIComponent(card.manager);
@@ -10418,11 +10445,19 @@ const SETTLEMENT_BADGE_STYLE = {
                                                       }) : ps));
                                                     } catch (err) { alert('저장 실패: ' + err.message); }
                                                   }}
-                                                  title="확인 통과 처리 — manualVerified=true 마킹 후 즉시 미검증에서 제외"
+                                                  title="한준엽 또는 관리자 전용 — 확인 후 검토완료 처리"
                                                   style={{ fontSize: '10px', fontWeight: '800', padding: '2px 10px', borderRadius: '10px', background: '#16a34a', color: 'white', border: 'none', cursor: 'pointer', letterSpacing: '0.02em' }}
-                                                >✓ 확인 통과</button>
+                                                >✓ 검토완료</button>
                                               );
                                             })()}
+                                            {isReviewCompleted(card) && (
+                                              <span
+                                                style={{ fontSize: '10px', fontWeight: '800', padding: '2px 10px', borderRadius: '10px', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', letterSpacing: '0.02em' }}
+                                                title={`검토자: ${settlement.manualVerifiedBy || '-'} · ${settlement.manualVerifiedAt ? settlement.manualVerifiedAt.slice(0, 16).replace('T', ' ') : '시간 기록 없음'}`}
+                                              >
+                                                ✓ 검토완료
+                                              </span>
+                                            )}
                                             {currentResult && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: ss.badge, color: ss.text }}>{ss.label}</span>}
                                             {card._type === 'inProgress' && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: '#dbeafe', color: '#1d4ed8' }}>진행중</span>}
                                             {/* PT 리스크 뱃지 (진행중 PT 승률 예측 35% 미만) */}
