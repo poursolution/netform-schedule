@@ -15953,6 +15953,37 @@ tr.suppressed td.fname{color:#64748b;}
             const quarterClosedAt = totals?.closedAt;
             const quarterClosedBy = totals?.closedBy;
 
+            // 마감 후 김유림 급여 반영용 표준 Excel 다운로드
+            const downloadQuarterClosingExcel = async () => {
+              if (!isQuarterClosed) {
+                alert('분기 마감 후 엑셀을 다운로드할 수 있습니다.');
+                return;
+              }
+              const match = String(monthlySettlementMonth || '').match(/^(\d{4})-Q([1-4])$/);
+              if (!match) {
+                alert('분기 형식이 올바르지 않습니다.');
+                return;
+              }
+              const year = parseInt(match[1], 10);
+              const quarter = parseInt(match[2], 10);
+              const allData = { ptSchedules, briefingSchedules, personalSchedules, seminarSchedules, salesSchedules };
+              try {
+                setMonthlySettlementLoading(true);
+                const report = aggregateQuarterlyReport(
+                  allData,
+                  year,
+                  quarter,
+                  getQuarterSettlementOptions(monthlySettlementMonth),
+                );
+                const blob = await generateExcelBlob(report);
+                downloadBlob(blob, `POUR_분기보고서_${year}_${quarter}분기.xlsx`);
+              } catch (e) {
+                alert('마감 엑셀 생성 실패: ' + e.message);
+              } finally {
+                setMonthlySettlementLoading(false);
+              }
+            };
+
             // 분기 마감/해제 — closed 플래그 + 이력 저장
             const toggleQuarterClose = async () => {
               if (isQuarterClosed) {
@@ -16376,6 +16407,12 @@ tr.suppressed td.fname{color:#64748b;}
                         onClick={toggleQuarterClose} disabled={monthlySettlementLoading}
                         title={isQuarterClosed ? '분기 마감 해제' : '분기 마감'}>
                         {isQuarterClosed ? '마감 해제' : '분기 마감'}
+                      </button>
+                      <button className="quarterly-btn is-export"
+                        onClick={downloadQuarterClosingExcel}
+                        disabled={monthlySettlementLoading || !isQuarterClosed}
+                        title={isQuarterClosed ? 'PT 및 연차 인센티브 산정내역서 다운로드' : '분기 마감 후 다운로드 가능'}>
+                        마감 엑셀 (PT·주말)
                       </button>
                     </div>
                   </div>
