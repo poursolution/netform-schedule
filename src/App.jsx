@@ -15857,8 +15857,40 @@ tr.suppressed td.fname{color:#64748b;}
             //   결과 수정 즉시 모달 갱신 — 사용자: "금액 수정하면 실시간으로 반영"
             //   같은 룰: pt.date <= 분기 종료일 + requested(or mv) + !completed + !superseded
             const _liveData = aggregateQuarterSettlement(ptSchedules, monthlySettlementMonth, getQuarterSettlementOptions(monthlySettlementMonth));
-            // 우선순위: live 계산 (state 변경 즉시 갱신) > Firebase 캐시
-            const data = _liveData || monthlySettlementData;
+            // 실적 수치는 live 계산을 사용하되 마감·행 상태 같은 운영 메타는 Firebase 값을 유지한다.
+            // 이전에는 live totals가 closed 값을 덮어써 실제 마감 후에도 버튼이 비활성화됐다.
+            const _cachedTotals = monthlySettlementData?.totals || null;
+            const _cachedPerAssignee = monthlySettlementData?.perAssignee || {};
+            const _operationalTotals = _cachedTotals ? {
+              closed: _cachedTotals.closed === true,
+              closedAt: _cachedTotals.closedAt || null,
+              closedBy: _cachedTotals.closedBy || null,
+              closingWarnings: _cachedTotals.closingWarnings || null,
+              reopenedAt: _cachedTotals.reopenedAt || null,
+              reopenedBy: _cachedTotals.reopenedBy || null,
+              generatedAt: _cachedTotals.generatedAt || null,
+              generatedBy: _cachedTotals.generatedBy || null,
+              closingDate: _cachedTotals.closingDate || null,
+              payrollMonth: _cachedTotals.payrollMonth || null,
+              reportedTo: _cachedTotals.reportedTo || null,
+            } : {};
+            const _mergedPerAssignee = _liveData?.perAssignee
+              ? Object.fromEntries(Object.entries(_liveData.perAssignee).map(([assignee, liveRow]) => {
+                const cachedRow = _cachedPerAssignee[assignee] || {};
+                return [assignee, {
+                  ...liveRow,
+                  status: cachedRow.status || liveRow.status,
+                  reportedToPayroll: cachedRow.reportedToPayroll ?? liveRow.reportedToPayroll,
+                  reportedAt: cachedRow.reportedAt || liveRow.reportedAt || null,
+                }];
+              }))
+              : null;
+            const data = _liveData ? {
+              ..._liveData,
+              perAssignee: _mergedPerAssignee,
+              totals: { ...(_liveData.totals || {}), ..._operationalTotals },
+              _expandedReview: monthlySettlementData?._expandedReview,
+            } : monthlySettlementData;
             const perAssignee = data?.perAssignee || {};
             const totals = data?.totals || null;
             // 담당자 확인 상태 + reviewRequests 주입 (quarterConfirmations 에서)
@@ -16349,7 +16381,7 @@ tr.suppressed td.fname{color:#64748b;}
             };
             // 최초/월변경 시 로드 — 해당 분기를 아직 시도하지 않았을 때만
             //   분기 데이터가 없어도 1회만 호출 (이후 null 유지, 무한루프 방지)
-            if (data === null && !monthlySettlementLoading && monthlySettlementLoadedFor !== monthlySettlementMonth) {
+            if (monthlySettlementData === null && !monthlySettlementLoading && monthlySettlementLoadedFor !== monthlySettlementMonth) {
               setTimeout(loadData, 0);
             }
             const statusBadge = (s) => {
