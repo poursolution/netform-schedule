@@ -99,6 +99,7 @@ const EXCLUSION_REASON_LABEL = {
   supervision_pending_input: '감리·금액 입력 대기',
 };
 import { normalizeApartmentName, addApartmentAlias } from './utils/apartmentMatch.js';
+import { scoreJandiEvidenceCandidate } from './utils/jandiFileParser.js';
 import * as theme from './utils/theme.js';
 
 // 정산 상태 6단계 배지 스타일 (#4 — 실적 카드용)
@@ -726,6 +727,15 @@ const SETTLEMENT_BADGE_STYLE = {
       const [showJandiModal, setShowJandiModal] = useState(false);
       // 공고미확인 → 정산대상 결정 모달 (잔디 딥링크로 진입): { ptId, assignee } | null
       const [settleDecisionModal, setSettleDecisionModal] = useState(null);
+      // 실적 검토 패널 — 근거 확인과 최종 결정을 한 화면에서 처리
+      const [settlementReviewPanel, setSettlementReviewPanel] = useState(null);
+      const [settlementReviewQuery, setSettlementReviewQuery] = useState('');
+      const [settlementReviewCandidates, setSettlementReviewCandidates] = useState([]);
+      const [settlementReviewSearch, setSettlementReviewSearch] = useState({ loading: false, loaded: false, error: null });
+      const [settlementReviewBusy, setSettlementReviewBusy] = useState(false);
+      const [settlementReviewOpeningFileId, setSettlementReviewOpeningFileId] = useState(null);
+      const [settlementReviewNote, setSettlementReviewNote] = useState('');
+      const [jandiSyncHealth, setJandiSyncHealth] = useState(null);
       // 크로스체크 "찌르기" 상태: { [cardId_assignee]: 'busy'|'ok'|'fail' }
       const [pokingAdmin, setPokingAdmin] = useState({});
 
@@ -1662,7 +1672,6 @@ const SETTLEMENT_BADGE_STYLE = {
 
         // 잔디 웹훅 설정 로드 (admin 공통 채널 + 담당자별 개인 webhook)
         const jandiRef = database.ref('config/jandi');
-        let jandiSeedAttempted = false; // 1회만 시도
         jandiRef.on('value', (snapshot) => {
           const data = snapshot.val() || {};
           setJandiUrl(data.url || '');
@@ -1670,17 +1679,11 @@ const SETTLEMENT_BADGE_STYLE = {
           setJandiConfig({ url: data.url || '', enabled: data.enabled !== false });
           // 담당자별 개인 webhook (users/{name} = { url, enabled })
           setJandiUserWebhooks(data.users || {});
-          // 송보람(정산 검토자) webhook 자동 seed — 없을 때만 1회 기록
-          if (!jandiSeedAttempted) {
-            jandiSeedAttempted = true;
-            const existing = data.users?.['송보람']?.url;
-            if (!existing) {
-              database.ref('config/jandi/users/송보람').set({
-                url: 'https://wh.jandi.com/connect-api/webhook/26098605/610344130ec9258293e3e0fb87741d27',
-                enabled: true,
-              }).then(() => console.log('[jandi] seeded 송보람 personal webhook')).catch(e => console.warn('[jandi] seed failed', e));
-            }
-          }
+        });
+
+        const jandiSyncHealthRef = database.ref('config/jandiSyncHealth');
+        jandiSyncHealthRef.on('value', (snapshot) => {
+          setJandiSyncHealth(snapshot.val() || null);
         });
 
         // K-APT Worker 설정 로드
@@ -3489,6 +3492,276 @@ const SETTLEMENT_BADGE_STYLE = {
           }) : ps));
           return { ok: true, patch };
         } catch (e) { console.warn('[settle-decision] failed', e); return { ok: false, error: e.message }; }
+      };
+
+      const canFinalizeSettlementReview = () => currentUser?.isAdmin || currentUser?.name === '한준엽';
+
+      const searchSettlementJandiEvidence = async (panel = settlementReviewPanel, query = settlementReviewQuery) => {
+        if (!panel?.ptId || !database) return;
+        setSettlementReviewSearch({ loading: true, loaded: false, error: null });
+        try {
+          const snapshot = await database.ref('evidence').once('value');
+          const evidence = snapshot.val() || {};
+          const linkedIds = new Set(Object.keys(panel.rawData?.evidenceFiles || {}));
+          const pt = {
+            siteName: panel.siteName,
+            workType: panel.workType,
+            date: panel.date,
+          };
+          const candidates = Object.entries(evidence)
+            .map(([fileId, item]) => {
+              const scored = scoreJandiEvidenceCandidate(item, pt, query);
+              return {
+                fileId,
+                ...item,
+                ...scored,
+                alreadyLinked: linkedIds.has(fileId),
+                linkedElsewhere: Object.keys(item?.matchedPtIds || {}).some(id => id !== panel.ptId),
+              };
+            })
+            .filter(item => item.score >= 0.28)
+            .sort((a, b) => (b.score - a.score) || String(b.syncedAt || '').localeCompare(String(a.syncedAt || '')))
+            .slice(0, 5);
+          setSettlementReviewCandidates(candidates);
+          setSettlementReviewSearch({ loading: false, loaded: true, error: null });
+        } catch (error) {
+          setSettlementReviewCandidates([]);
+          setSettlementReviewSearch({ loading: false, loaded: true, error: error.message });
+        }
+      };
+
+      const openSettlementReviewPanel = (card) => {
+        const rawData = card?.rawData || {};
+        const panel = {
+          ptId: card?.id,
+          assignee: card?.manager,
+          siteName: card?.siteName || rawData.siteName || '',
+          date: card?.date || rawData.date || '',
+          workType: rawData.workType || '',
+          result: rawData.results?.[card?.manager] || rawData.result || '',
+          rawData,
+        };
+        setSettlementReviewPanel(panel);
+        setSettlementReviewQuery(panel.siteName);
+        setSettlementReviewCandidates([]);
+        setSettlementReviewOpeningFileId(null);
+        setSettlementReviewNote(rawData.settlement?.[card?.manager]?.reviewNote || '');
+        setSettlementReviewSearch({ loading: false, loaded: false, error: null });
+        searchSettlementJandiEvidence(panel, panel.siteName).catch(error => {
+          setSettlementReviewSearch({ loading: false, loaded: true, error: error.message });
+        });
+      };
+
+      const openSettlementJandiEvidence = async (fileId, file = {}) => {
+        if (!fileId) return;
+        const previewWindow = window.open('about:blank', '_blank');
+        if (previewWindow) {
+          previewWindow.opener = null;
+          previewWindow.document.title = '공고 원문 여는 중';
+          previewWindow.document.body.innerHTML = '<div style="font-family:sans-serif;padding:28px;color:#334155">공고 원문을 불러오는 중입니다…</div>';
+        }
+        setSettlementReviewOpeningFileId(fileId);
+        try {
+          const cachedUrl = file.signedReadUrl || '';
+          const cachedExpiresAt = Number(file.signedReadUrlExpiresAt || 0);
+          let fileUrl = cachedUrl && cachedExpiresAt > Date.now() + 60_000 ? cachedUrl : '';
+
+          if (!fileUrl) {
+            if (!kaptWorkerUrl) throw new Error('K-APT Worker URL이 설정되어 있지 않습니다.');
+            const response = await fetch(`${kaptWorkerUrl.replace(/\/$/, '')}/jandi-evidence-url`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fileId }),
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || result.status !== 'ok' || !result.url) {
+              throw new Error(result.error || `HTTP ${response.status}`);
+            }
+            fileUrl = result.url;
+          }
+
+          const parsedUrl = new URL(fileUrl);
+          if (parsedUrl.protocol !== 'https:') throw new Error('안전하지 않은 공고 주소입니다.');
+          if (previewWindow) {
+            previewWindow.location.replace(fileUrl);
+          } else {
+            const opened = window.open(fileUrl, '_blank', 'noopener,noreferrer');
+            if (!opened) throw new Error('팝업이 차단되었습니다. 브라우저에서 팝업을 허용해주세요.');
+          }
+        } catch (error) {
+          if (previewWindow && !previewWindow.closed) previewWindow.close();
+          alert('공고 원문 열기 실패: ' + error.message);
+        } finally {
+          setSettlementReviewOpeningFileId(null);
+        }
+      };
+
+      const linkSettlementJandiEvidence = async (candidate) => {
+        const panel = settlementReviewPanel;
+        if (!panel?.ptId || !panel?.assignee || !candidate?.fileId || !database) return;
+        if (!canFinalizeSettlementReview()) {
+          alert('잔디 공고문 직접 연결은 한준엽 또는 관리자만 가능합니다.');
+          return;
+        }
+        setSettlementReviewBusy(true);
+        try {
+          const nowISO = new Date().toISOString();
+          const evidenceValue = {
+            filename: candidate.filename || null,
+            storagePath: candidate.storagePath || null,
+            ext: candidate.ext || null,
+            size: candidate.size == null ? null : candidate.size,
+            parsedSeq: candidate.parsedSeq == null ? null : candidate.parsedSeq,
+            parsedMethod: candidate.parsedMethod || null,
+            mimeType: candidate.mimeType || null,
+            signedReadUrl: candidate.signedReadUrl || null,
+            signedReadUrlExpiresAt: candidate.signedReadUrlExpiresAt || null,
+            matchScore: 1,
+            matchedAt: nowISO,
+            matchedBy: 'manual-review-panel',
+          };
+          const updates = {
+            [`pt/${panel.ptId}/evidenceFiles/${candidate.fileId}`]: evidenceValue,
+            [`evidence/${candidate.fileId}/matchedPtIds/${panel.ptId}`]: 1,
+            [`evidence/${candidate.fileId}/ptMatchStatus`]: 'matched',
+            [`evidence/${candidate.fileId}/matchedAt`]: nowISO,
+          };
+          // RTDB key 금지문자(.#$[]/)를 제거해 "1/2단지" 같은 이름도 안전하게 학습한다.
+          const toAliasKey = value => normalizeApartmentName(value)
+            .replace(/(\d+)[/·•‧⋅-](\d+)단지/g, '$1및$2단지')
+            .replace(/[.#$\[\]\/]/g, '');
+          const canonical = toAliasKey(panel.siteName);
+          const alias = toAliasKey(candidate.parsedSiteName || '');
+          if (canonical && alias) {
+            updates[`apartmentAlias/${canonical}/canonicalPtId`] = panel.ptId;
+            updates[`apartmentAlias/${canonical}/canonicalSiteName`] = panel.siteName;
+            updates[`apartmentAlias/${canonical}/aliases/${alias}`] = {
+              raw: candidate.parsedSiteName,
+              lastUsedAt: nowISO,
+              learnedBy: currentUser?.name || 'admin',
+            };
+            updates[`apartmentAlias/${canonical}/updatedAt`] = nowISO;
+          }
+          await database.ref().update(updates);
+
+          setPtSchedules(prev => prev.map(pt => pt.id === panel.ptId ? ({
+            ...pt,
+            evidenceFiles: { ...(pt.evidenceFiles || {}), [candidate.fileId]: evidenceValue },
+          }) : pt));
+          setSettlementReviewPanel(prev => prev ? ({
+            ...prev,
+            rawData: {
+              ...prev.rawData,
+              evidenceFiles: { ...(prev.rawData?.evidenceFiles || {}), [candidate.fileId]: evidenceValue },
+            },
+          }) : prev);
+          setSettlementReviewCandidates(prev => prev.map(item => item.fileId === candidate.fileId ? ({ ...item, alreadyLinked: true }) : item));
+        } catch (error) {
+          alert('공고문 연결 실패: ' + error.message);
+        } finally {
+          setSettlementReviewBusy(false);
+        }
+      };
+
+      const refreshJandiEvidence = async () => {
+        if (!canFinalizeSettlementReview()) {
+          alert('최신 잔디 공고 수집은 한준엽 또는 관리자만 가능합니다.');
+          return;
+        }
+        if (!kaptWorkerUrl) {
+          alert('K-APT Worker URL이 설정되어 있지 않습니다.');
+          return;
+        }
+        setSettlementReviewBusy(true);
+        try {
+          const response = await fetch(`${kaptWorkerUrl.replace(/\/$/, '')}/jandi-sync`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ monthsBack: 3, maxFiles: 400, maxScrolls: 320 }),
+          });
+          const result = await response.json();
+          if (!response.ok || result.status !== 'ok') throw new Error(result.error || `HTTP ${response.status}`);
+          await searchSettlementJandiEvidence(settlementReviewPanel, settlementReviewQuery);
+          alert(`잔디 최신 공고 수집 완료\n\n신규 ${result.sync?.uploaded || 0}건 · 기존 ${result.sync?.skipped || 0}건\n자동 연결 ${result.rematch?.matched || 0}건`);
+        } catch (error) {
+          alert('잔디 공고 수집 실패: ' + error.message);
+        } finally {
+          setSettlementReviewBusy(false);
+        }
+      };
+
+      const applySettlementReviewDecision = async (decision) => {
+        const panel = settlementReviewPanel;
+        if (!panel?.ptId || !panel?.assignee || !database) return;
+        if (!canFinalizeSettlementReview()) {
+          alert('최종 결정은 한준엽 또는 관리자만 가능합니다.');
+          return;
+        }
+        const note = settlementReviewNote.trim();
+        if ((decision === 'hold' || decision === 'excluded') && !note) {
+          alert(decision === 'hold' ? '보류 사유를 입력해주세요.' : '정산 제외 사유를 입력해주세요.');
+          return;
+        }
+        setSettlementReviewBusy(true);
+        try {
+          const nowISO = new Date().toISOString();
+          const reviewer = currentUser?.name || 'admin';
+          const currentSettlement = panel.rawData?.settlement?.[panel.assignee] || {};
+          const common = {
+            reviewStatus: decision,
+            reviewNote: note || null,
+            reviewedAt: nowISO,
+            reviewedBy: reviewer,
+            reviewMethod: Object.keys(panel.rawData?.evidenceFiles || {}).length > 0
+              ? 'jandi-evidence'
+              : panel.rawData?.kaptVerified?.status === 'verified' ? 'kapt' : 'admin-judgement',
+          };
+          const patch = decision === 'approved'
+            ? {
+              ...common,
+              manualVerified: true,
+              manualVerifiedAt: nowISO,
+              manualVerifiedBy: reviewer,
+              reviewBypassedBy: reviewer,
+              status: currentSettlement.requested === true ? 'requested' : 'unsettled',
+              excludedReason: null,
+            }
+            : decision === 'hold'
+              ? { ...common, manualVerified: false, status: 'needs_review' }
+              : {
+                ...common,
+                manualVerified: false,
+                requested: false,
+                status: 'excluded',
+                excludedReason: note || '관리자 검토 제외',
+              };
+
+          const historyKey = String(Date.now());
+          const updates = {};
+          Object.entries(patch).forEach(([key, value]) => {
+            updates[`pt/${panel.ptId}/settlement/${panel.assignee}/${key}`] = value;
+          });
+          updates[`pt/${panel.ptId}/settlement/${panel.assignee}/reviewHistory/${historyKey}`] = {
+            decision,
+            note: note || null,
+            at: nowISO,
+            by: reviewer,
+            method: patch.reviewMethod,
+          };
+          await database.ref().update(updates);
+          setPtSchedules(prev => prev.map(pt => pt.id === panel.ptId ? ({
+            ...pt,
+            settlement: {
+              ...(pt.settlement || {}),
+              [panel.assignee]: { ...(pt.settlement?.[panel.assignee] || {}), ...patch },
+            },
+          }) : pt));
+          setSettlementReviewPanel(null);
+        } catch (error) {
+          alert('검토 결과 저장 실패: ' + error.message);
+        } finally {
+          setSettlementReviewBusy(false);
+        }
       };
 
       // Settlement derived fields 자동 저장 (#3 status · #6 excludedReason · #9 calculatedAmount)
@@ -10018,11 +10291,14 @@ const SETTLEMENT_BADGE_STYLE = {
                           };
                           const isUnverified = (c) => {
                             if (!needsManualReview(c)) return false;
-                            return c.rawData?.settlement?.[c.manager]?.manualVerified !== true;
+                            const review = c.rawData?.settlement?.[c.manager] || {};
+                            if (review.reviewStatus === 'excluded') return false;
+                            return review.manualVerified !== true;
                           };
                           const isReviewCompleted = (c) => {
                             if (!needsManualReview(c)) return false;
-                            return c.rawData?.settlement?.[c.manager]?.manualVerified === true;
+                            const review = c.rawData?.settlement?.[c.manager] || {};
+                            return review.manualVerified === true || review.reviewStatus === 'excluded';
                           };
 
                           // 상태 필터 적용
@@ -10087,8 +10363,8 @@ const SETTLEMENT_BADGE_STYLE = {
                             { key: 'lose', label: '패배', count: listKanban.lose.length },
                             { key: 'support', label: '지원', count: listKanban.support.length },
                             { key: 'inProgress', label: '진행중', count: listKanban.inProgress.length },
-                            { key: 'unverified', label: '검토필요', count: unverifiedCount, highlight: true },
-                            { key: 'reviewed', label: '✓ 검토완료', count: reviewCompletedCount },
+                            { key: 'unverified', label: '검토대기', count: unverifiedCount, highlight: true },
+                            { key: 'reviewed', label: '처리완료', count: reviewCompletedCount },
                           ];
                           const getStatusStyle = (type) => {
                             if (type === 'win') return { border: '#3b82f6', badge: '#dbeafe', text: '#1d4ed8', label: '승' };
@@ -10126,9 +10402,9 @@ const SETTLEMENT_BADGE_STYLE = {
                                   return (
                                   <button key={tab.key} onClick={() => setSiteListTab(tab.key)}
                                     title={tab.key === 'unverified'
-                                      ? '공고문·K-APT 검증이 없어 한준엽 또는 관리자의 확인이 필요한 정산대상'
+                                      ? '공고문·K-APT 근거를 확인한 뒤 처리해야 하는 정산대상'
                                       : tab.key === 'reviewed'
-                                        ? '한준엽 또는 관리자가 검토완료로 처리한 정산대상'
+                                        ? '한준엽 또는 관리자가 검토를 끝낸 정산대상'
                                         : undefined}
                                     style={{
                                     flex: isMobile ? '1' : '0 0 auto', padding: '8px 16px', borderRadius: '8px',
@@ -10146,64 +10422,33 @@ const SETTLEMENT_BADGE_STYLE = {
                                 })}
                               </div>
 
-                              {/* 검토필요 묶음 처리 (admin + 한준엽 + unverified 탭일 때만) */}
-                              {siteListTab === 'unverified' && (currentUser?.isAdmin || currentUser?.name === '한준엽') && filteredRows.length > 0 && (
-                                <div style={{ marginBottom: 12, padding: '12px 14px', background: '#fef2f2', border: '1.5px solid #fecaca', borderRadius: 10, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-                                  <div style={{ flex: 1, minWidth: 200, fontSize: 12, color: '#991b1b' }}>
-                                    <div style={{ fontWeight: 700, marginBottom: 2 }}>🛠 검토필요 묶음 처리 ({filteredRows.length}건)</div>
-                                    <div style={{ fontSize: 11, color: '#b91c1c', lineHeight: 1.5 }}>
-                                      현재 보이는 검토필요 건 전체에 일괄 적용. 개별 확인 불가할 때 직권 처리용.
+                              {/* 검토대기에서는 일괄완료 대신 잔디 수집 상태와 개별 검토 진입만 제공 */}
+                              {siteListTab === 'unverified' && (() => {
+                                const lastSync = jandiSyncHealth?.workerLastSuccessfulSyncAt
+                                  || jandiSyncHealth?.lastSuccessfulSyncAt
+                                  || jandiSyncHealth?.completedAt;
+                                const lastSyncTime = lastSync ? new Date(lastSync).getTime() : 0;
+                                const isStale = !lastSyncTime || (Date.now() - lastSyncTime > 6 * 60 * 60 * 1000);
+                                const isFailed = jandiSyncHealth?.workerStatus === 'failed' || jandiSyncHealth?.status === 'failed';
+                                return (
+                                  <div style={{ marginBottom: 12, padding: '12px 14px', background: isFailed ? '#fef2f2' : isStale ? '#fffbeb' : '#eff6ff', border: `1px solid ${isFailed ? '#fecaca' : isStale ? '#fde68a' : '#bfdbfe'}`, borderRadius: 10, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                                    <div style={{ flex: 1, minWidth: 240 }}>
+                                      <div style={{ fontSize: 12, fontWeight: 800, color: isFailed ? '#991b1b' : isStale ? '#92400e' : '#1e40af', marginBottom: 3 }}>
+                                        잔디 공고 수집 {isFailed ? '오류' : isStale ? '지연' : '정상'}
+                                      </div>
+                                      <div style={{ fontSize: 11, color: '#64748b' }}>
+                                        마지막 성공: {lastSync ? new Date(lastSync).toLocaleString('ko-KR') : '기록 없음'} · 각 현장의 <b>검토하기</b>에서 공고 후보를 확인하세요.
+                                      </div>
                                     </div>
+                                    {canFinalizeSettlementReview() && (
+                                      <button onClick={refreshJandiEvidence} disabled={settlementReviewBusy}
+                                        style={{ padding: '8px 12px', borderRadius: 7, border: '1px solid #93c5fd', background: '#fff', color: '#1d4ed8', fontSize: 11, fontWeight: 800, cursor: settlementReviewBusy ? 'wait' : 'pointer' }}>
+                                        {settlementReviewBusy ? '수집 중…' : '최신 공고 가져오기'}
+                                      </button>
+                                    )}
                                   </div>
-                                  <button
-                                    onClick={async () => {
-                                      if (!(currentUser?.isAdmin || currentUser?.name === '한준엽')) {
-                                        alert('한준엽 또는 관리자만 검토완료 처리할 수 있습니다.');
-                                        return;
-                                      }
-                                      if (!window.confirm(`${filteredRows.length}건을 "검토완료"로 일괄 처리합니다.\n\n확인된 건은 검토완료 탭으로 이동하고 정산 대상에 포함됩니다.\n\n진행?`)) return;
-                                      const now = new Date().toISOString();
-                                      const updates = {};
-                                      filteredRows.forEach(c => {
-                                        const ptId = c.id; const assignee = c.manager;
-                                        if (!ptId || !assignee) return;
-                                        updates[`pt/${ptId}/settlement/${assignee}/manualVerified`] = true;
-                                        updates[`pt/${ptId}/settlement/${assignee}/manualVerifiedAt`] = now;
-                                        updates[`pt/${ptId}/settlement/${assignee}/manualVerifiedBy`] = currentUser?.name || 'admin';
-                                        updates[`pt/${ptId}/settlement/${assignee}/reviewBypassedBy`] = currentUser?.name || 'admin';
-                                      });
-                                      try {
-                                        await database.ref().update(updates);
-                                        alert(`✅ ${filteredRows.length}건 검토완료 처리`);
-                                      } catch (e) { alert('처리 실패: ' + e.message); }
-                                    }}
-                                    style={{ padding: '8px 14px', borderRadius: 6, border: 'none', background: '#059669', color: 'white', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
-                                    title="manualVerified=true 로 일괄 저장 (isSettlementEligible 통과)"
-                                  >✓ 전체 검토완료</button>
-                                  <button
-                                    onClick={async () => {
-                                      const reason = window.prompt(`${filteredRows.length}건 전체를 "취소공고"로 일괄 표시합니다.\n\n사유를 입력해주세요 (예: 단체PT / 공고 없는 현장 / 기타):`);
-                                      if (reason === null) return;
-                                      const trimmed = (reason || '').trim() || '사유 미입력';
-                                      if (!window.confirm(`${filteredRows.length}건 취소공고 일괄 마킹 — 정산 대상에서 제외됩니다.\n\n사유: ${trimmed}\n\n진행?`)) return;
-                                      const now = new Date().toISOString();
-                                      const updates = {};
-                                      filteredRows.forEach(c => {
-                                        if (!c.id) return;
-                                        updates[`pt/${c.id}/kaptVerified/status`] = 'cancelled';
-                                        updates[`pt/${c.id}/kaptVerified/cancelReason`] = trimmed;
-                                        updates[`pt/${c.id}/kaptVerified/cancelledAt`] = now;
-                                        updates[`pt/${c.id}/kaptVerified/cancelledBy`] = currentUser?.name || 'admin-bulk';
-                                      });
-                                      try {
-                                        await database.ref().update(updates);
-                                        alert(`🚫 ${filteredRows.length}건 취소공고 일괄 마킹 완료`);
-                                      } catch (e) { alert('처리 실패: ' + e.message); }
-                                    }}
-                                    style={{ padding: '8px 14px', borderRadius: 6, border: 'none', background: '#dc2626', color: 'white', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
-                                  >🚫 전체 취소공고</button>
-                                </div>
-                              )}
+                                );
+                              })()}
 
                               {/* D — 월별 요약 바: 결과 카운트 + 정산 대상 건수 + 예상 금액 + 검토필요 */}
                               <div style={{ marginBottom: '12px', padding: isMobile ? '12px 14px' : '14px 18px', background: 'linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%)', borderRadius: '12px', border: '1px solid #dbeafe', display: 'flex', gap: isMobile ? '10px' : '20px', flexWrap: 'wrap', alignItems: 'center', fontSize: '12px' }}>
@@ -10414,40 +10659,19 @@ const SETTLEMENT_BADGE_STYLE = {
                                                 🚫 취소공고
                                               </span>
                                             )}
-                                            {/* 검토필요 → 검토완료: 한준엽·admin 전용 */}
-                                            {siteListTab === 'unverified' && (currentUser?.isAdmin || currentUser?.name === '한준엽') && card.manager && (() => {
+                                            {/* 검토대기 → 근거 확인 패널. 열람은 전원, 최종 결정은 한준엽·admin 전용 */}
+                                            {siteListTab === 'unverified' && card.manager && (() => {
                                               const stl = s?.settlement?.[card.manager] || {};
                                               if (stl.manualVerified === true) return null; // 이미 통과
                                               return (
                                                 <button
-                                                  onClick={async (e) => {
+                                                  onClick={(e) => {
                                                     e.stopPropagation();
-                                                    if (!(currentUser?.isAdmin || currentUser?.name === '한준엽')) {
-                                                      alert('한준엽 또는 관리자만 검토완료 처리할 수 있습니다.');
-                                                      return;
-                                                    }
-                                                    if (!firebaseEnabled || !database) return;
-                                                    if (!window.confirm(`${card.siteName} (${card.manager})을 검토완료로 처리합니다.\n\n검토완료 탭으로 이동하고 정산 대상에 포함됩니다. 진행할까요?`)) return;
-                                                    try {
-                                                      const nowISO = new Date().toISOString();
-                                                      const enc = encodeURIComponent(card.manager);
-                                                      const updates = {
-                                                        manualVerified: true,
-                                                        manualVerifiedAt: nowISO,
-                                                        manualVerifiedBy: currentUser?.name || 'admin',
-                                                        reviewBypassedBy: currentUser?.name || 'admin',
-                                                      };
-                                                      await database.ref(`pt/${card.id}/settlement/${card.manager}`).update(updates);
-                                                      // 로컬 state 즉시 갱신 → 카드 즉시 사라짐
-                                                      setPtSchedules(prev => prev.map(ps => ps.id === card.id ? ({
-                                                        ...ps,
-                                                        settlement: { ...(ps.settlement || {}), [card.manager]: { ...(ps.settlement?.[card.manager] || {}), ...updates } },
-                                                      }) : ps));
-                                                    } catch (err) { alert('저장 실패: ' + err.message); }
+                                                    openSettlementReviewPanel(card);
                                                   }}
-                                                  title="한준엽 또는 관리자 전용 — 확인 후 검토완료 처리"
-                                                  style={{ fontSize: '10px', fontWeight: '800', padding: '2px 10px', borderRadius: '10px', background: '#16a34a', color: 'white', border: 'none', cursor: 'pointer', letterSpacing: '0.02em' }}
-                                                >✓ 검토완료</button>
+                                                  title="잔디 공고·K-APT 근거를 확인하고 검토 결과 처리"
+                                                  style={{ fontSize: '10px', fontWeight: '800', padding: '3px 11px', borderRadius: '7px', background: '#2563eb', color: 'white', border: 'none', cursor: 'pointer', letterSpacing: '0.02em', boxShadow: '0 1px 2px rgba(37,99,235,0.25)' }}
+                                                >검토하기</button>
                                               );
                                             })()}
                                             {isReviewCompleted(card) && (
@@ -10455,7 +10679,7 @@ const SETTLEMENT_BADGE_STYLE = {
                                                 style={{ fontSize: '10px', fontWeight: '800', padding: '2px 10px', borderRadius: '10px', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', letterSpacing: '0.02em' }}
                                                 title={`검토자: ${settlement.manualVerifiedBy || '-'} · ${settlement.manualVerifiedAt ? settlement.manualVerifiedAt.slice(0, 16).replace('T', ' ') : '시간 기록 없음'}`}
                                               >
-                                                ✓ 검토완료
+                                                처리완료
                                               </span>
                                             )}
                                             {currentResult && <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 10px', borderRadius: '10px', background: ss.badge, color: ss.text }}>{ss.label}</span>}
@@ -17345,6 +17569,175 @@ tr.suppressed td.fname{color:#64748b;}
               </div>
             </div>
           )}
+
+          {/* 실적 정산 검토 패널 — 기존 화면을 유지한 채 우측에서 근거와 결정을 처리 */}
+          {settlementReviewPanel && (() => {
+            const panel = settlementReviewPanel;
+            const evidenceFiles = Object.entries(panel.rawData?.evidenceFiles || {}).filter(([, file]) => !file?.suppressed);
+            const kapt = panel.rawData?.kaptVerified || {};
+            const settlement = panel.rawData?.settlement?.[panel.assignee] || {};
+            const amount = calculateSettlementAmount(panel.rawData, panel.assignee).amount || settlement.calculatedAmount || 0;
+            const lastSync = jandiSyncHealth?.workerLastSuccessfulSyncAt
+              || jandiSyncHealth?.lastSuccessfulSyncAt
+              || jandiSyncHealth?.completedAt;
+            const syncTime = lastSync ? new Date(lastSync).getTime() : 0;
+            const syncStale = !syncTime || Date.now() - syncTime > 6 * 60 * 60 * 1000;
+            const canFinalize = canFinalizeSettlementReview();
+            const sectionStyle = { border: '1px solid #e2e8f0', borderRadius: 12, padding: 14, background: '#fff' };
+            return (
+              <div
+                role="presentation"
+                onMouseDown={(e) => { if (e.target === e.currentTarget) setSettlementReviewPanel(null); }}
+                style={{ position: 'fixed', inset: 0, zIndex: 10050, background: 'rgba(15,23,42,0.36)', display: 'flex', justifyContent: 'flex-end', backdropFilter: 'blur(2px)' }}
+              >
+                <aside role="dialog" aria-modal="true" aria-label="정산 검토"
+                  style={{ width: isMobile ? '100%' : 520, height: '100%', background: '#f8fafc', boxShadow: '-18px 0 48px rgba(15,23,42,0.18)', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ padding: isMobile ? '16px' : '20px 22px', borderBottom: '1px solid #e2e8f0', background: '#fff', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 18, fontWeight: 850, color: '#0f172a', marginBottom: 6 }}>정산 검토</div>
+                      <div style={{ fontSize: 14, fontWeight: 750, color: '#1e293b', wordBreak: 'keep-all' }}>{panel.siteName}</div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>{panel.date || '-'} · {panel.workType || '공종 미입력'}</div>
+                    </div>
+                    <button onClick={() => setSettlementReviewPanel(null)} aria-label="닫기"
+                      style={{ width: 34, height: 34, borderRadius: 9, border: '1px solid #e2e8f0', background: '#fff', color: '#475569', fontSize: 20, cursor: 'pointer' }}>×</button>
+                  </div>
+
+                  <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? 14 : 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                      {[
+                        ['담당자', panel.assignee || '-'],
+                        ['결과', panel.result || '-'],
+                        ['예상금액', `${Number(amount).toLocaleString('ko-KR')}원`],
+                      ].map(([label, value]) => (
+                        <div key={label} style={{ padding: '11px 10px', borderRadius: 10, background: '#fff', border: '1px solid #e2e8f0', minWidth: 0 }}>
+                          <div style={{ fontSize: 10, color: '#64748b', marginBottom: 5 }}>{label}</div>
+                          <div style={{ fontSize: label === '예상금액' ? 13 : 14, fontWeight: 800, color: label === '예상금액' ? '#2563eb' : '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <section style={sectionStyle}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 850, color: '#0f172a' }}>잔디 공고</div>
+                          <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
+                            마지막 수집 {lastSync ? new Date(lastSync).toLocaleString('ko-KR') : '기록 없음'}
+                          </div>
+                        </div>
+                        <span style={{ padding: '4px 9px', borderRadius: 999, fontSize: 10, fontWeight: 800, background: evidenceFiles.length ? '#dcfce7' : syncStale ? '#fef3c7' : '#fee2e2', color: evidenceFiles.length ? '#166534' : syncStale ? '#92400e' : '#b91c1c', border: `1px solid ${evidenceFiles.length ? '#86efac' : syncStale ? '#fcd34d' : '#fecaca'}` }}>
+                          {evidenceFiles.length ? `연결 ${evidenceFiles.length}건` : syncStale ? '수집 지연' : '인식 실패'}
+                        </span>
+                      </div>
+
+                      {evidenceFiles.length > 0 && (
+                        <div style={{ marginBottom: 10, padding: '8px 10px', borderRadius: 8, background: '#f0fdf4', border: '1px solid #bbf7d0' }}>
+                          {evidenceFiles.slice(0, 3).map(([fileId, file]) => (
+                            <div key={fileId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
+                              <div title={file.filename || fileId} style={{ flex: 1, minWidth: 0, fontSize: 11, color: '#166534', lineHeight: 1.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>• {file.filename || fileId}</div>
+                              <button onClick={() => openSettlementJandiEvidence(fileId, file)} disabled={settlementReviewOpeningFileId === fileId}
+                                style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid #86efac', background: '#fff', color: '#15803d', fontSize: 10, fontWeight: 850, cursor: settlementReviewOpeningFileId === fileId ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
+                                {settlementReviewOpeningFileId === fileId ? '여는 중…' : '원문 보기'}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {!evidenceFiles.length && (
+                        <div style={{ fontSize: 11, color: '#92400e', lineHeight: 1.55, marginBottom: 10 }}>
+                          새 공고 수집이 늦었거나 잔디 파일명과 실적의 단지명이 다를 수 있습니다.
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', gap: 7 }}>
+                        <input value={settlementReviewQuery} onChange={e => setSettlementReviewQuery(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') searchSettlementJandiEvidence(panel, settlementReviewQuery); }}
+                          placeholder="단지명으로 잔디 공고 검색"
+                          style={{ minWidth: 0, flex: 1, padding: '9px 10px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 12, color: '#0f172a', outline: 'none' }} />
+                        <button onClick={() => searchSettlementJandiEvidence(panel, settlementReviewQuery)} disabled={settlementReviewSearch.loading}
+                          style={{ padding: '9px 11px', borderRadius: 8, border: '1px solid #93c5fd', background: '#eff6ff', color: '#1d4ed8', fontSize: 11, fontWeight: 800, cursor: settlementReviewSearch.loading ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
+                          {settlementReviewSearch.loading ? '검색 중…' : '다시 검색'}
+                        </button>
+                      </div>
+
+                      {canFinalize && (
+                        <button onClick={refreshJandiEvidence} disabled={settlementReviewBusy}
+                          style={{ width: '100%', marginTop: 8, padding: '8px 10px', borderRadius: 8, border: '1px solid #cbd5e1', background: '#fff', color: '#475569', fontSize: 11, fontWeight: 750, cursor: settlementReviewBusy ? 'wait' : 'pointer' }}>
+                          {settlementReviewBusy ? '잔디 채널 수집 중…' : '잔디 최신 공고 가져오기'}
+                        </button>
+                      )}
+
+                      {settlementReviewSearch.error && <div style={{ marginTop: 9, fontSize: 11, color: '#b91c1c' }}>검색 오류: {settlementReviewSearch.error}</div>}
+                      {settlementReviewSearch.loaded && !settlementReviewSearch.loading && settlementReviewCandidates.length === 0 && (
+                        <div style={{ marginTop: 10, padding: '10px', borderRadius: 8, background: '#f8fafc', color: '#64748b', fontSize: 11, textAlign: 'center' }}>유사한 잔디 공고 후보가 없습니다.</div>
+                      )}
+                      {settlementReviewCandidates.length > 0 && (
+                        <div style={{ marginTop: 12 }}>
+                          <div style={{ fontSize: 10, fontWeight: 800, color: '#64748b', marginBottom: 6 }}>유사 후보 {settlementReviewCandidates.length}건</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {settlementReviewCandidates.map(candidate => (
+                              <div key={candidate.fileId} style={{ padding: '9px 10px', borderRadius: 8, border: `1px solid ${candidate.alreadyLinked ? '#86efac' : '#e2e8f0'}`, background: candidate.alreadyLinked ? '#f0fdf4' : '#fff', display: 'flex', alignItems: 'center', gap: 9 }}>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 750, color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{candidate.parsedSiteName || candidate.filename}</div>
+                                  <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{candidate.parsedMethod || '공종 미표기'} · 일치도 {Math.round(candidate.score * 100)}%{candidate.linkedElsewhere ? ' · 다른 실적에도 연결됨' : ''}</div>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                  <button onClick={() => openSettlementJandiEvidence(candidate.fileId, candidate)} disabled={settlementReviewOpeningFileId === candidate.fileId}
+                                    style={{ padding: '6px 8px', borderRadius: 7, border: '1px solid #cbd5e1', background: '#fff', color: '#475569', fontSize: 10, fontWeight: 800, cursor: settlementReviewOpeningFileId === candidate.fileId ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
+                                    {settlementReviewOpeningFileId === candidate.fileId ? '여는 중…' : '원문'}
+                                  </button>
+                                  <button onClick={() => linkSettlementJandiEvidence(candidate)} disabled={candidate.alreadyLinked || settlementReviewBusy || !canFinalize}
+                                    title={!canFinalize ? '한준엽 또는 관리자만 연결할 수 있습니다.' : undefined}
+                                    style={{ padding: '6px 8px', borderRadius: 7, border: '1px solid #93c5fd', background: candidate.alreadyLinked ? '#dcfce7' : '#fff', color: candidate.alreadyLinked ? '#166534' : '#1d4ed8', fontSize: 10, fontWeight: 800, cursor: candidate.alreadyLinked || !canFinalize ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+                                    {candidate.alreadyLinked ? '연결됨' : '파일 연결'}
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </section>
+
+                    <section style={sectionStyle}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 850, color: '#0f172a' }}>K-APT</div>
+                          <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                            {kapt.status === 'verified' ? `검증 완료 · ${kapt.bidKaptname || kapt.matchedValue || '우리 공법 확인'}` : kapt.status === 'needs_review' ? '자동 검증에서 공고를 확정하지 못했습니다.' : '검증된 공고가 없습니다.'}
+                          </div>
+                        </div>
+                        <span style={{ padding: '4px 9px', borderRadius: 999, background: kapt.status === 'verified' ? '#dcfce7' : '#f1f5f9', color: kapt.status === 'verified' ? '#166534' : '#64748b', fontSize: 10, fontWeight: 800 }}>
+                          {kapt.status === 'verified' ? '검증 완료' : '후보 없음'}
+                        </span>
+                      </div>
+                    </section>
+
+                    <section style={sectionStyle}>
+                      <label htmlFor="settlement-review-note" style={{ display: 'block', fontSize: 12, fontWeight: 850, color: '#0f172a', marginBottom: 7 }}>검토 메모</label>
+                      <textarea id="settlement-review-note" value={settlementReviewNote} onChange={e => setSettlementReviewNote(e.target.value)}
+                        placeholder="확인한 근거 또는 보류·제외 사유를 기록하세요."
+                        style={{ width: '100%', minHeight: 76, padding: 10, resize: 'vertical', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 12, color: '#0f172a', lineHeight: 1.5, boxSizing: 'border-box' }} />
+                    </section>
+                  </div>
+
+                  <div style={{ padding: '14px 16px 16px', borderTop: '1px solid #e2e8f0', background: '#fff' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.25fr 1fr 1fr', gap: 8 }}>
+                      <button onClick={() => applySettlementReviewDecision('approved')} disabled={!canFinalize || settlementReviewBusy}
+                        style={{ padding: '11px 8px', borderRadius: 9, border: 'none', background: canFinalize ? '#15803d' : '#cbd5e1', color: '#fff', fontSize: 12, fontWeight: 850, cursor: canFinalize && !settlementReviewBusy ? 'pointer' : 'not-allowed' }}>정산 인정</button>
+                      <button onClick={() => applySettlementReviewDecision('hold')} disabled={!canFinalize || settlementReviewBusy}
+                        style={{ padding: '11px 8px', borderRadius: 9, border: '1px solid #f59e0b', background: '#fffbeb', color: '#a16207', fontSize: 12, fontWeight: 850, cursor: canFinalize && !settlementReviewBusy ? 'pointer' : 'not-allowed' }}>보류</button>
+                      <button onClick={() => applySettlementReviewDecision('excluded')} disabled={!canFinalize || settlementReviewBusy}
+                        style={{ padding: '11px 8px', borderRadius: 9, border: '1px solid #ef4444', background: '#fff', color: '#b91c1c', fontSize: 12, fontWeight: 850, cursor: canFinalize && !settlementReviewBusy ? 'pointer' : 'not-allowed' }}>정산 제외</button>
+                    </div>
+                    <div style={{ marginTop: 9, textAlign: 'center', fontSize: 10, color: '#94a3b8' }}>
+                      최종 결정은 한준엽·admin만 가능합니다.
+                    </div>
+                  </div>
+                </aside>
+              </div>
+            );
+          })()}
 
           {/* 실적요약 Drill-down 모달 */}
           {showDrilldownModal && (() => {

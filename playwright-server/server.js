@@ -1288,16 +1288,26 @@ app.post('/admin/jandi-channel-sync', requireAuth, async (req, res) => {
     maxFiles = 100,
     maxScrolls = 400,
     forceReupload = false,
+    summaryOnly = false,
   } = req.body || {};
   const cutoff = new Date(Date.now() - monthsBack * 30 * 86400 * 1000);
   const startedAt = Date.now();
   let context = null;
+  let syncHealthRef = null;
 
   try {
     // Firebase Admin 초기화
     const fb = await getFirebaseAdmin();
     const bucket = admin.storage().bucket();
     const db = admin.database();
+    syncHealthRef = db.ref('config/jandiSyncHealth');
+    await syncHealthRef.update({
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      channelName,
+      requestedMonthsBack: monthsBack,
+      error: null,
+    });
 
     const browser = await getBrowser();
     context = await browser.newContext({
@@ -1311,6 +1321,7 @@ app.post('/admin/jandi-channel-sync', requireAuth, async (req, res) => {
     // 1) 로그인
     const login = await performJandiLogin(page, { email, password, team });
     if (!login.ok) {
+      await syncHealthRef.update({ status: 'failed', failedAt: new Date().toISOString(), error: 'login_failed' });
       await context.close();
       return res.json({ status: 'login_failed', login });
     }
@@ -1320,6 +1331,7 @@ app.post('/admin/jandi-channel-sync', requireAuth, async (req, res) => {
     const itemLocator = page.locator('.lnb-list-item').filter({ hasText: channelName });
     const itemCount = await itemLocator.count();
     if (itemCount === 0) {
+      await syncHealthRef.update({ status: 'failed', failedAt: new Date().toISOString(), error: 'channel_not_found' });
       await context.close();
       return res.json({ status: 'channel_not_found', channelName });
     }
@@ -1440,6 +1452,7 @@ app.post('/admin/jandi-channel-sync', requireAuth, async (req, res) => {
     const cookies = await context.cookies();
     const jwt = cookies.find(c => c.name === '_jd_.access_token')?.value;
     if (!jwt) {
+      await syncHealthRef.update({ status: 'failed', failedAt: new Date().toISOString(), error: 'no_jwt_cookie' });
       await context.close();
       return res.json({ status: 'error', error: 'no_jwt_cookie' });
     }
@@ -1548,6 +1561,19 @@ app.post('/admin/jandi-channel-sync', requireAuth, async (req, res) => {
     }
 
     await context.close();
+    const completedAt = new Date().toISOString();
+    await syncHealthRef.update({
+      status: 'ok',
+      completedAt,
+      lastSuccessfulSyncAt: completedAt,
+      totalFilesFound: files.length,
+      processed: filesToProcess.length,
+      uploaded: results.uploaded.length,
+      skipped: results.skipped.length,
+      failed: results.failed.length,
+      durationMs: Date.now() - startedAt,
+      error: results.failed.length ? `${results.failed.length}개 파일 처리 실패` : null,
+    });
     return res.json({
       status: 'ok',
       channelName,
@@ -1557,12 +1583,60 @@ app.post('/admin/jandi-channel-sync', requireAuth, async (req, res) => {
       uploaded: results.uploaded.length,
       skipped: results.skipped.length,
       failed: results.failed.length,
-      results,
+      results: summaryOnly ? undefined : results,
       durationMs: Date.now() - startedAt,
     });
   } catch (e) {
     if (context) await context.close().catch(() => {});
+    if (syncHealthRef) {
+      await syncHealthRef.update({
+        status: 'failed',
+        failedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        error: e.message,
+      }).catch(() => {});
+    }
     return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
+// 정산 검토창용 잔디 공고 원문 열람 URL 발급.
+// Storage 파일을 공개하지 않고, 클릭할 때마다 15분짜리 signed URL을 새로 만든다.
+app.post('/admin/jandi-evidence-url', requireAuth, async (req, res) => {
+  const fileId = String(req.body?.fileId || '').trim();
+  if (!fileId || fileId.length > 200 || /[.#$\[\]\/]/.test(fileId)) {
+    return res.status(400).json({ status: 'error', error: 'invalid_file_id' });
+  }
+  try {
+    await getFirebaseAdmin();
+    const db = admin.database();
+    const snapshot = await db.ref(`evidence/${fileId}`).once('value');
+    const evidence = snapshot.val();
+    if (!evidence) return res.status(404).json({ status: 'error', error: 'evidence_not_found' });
+
+    const storagePath = String(evidence.storagePath || '');
+    if (!storagePath.startsWith('evidence/jandi/')) {
+      return res.status(400).json({ status: 'error', error: 'invalid_storage_path' });
+    }
+
+    const expiresAt = Date.now() + 15 * 60 * 1000;
+    const file = admin.storage().bucket().file(storagePath);
+    const [exists] = await file.exists();
+    if (!exists) return res.status(404).json({ status: 'error', error: 'storage_file_not_found' });
+    const [url] = await file.getSignedUrl({ action: 'read', expires: expiresAt });
+
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({
+      status: 'ok',
+      fileId,
+      filename: evidence.filename || null,
+      mimeType: evidence.mimeType || null,
+      url,
+      expiresAt,
+    });
+  } catch (error) {
+    console.error('[jandi-evidence-url] failed', error);
+    return res.status(500).json({ status: 'error', error: error.message });
   }
 });
 
@@ -1596,13 +1670,26 @@ const JANDI_METHOD_PREFIXES = [
   'POUR솔루션', 'POUR시스템',
   'POUR', 'CNC', 'DO', 'DETEX', '시멘트분말',
 ];
+const JANDI_REVISION_SUFFIX_RE = /(?:[_\s-]*(?:재공고|재입찰|수정공고|정정공고|변경공고|수정본|정정본|변경본|재업로드|특허오기재|v\d+))(?:[_\s-]*\((?:수정|정정|변경)\))?$/i;
+const JANDI_DATE_SUFFIX_RE = /[_\s-]+(?:\d{2}[.\-_]?\d{2}|\d{4}[.\-_]?\d{2}[.\-_]?\d{2})$/;
+const JANDI_REVISION_PREFIX_RE = /^(?:\(?\s*(?:재공고|재입찰|수정공고|정정공고|변경공고|수정본|정정본|변경본)\s*\)?[_\s-]*)+/i;
+function stripJandiFilenameSuffixLocal(value) {
+  let next = String(value || '').trim();
+  let previous = null;
+  while (next && next !== previous) {
+    previous = next;
+    next = next.replace(JANDI_DATE_SUFFIX_RE, '').replace(JANDI_REVISION_SUFFIX_RE, '').replace(/[_\s-]+$/, '').trim();
+  }
+  return next;
+}
 function parseFilenameLocal(filename) {
   const extMatch = (filename || '').match(/\.([a-z0-9]+)$/i);
   if (!extMatch) return { seq: null, siteName: '', method: '', methodPrefix: '' };
-  const base = filename.slice(0, -extMatch[0].length);
+  const base = stripJandiFilenameSuffixLocal(filename.slice(0, -extMatch[0].length));
   const m = base.match(/^(?:(\d+)_)?(.+?)(?:\(([^)]+)\))?\s*$/);
   if (!m) return { seq: null, siteName: '', method: '', methodPrefix: '' };
   let rest = (m[2] || '').trim();
+  rest = rest.replace(JANDI_REVISION_PREFIX_RE, '').trim();
   let methodPrefix = '';
   for (const p of JANDI_METHOD_PREFIXES) {
     if (rest.startsWith(p + '_')) {
@@ -1623,7 +1710,7 @@ function parseFilenameLocal(filename) {
 // 사용: POST /admin/jandi-reparse-evidence
 // body: { dryRun?=false }
 app.post('/admin/jandi-reparse-evidence', requireAuth, async (req, res) => {
-  const { dryRun = false } = req.body || {};
+  const { dryRun = false, summaryOnly = false } = req.body || {};
   try {
     await getFirebaseAdmin();
     const db = admin.database();
@@ -1662,7 +1749,7 @@ app.post('/admin/jandi-reparse-evidence', requireAuth, async (req, res) => {
       dryRun,
       totalEvidence: Object.keys(evidence).length,
       changedCount: changed.length,
-      changes: changed,
+      changes: summaryOnly ? undefined : changed,
     });
   } catch (e) {
     return res.status(500).json({ error: e.message, stack: e.stack });

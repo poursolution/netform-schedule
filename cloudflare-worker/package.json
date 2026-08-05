@@ -9,7 +9,7 @@
     "tail": "wrangler tail"
   },
   "devDependencies": {
-    "wrangler": "^3.78.0"
+    "wrangler": "^4.118.0"
   },
   "dependencies": {
     "@cloudflare/puppeteer": "^1.1.0",

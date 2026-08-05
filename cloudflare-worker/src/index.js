@@ -14,7 +14,7 @@
 //   VPS_URL           : http://13.209.81.200:8080 (한국 VPS)
 //   VPS_AUTH_TOKEN    : VPS Bearer token
 
-const VERSION = '5.0.0';
+const VERSION = '5.1.0';
 const API_BASE = 'https://apis.data.go.kr/1613000/ApHusBidResultNoticeInfoOfferServiceV2';
 const UA = 'POUR-KAPT-Verify-Worker/3.0';
 
@@ -656,31 +656,45 @@ Rules:
     //   Body: { channelName?, monthsBack?, maxFiles?, maxScrolls?, forceReupload? }
     //   playwright-server /admin/jandi-channel-sync 로 passthrough
     if (url.pathname === '/jandi-sync' && request.method === 'POST') {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const data = await runJandiSyncCycle(env, body, 'manual');
+        return jsonResponse(data, env, data.status === 'ok' ? 200 : 502);
+      } catch (e) {
+        console.error(JSON.stringify({ message: 'jandi sync failed', error: e.message, source: 'manual' }));
+        return jsonResponse({ status: 'error', error: e.message }, env, 500);
+      }
+    }
+
+    // 잔디 공고 원문 열람: 파일을 공개하지 않고 VPS에서 15분짜리 Storage URL을 발급한다.
+    if (url.pathname === '/jandi-evidence-url' && request.method === 'POST') {
       if (!env.VPS_URL || !env.VPS_AUTH_TOKEN) {
-        return jsonResponse({ status: 'error', error: 'VPS_URL/VPS_AUTH_TOKEN 미설정' }, env, 500);
+        return jsonResponse({ status: 'error', error: 'VPS_URL 또는 VPS_AUTH_TOKEN 미설정' }, env, 500);
+      }
+      const contentLength = Number(request.headers.get('content-length') || 0);
+      if (contentLength > 4096) {
+        return jsonResponse({ status: 'error', error: 'request_too_large' }, env, 413);
       }
       try {
         const body = await request.json().catch(() => ({}));
-        const r = await fetch(`${env.VPS_URL}/admin/jandi-channel-sync`, {
+        const fileId = String(body.fileId || '').trim();
+        if (!fileId || fileId.length > 200 || /[.#$\[\]\/]/.test(fileId)) {
+          return jsonResponse({ status: 'error', error: 'invalid_file_id' }, env, 400);
+        }
+        const response = await fetch(`${env.VPS_URL}/admin/jandi-evidence-url`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${env.VPS_AUTH_TOKEN}`,
           },
-          body: JSON.stringify({
-            channelName: '입찰 공고(POUR공법)',
-            monthsBack: 12,
-            maxFiles: 1000,
-            maxScrolls: 1000,
-            ...body,
-          }),
+          body: JSON.stringify({ fileId }),
+          signal: AbortSignal.timeout(15000),
         });
-        const text = await r.text();
-        let data; try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 500) }; }
-        return jsonResponse({ status: r.ok ? 'ok' : 'error', httpStatus: r.status, ...data }, env, r.ok ? 200 : 502);
-      } catch (e) {
-        console.error('[jandi-sync] error', e);
-        return jsonResponse({ status: 'error', error: e.message }, env, 500);
+        const data = await readBoundedJson(response, 'jandi_evidence_url');
+        return jsonResponse(data, env, response.ok ? 200 : response.status === 404 ? 404 : 502);
+      } catch (error) {
+        console.error(JSON.stringify({ message: 'jandi evidence url failed', error: error.message }));
+        return jsonResponse({ status: 'error', error: error.message }, env, 500);
       }
     }
 
@@ -701,18 +715,17 @@ Rules:
           },
           body: JSON.stringify({ limit: 200, includeUnverified: true, ...body }),
         });
-        const text = await r.text();
-        let data; try { data = JSON.parse(text); } catch { data = { raw: text }; }
+        const data = await readBoundedJson(r, 'jandi_rematch');
         return jsonResponse({ status: r.ok ? 'ok' : 'error', httpStatus: r.status, ...data }, env, r.ok ? 200 : 502);
       } catch (e) {
-        console.error('[jandi-rematch] error', e);
+        console.error(JSON.stringify({ message: 'jandi rematch failed', error: e.message }));
         return jsonResponse({ status: 'error', error: e.message }, env, 500);
       }
     }
 
     return jsonResponse({
       error: 'Not found',
-      endpoints: ['POST /verify', 'POST /search-candidates', 'POST /run-quarterly-settlement', 'POST /run-quarterly-reminder', 'POST /check-report-readiness', 'POST /sync?days=N', 'POST /jandi-rematch', 'GET /bid/:bidNum', 'GET /health'],
+      endpoints: ['POST /verify', 'POST /search-candidates', 'POST /run-quarterly-settlement', 'POST /run-quarterly-reminder', 'POST /check-report-readiness', 'POST /sync?days=N', 'POST /jandi-sync', 'POST /jandi-evidence-url', 'POST /jandi-rematch', 'GET /bid/:bidNum', 'GET /health'],
     }, env, 404);
   },
 
@@ -728,6 +741,20 @@ Rules:
         const hr = await checkVpsHealth(env);
         console.log('[cron] vps health', hr);
       } catch (e) { console.error('[cron] vps health failed', e); }
+      return;
+    }
+    if (event.cron === '0 0,2,4,6,8,10 * * *') {
+      // 09:00~19:00 KST 두 시간 간격 — 잔디 공고 첨부파일 증분 수집 후 미연결 건 재매칭.
+      try {
+        const jr = await runJandiSyncCycle(env, {
+          monthsBack: 3,
+          maxFiles: 400,
+          maxScrolls: 320,
+        }, 'cron');
+        console.log(JSON.stringify({ message: 'jandi evidence sync completed', result: jr }));
+      } catch (e) {
+        console.error(JSON.stringify({ message: 'jandi evidence sync failed', error: e.message, source: 'cron' }));
+      }
       return;
     }
     if (event.cron === '0 17 * * *') {
@@ -790,6 +817,131 @@ Rules:
     }
   },
 };
+
+function clampInteger(value, fallback, min, max) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+async function readBoundedJson(response, label, maxBytes = 1024 * 1024) {
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  if (contentLength > maxBytes) throw new Error(`${label}_response_too_large`);
+  const text = await response.text();
+  if (text.length > maxBytes) throw new Error(`${label}_response_too_large`);
+  try { return JSON.parse(text); }
+  catch { throw new Error(`${label}_invalid_json`); }
+}
+
+async function persistJandiSyncHealth(env, patch) {
+  if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) return { skipped: true };
+  const response = await fetch(`${env.FIREBASE_DB_URL}/config/jandiSyncHealth.json?auth=${env.FIREBASE_DB_SECRET}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!response.ok) throw new Error(`jandi_health_write_http_${response.status}`);
+  return { ok: true };
+}
+
+async function runJandiSyncCycle(env, options = {}, source = 'manual') {
+  if (!env.VPS_URL || !env.VPS_AUTH_TOKEN) {
+    return { status: 'error', error: 'VPS_URL/VPS_AUTH_TOKEN 미설정' };
+  }
+  const startedAt = new Date().toISOString();
+  await persistJandiSyncHealth(env, {
+    workerStatus: 'running',
+    workerStartedAt: startedAt,
+    workerSource: source,
+    workerError: null,
+  }).catch((error) => console.error(JSON.stringify({ message: 'jandi health start write failed', error: error.message })));
+
+  const syncPayload = {
+    channelName: '입찰 공고(POUR공법)',
+    monthsBack: clampInteger(options.monthsBack, 3, 1, 24),
+    maxFiles: clampInteger(options.maxFiles, 400, 1, 1000),
+    maxScrolls: clampInteger(options.maxScrolls, 320, 20, 1000),
+    forceReupload: options.forceReupload === true,
+    summaryOnly: true,
+  };
+
+  try {
+    const syncResponse = await fetch(`${env.VPS_URL}/admin/jandi-channel-sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.VPS_AUTH_TOKEN}`,
+      },
+      body: JSON.stringify(syncPayload),
+    });
+    const syncData = await readBoundedJson(syncResponse, 'jandi_sync');
+    if (!syncResponse.ok || syncData.status !== 'ok') {
+      throw new Error(syncData.error || syncData.status || `jandi_sync_http_${syncResponse.status}`);
+    }
+
+    // 기존 저장분도 새 파일명 규칙으로 다시 분석해야 `_재공고`가 단지명에 남지 않는다.
+    const reparseResponse = await fetch(`${env.VPS_URL}/admin/jandi-reparse-evidence`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.VPS_AUTH_TOKEN}`,
+      },
+      body: JSON.stringify({ dryRun: false, summaryOnly: true }),
+    });
+    const reparseData = await readBoundedJson(reparseResponse, 'jandi_reparse');
+    if (!reparseResponse.ok || reparseData.status !== 'ok') {
+      throw new Error(reparseData.error || reparseData.status || `jandi_reparse_http_${reparseResponse.status}`);
+    }
+
+    const rematchResponse = await fetch(`${env.VPS_URL}/admin/jandi-pt-match`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.VPS_AUTH_TOKEN}`,
+      },
+      body: JSON.stringify({ onlyUnmatched: true, minScore: 0.75, dryRun: false }),
+    });
+    const rematchData = await readBoundedJson(rematchResponse, 'jandi_rematch');
+    if (!rematchResponse.ok || rematchData.status !== 'ok') {
+      throw new Error(rematchData.error || rematchData.status || `jandi_rematch_http_${rematchResponse.status}`);
+    }
+
+    const completedAt = new Date().toISOString();
+    const result = {
+      status: 'ok',
+      source,
+      startedAt,
+      completedAt,
+      sync: {
+        totalFilesFound: syncData.totalFilesFound || 0,
+        processed: syncData.processed || 0,
+        uploaded: syncData.uploaded || 0,
+        skipped: syncData.skipped || 0,
+        failed: syncData.failed || 0,
+      },
+      reparsed: reparseData.changedCount || 0,
+      rematch: rematchData.summary || {},
+    };
+    await persistJandiSyncHealth(env, {
+      workerStatus: 'ok',
+      workerCompletedAt: completedAt,
+      workerLastSuccessfulSyncAt: completedAt,
+      workerSource: source,
+      workerError: null,
+      lastCycleSummary: result,
+    }).catch((error) => console.error(JSON.stringify({ message: 'jandi health success write failed', error: error.message })));
+    return result;
+  } catch (error) {
+    const failedAt = new Date().toISOString();
+    await persistJandiSyncHealth(env, {
+      workerStatus: 'failed',
+      workerFailedAt: failedAt,
+      workerSource: source,
+      workerError: error.message,
+    }).catch((healthError) => console.error(JSON.stringify({ message: 'jandi health failure write failed', error: healthError.message })));
+    return { status: 'error', source, startedAt, failedAt, error: error.message };
+  }
+}
 
 // === 동일 단지/담당자/공종 카테고리 PT 그룹 자동 superseded ===
 // 룰: 같은 (단지명 정규화 + 주담당자 + 공종 카테고리) PT 그룹 → 최후 PT 만 살리고 이전 모두 superseded.
@@ -971,8 +1123,7 @@ async function runAutoSupersede(env, opts = {}) {
 //  - D-1  : 회의 전일 → "확정 인원 브리핑" (참석자 명단 + 불참 사유 + 미체크자)
 // 멱등성: meetings/{id}/notifyLog/{week|d1} 에 발송 기록 → 중복 발송 방지.
 //
-// 웹훅 URL: SALES_MEETING_WEBHOOK_URL secret 또는 하드코딩 (사용자 제공).
-const SALES_MEETING_WEBHOOK_FALLBACK = 'https://wh.jandi.com/connect-api/webhook/26098605/503f681ce06c8e5e33a07c35d08c6b66';
+// 웹훅 URL: SALES_MEETING_WEBHOOK_URL secret 우선, 없으면 Firebase config/jandi/url 사용.
 
 // 하이웍스 office_user_no → 이름 매핑 (사용자 매핑이 Firebase 노드에서 빠졌을 때 fallback)
 // 신규 입사·퇴사 시 여기 갱신
@@ -1034,7 +1185,7 @@ async function sendSalesMeetingReminders(env, opts = {}) {
   if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) {
     return { skipped: 'no_firebase_config' };
   }
-  const webhookUrl = env.SALES_MEETING_WEBHOOK_URL || SALES_MEETING_WEBHOOK_FALLBACK;
+  const webhookUrl = env.SALES_MEETING_WEBHOOK_URL || await fetchDefaultJandiWebhook(env);
   if (!webhookUrl) return { skipped: 'no_webhook' };
 
   // 오늘 KST 날짜
@@ -2173,6 +2324,19 @@ async function fetchUserJandiWebhook(env, assignee) {
   try {
     const safe = encodeURIComponent(assignee);
     const url = `${env.FIREBASE_DB_URL}/config/jandi/users/${safe}.json?auth=${env.FIREBASE_DB_SECRET}`;
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (!data || !data.url || data.enabled === false) return null;
+    return data.url;
+  } catch { return null; }
+}
+
+// 공통 잔디 채널 webhook 조회: config/jandi/url
+async function fetchDefaultJandiWebhook(env) {
+  if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) return null;
+  try {
+    const url = `${env.FIREBASE_DB_URL}/config/jandi.json?auth=${env.FIREBASE_DB_SECRET}`;
     const resp = await fetch(url);
     if (!resp.ok) return null;
     const data = await resp.json();

@@ -26,6 +26,22 @@ const METHOD_PREFIXES = [
   'POUR', 'CNC', 'DO', 'DETEX', '시멘트분말',
 ];
 
+// 파일명 끝에 붙는 개정/재공고 표식. 이 표식을 단지명으로 인식하면
+// "OO아파트"와 "OO아파트(방수)_재공고"가 서로 다른 단지로 계산된다.
+const REVISION_SUFFIX_RE = /(?:[_\s-]*(?:재공고|재입찰|수정공고|정정공고|변경공고|수정본|정정본|변경본|재업로드|특허오기재|v\d+))(?:[_\s-]*\((?:수정|정정|변경)\))?$/i;
+const DATE_SUFFIX_RE = /[_\s-]+(?:\d{2}[.\-_]?\d{2}|\d{4}[.\-_]?\d{2}[.\-_]?\d{2})$/;
+const REVISION_PREFIX_RE = /^(?:\(?\s*(?:재공고|재입찰|수정공고|정정공고|변경공고|수정본|정정본|변경본)\s*\)?[_\s-]*)+/i;
+
+export function stripJandiFilenameSuffix(value) {
+  let next = String(value || '').trim();
+  let previous = null;
+  while (next && next !== previous) {
+    previous = next;
+    next = next.replace(DATE_SUFFIX_RE, '').replace(REVISION_SUFFIX_RE, '').replace(/[_\s-]+$/, '').trim();
+  }
+  return next;
+}
+
 /**
  * 파일명에서 구조화된 메타데이터 추출
  * @param {string} filename 예) "251_신성둔촌미소지움아파트1차(금속기와후커).pdf"
@@ -60,7 +76,7 @@ export function parseJandiFilename(filename) {
   if (!extMatch) return result;
   result.ext = extMatch[1].toLowerCase();
   result.isSupportedExt = SUPPORTED_EXT.includes(result.ext);
-  const base = filename.slice(0, -extMatch[0].length);
+  const base = stripJandiFilenameSuffix(filename.slice(0, -extMatch[0].length));
 
   // 순번_[공법prefix_]단지명(공법) 패턴
   // 케이스:
@@ -73,6 +89,7 @@ export function parseJandiFilename(filename) {
 
   if (m[1]) result.seq = parseInt(m[1], 10);
   let rest = (m[2] || '').trim();
+  rest = rest.replace(REVISION_PREFIX_RE, '').trim();
   result.method = (m[3] || '').trim();
 
   // 공법 prefix 제거 (DO_, DO공법_, CNC_, POUR_, ...)
@@ -103,9 +120,65 @@ export function parseJandiFilename(filename) {
  */
 export function normalizeSiteName(s) {
   return String(s || '')
+    .replace(/^\d+_/, '')
+    .replace(/\.[a-z0-9]+$/i, '')
     .replace(/\s+/g, '')
-    .replace(/[()()[\]【】]/g, '')
+    .replace(/[()()[\]【】._\-/\\·•‧⋅,，~～]/g, '')
+    .replace(/(?:아파트|apt)$/i, '')
     .toLowerCase();
+}
+
+function similarity(a, b) {
+  const left = normalizeSiteName(a);
+  const right = normalizeSiteName(b);
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  if (left.includes(right) || right.includes(left)) {
+    return Math.max(0.88, Math.min(left.length, right.length) / Math.max(left.length, right.length));
+  }
+  const longer = left.length >= right.length ? left : right;
+  const shorter = left.length >= right.length ? right : left;
+  let best = 0;
+  for (let len = shorter.length; len >= 2 && len > best; len--) {
+    for (let i = 0; i + len <= shorter.length; i++) {
+      if (longer.includes(shorter.slice(i, i + len))) { best = len; break; }
+    }
+  }
+  return best / longer.length;
+}
+
+const SEARCH_METHOD_TOKENS = [
+  '재도장', '외벽도장', '균열', '에폭시', '우레탄', '방수', '슬라브',
+  '싱글', '금속기와', '아스콘', '보도블럭', '배면차수', 'pour', 'cnc', 'detex',
+];
+
+/**
+ * 검토 패널에서 잔디 증빙 후보를 정렬하기 위한 점수.
+ * 자동 확정에 쓰지 않고, 사람이 고를 후보의 순서에만 사용한다.
+ */
+export function scoreJandiEvidenceCandidate(evidence, pt, query = '') {
+  const parsed = evidence?.parsedSiteName
+    ? { siteName: evidence.parsedSiteName, method: evidence.parsedMethod || '' }
+    : parseJandiFilename(evidence?.filename || '');
+  const targetName = String(query || pt?.siteName || '').trim();
+  const nameScore = similarity(parsed.siteName, targetName);
+
+  const evMethod = String(parsed.method || evidence?.parsedMethod || '').toLowerCase();
+  const ptMethod = String(pt?.workType || '').toLowerCase();
+  const evTokens = SEARCH_METHOD_TOKENS.filter(token => evMethod.includes(token));
+  const ptTokens = SEARCH_METHOD_TOKENS.filter(token => ptMethod.includes(token));
+  const methodScore = evTokens.length && ptTokens.length
+    ? (evTokens.some(token => ptTokens.includes(token)) ? 1 : -0.35)
+    : 0;
+
+  const score = Math.max(0, Math.min(1, nameScore * 0.92 + methodScore * 0.08));
+  return {
+    score: Number(score.toFixed(3)),
+    nameScore: Number(nameScore.toFixed(3)),
+    methodScore,
+    parsedSiteName: parsed.siteName || '',
+    parsedMethod: parsed.method || '',
+  };
 }
 
 /**
