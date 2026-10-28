@@ -7,7 +7,7 @@ import { unassignedUpcoming } from '../utils/morningBrief.js';
 // 메인 (#6a) — 흐름 한 줄 + 처리할 것 + 팀별 현황. 수치 정의는 기존 메인과 같다 (utils/mainDashboard.js).
 
 const C = {
-  brand: '#0F4C75', accent: '#BBE1FA', dark: '#1B262C', ink: '#1e293b',
+  brand: '#0F4C75', accent: '#BBE1FA', ink: '#1e293b',
   line: '#e2e8f0', line2: '#f1f5f9', line3: '#f8fafc', strong: '#cbd5e1', muted: '#f8fafc', arrowBg: '#fafbfc',
   text: '#1e293b', text2: '#475569', text3: '#64748b', text4: '#94a3b8',
 };
@@ -184,7 +184,7 @@ export default function MainDashboard({
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: C.text3, whiteSpace: 'nowrap' }}>{dot(C.strong)}미확정 일정</span>
               <span style={{ display: 'flex', alignItems: 'baseline', width: '100%', gap: 6 }}>{queueNum(totals.pending)}<span style={{ marginLeft: 'auto', fontSize: 12, color: C.text4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>총 {totals.all.toLocaleString('ko-KR')} · 확정 {totals.confirmed.toLocaleString('ko-KR')}</span></span>
             </button>
-            <button type="button" onClick={onGoSettlement} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, padding: '14px 16px', background: C.dark, border: 0, borderRadius: 12, color: '#fff', minWidth: 0, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+            <button type="button" onClick={onGoSettlement} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, padding: '14px 16px', background: C.brand, border: 0, borderRadius: 12, color: '#fff', minWidth: 0, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
               <span style={{ fontSize: 12, fontWeight: 600, opacity: .75, whiteSpace: 'nowrap' }}>Q{qMeta?.quarter} 분기정산 · 마감 {qMeta?.ddayText}</span>
               <span style={{ display: 'flex', alignItems: 'baseline', width: '100%' }}>
                 <span style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-.02em', lineHeight: 1.1, whiteSpace: 'nowrap' }}>{qAmount.toLocaleString('ko-KR')}<span style={{ fontSize: 13, fontWeight: 600, marginLeft: 2, opacity: .8 }}>원</span></span>
@@ -198,7 +198,7 @@ export default function MainDashboard({
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 18px', borderBottom: `1px solid ${C.line2}`, flexWrap: 'wrap' }}>
               <h2 style={{ margin: '0 8px 0 0', fontWeight: 700, fontSize: 14 }}>팀별 현황</h2>
               {COMPANIES.map(c => (
-                <button key={c} type="button" aria-pressed={company === c} onClick={() => setCompany(c)} style={{ padding: '5px 10px', borderRadius: 999, border: `1px solid ${company === c ? C.ink : C.line}`, background: company === c ? C.ink : '#fff', color: company === c ? '#fff' : C.text2, fontSize: 12, fontWeight: company === c ? 600 : 400, cursor: 'pointer', fontFamily: 'inherit' }}>{c}</button>
+                <button key={c} type="button" aria-pressed={company === c} onClick={() => setCompany(c)} style={{ padding: '5px 10px', borderRadius: 999, border: `1px solid ${company === c ? C.brand : C.line}`, background: company === c ? C.brand : '#fff', color: company === c ? '#fff' : C.text2, fontSize: 12, fontWeight: company === c ? 600 : 400, cursor: 'pointer', fontFamily: 'inherit' }}>{c}</button>
               ))}
               <div style={{ flex: 1 }} />
               <span style={{ fontSize: 12, color: C.text4 }}>회사 필터는 영업·수의계약에만 적용 · 팀 클릭 → 실적</span>
