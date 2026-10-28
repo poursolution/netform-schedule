@@ -102,6 +102,8 @@ import { normalizeApartmentName, addApartmentAlias } from './utils/apartmentMatc
 import { scoreJandiEvidenceCandidate } from './utils/jandiFileParser.js';
 import * as theme from './utils/theme.js';
 import PerformanceWorkbench from './components/PerformanceWorkbench.jsx';
+import ScheduleWorkbench from './components/ScheduleWorkbench.jsx';
+import { buildBriefJandiMessage, briefRecipients } from './utils/morningBrief.js';
 
 // 정산 상태 6단계 배지 스타일 (#4 — 실적 카드용)
 const SETTLEMENT_BADGE_STYLE = {
@@ -309,6 +311,14 @@ const SETTLEMENT_BADGE_STYLE = {
       const [expandedCompany, setExpandedCompany] = useState(null); // 업체별 현황 펼침
       const [previewAssignee, setPreviewAssignee] = useState(null); // 담당자 현장목록 프리뷰
       const [useLegacyPerformance, setUseLegacyPerformance] = useState(false); // 실적 작업대 전환 기간 — 이전 화면 보기
+      const [useLegacySchedule, setUseLegacySchedule] = useState(false); // 일정 화면(#6b·#6c) 전환 기간 — 이전 화면 보기
+      const [morningBriefConfig, setMorningBriefConfig] = useState({}); // config/morningBrief { autoSend, days }
+      useEffect(() => {
+        if (!firebaseEnabled || !database) return undefined;
+        const ref = database.ref('config/morningBrief');
+        const handler = ref.on('value', snap => setMorningBriefConfig(snap.val() || {}));
+        return () => ref.off('value', handler);
+      }, []);
       const [siteListTab, setSiteListTab] = useState('all'); // 현장목록 상태 탭
       const [settlementFilter, setSettlementFilter] = useState('all'); // all, pending, requested, completed
       const [selectedWorkTypes, setSelectedWorkTypes] = useState([]); // 공종 필터 (멀티셀렉트)
@@ -6255,6 +6265,97 @@ const SETTLEMENT_BADGE_STYLE = {
         return holidays[dateStr] || null;
       };
 
+      // ===== 새 화면 공통 셸(사이드바) — 실적 작업대·일정 화면 =====
+      const showScheduleWorkbench = !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && !useLegacySchedule;
+      const shellSidebarProps = (active, onOpenLegacy) => {
+        const goTo = (view, title) => {
+          setShowDashboard(view === 'main');
+          setShowPerformance(view === 'perf');
+          setShowMeetingView(view === 'meeting');
+          setShowSalesView(false);
+          setShowMyPage(false);
+          updatePageTitle(title);
+        };
+        const canSettle = currentUser?.isAdmin || currentUser?.name === '한준엽';
+        const canMain = currentUser?.isAdmin || currentUser?.name === '이승우' || currentUser?.name === '황윤선';
+        const feedbackPending = feedbackList.filter(f => f.status !== 'resolved').length;
+        const pendingExceptions = listPendingExceptions(ptSchedules).length;
+        const screenshotPending = (ptSchedules || []).filter(p => p?.kaptVerified?.status === 'pending-admin-review').length;
+        return {
+          currentUser,
+          nav: [
+            ...(canMain ? [{ key: 'main', label: '메인', active: active === 'main', onClick: () => goTo('main', '메인') }] : []),
+            { key: 'schedule', label: '일정', active: active === 'schedule', onClick: () => goTo('schedule', '일정') },
+            ...(currentUser?.canAccessPerformance !== false ? [{ key: 'perf', label: '실적', active: active === 'perf', onClick: () => goTo('perf', '실적') }] : []),
+            ...(canSettle ? [{ key: 'settle', label: '정산', onClick: () => setShowMonthlySettlement(true) }] : []),
+          ],
+          adminNav: [
+            { key: 'meeting', label: '영업회의', onClick: () => goTo('meeting', '영업회의') },
+            ...(canSettle ? [
+              { key: 'audit', label: '감사·이슈', badge: feedbackPending + pendingExceptions + screenshotPending || null, items: [
+                { key: 'feedback', label: '피드백 목록', badge: feedbackPending || null, onClick: () => setShowFeedbackList(true) },
+                { key: 'exception', label: '예외', badge: pendingExceptions || null, onClick: () => setShowExceptionQueueModal(true) },
+                { key: 'screenshot', label: '스크린샷 검증 큐', badge: screenshotPending || null, onClick: () => setShowScreenshotReviewQueue(true) },
+              ] },
+              { key: 'log', label: '활동 로그', onClick: () => setShowActivityLog(true) },
+            ] : []),
+            { key: 'settings', label: '설정', onClick: () => setShowSettings(true) },
+          ],
+          onOpenMyPage: () => { setMyPageUser(currentUser.name); setShowMyPage(true); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); },
+          onLogout: handleLogout,
+          onOpenLegacy,
+        };
+      };
+
+      // 아침 브리핑(#6c) 수동 발송 — 관리자 채널엔 전체, 담당자 개인 잔디엔 각자 일정만.
+      // 발송 기록(morningBriefLog/{오늘})을 남겨 같은 날 Worker 자동 발송이 중복되지 않게 한다.
+      const sendMorningBrief = async ({ rows, days }) => {
+        const recipients = briefRecipients(rows);
+        const withHook = recipients.filter(n => jandiUserWebhooks?.[n]?.url && jandiUserWebhooks[n].enabled !== false);
+        const noHook = recipients.filter(n => !withHook.includes(n));
+        const adminOn = !!(jandiUrl && jandiEnabled);
+        const summary = [
+          `PT ${rows.length}건 (${days.join(', ')})`,
+          `관리자 채널: ${adminOn ? '전체 일정' : '미설정 — 건너뜀'}`,
+          `담당자 개인: ${withHook.length ? withHook.join(', ') : '없음'}`,
+          noHook.length ? `개인 웹훅 없음(건너뜀): ${noHook.join(', ')}` : '',
+        ].filter(Boolean).join('\n');
+        if (!window.confirm(`아침 브리핑을 잔디로 보냅니다.\n\n${summary}\n\n보낼까요?`)) return '';
+        let adminOk = false;
+        if (adminOn) {
+          const r = await sendJandiNotification(buildBriefJandiMessage(rows, days));
+          adminOk = !!(r && (r.ok || r.queued));
+        }
+        const sent = [];
+        const failed = [];
+        for (const name of withHook) {
+          try {
+            await fetch(jandiUserWebhooks[name].url, {
+              method: 'POST',
+              mode: 'no-cors',
+              headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+              body: JSON.stringify(buildBriefJandiMessage(rows, days, name)),
+            });
+            sent.push(name);
+          } catch (e) { console.warn('[morning brief] personal send failed', name, e); failed.push(name); }
+        }
+        if (firebaseEnabled && database) {
+          try {
+            await database.ref(`morningBriefLog/${todayStr}`).set({ sentAt: new Date().toISOString(), by: currentUser?.name || 'admin', source: 'manual', days, count: rows.length, recipients: sent, admin: adminOk });
+          } catch (e) { console.warn('[morning brief] log failed', e); }
+        }
+        const parts = [`잔디 발송 완료 · 담당자 ${sent.length}명${adminOk ? ' + 관리자 채널' : ''}`];
+        if (failed.length) parts.push(`실패: ${failed.join(', ')}`);
+        if (noHook.length) parts.push(`웹훅 없음: ${noHook.join(', ')}`);
+        return parts.join(' · ');
+      };
+
+      const toggleMorningBriefAuto = async (checked) => {
+        if (!currentUser?.isAdmin) { alert('자동 발송 설정은 관리자만 바꿀 수 있습니다.'); return; }
+        try { await database.ref('config/morningBrief/autoSend').set(!!checked); }
+        catch (e) { alert('설정 저장 실패: ' + e.message); }
+      };
+
       const getTypePriority = (type) => {
         const priority = { pt: 0, sales: 1, briefing: 2, seminar: 3, asq: 4, personal: 5, vacation: 6, meeting: 7 };
         return priority[type] ?? 99;
@@ -8227,9 +8328,36 @@ const SETTLEMENT_BADGE_STYLE = {
             );
           })()}
 
+          {/* 일정 화면(#6b·#6c) — 관리자·전체조회 계정 데스크톱 전용. 기존 헤더 위를 덮는 전체 화면. */}
+          {!showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage && showScheduleWorkbench && (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 500, overflow: 'auto', background: '#f8fafc', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>
+              <ScheduleWorkbench
+                schedules={allSchedules}
+                ptSchedules={ptSchedules}
+                todayStr={todayStr}
+                holidayName={getHolidayByDateStr}
+                roster={['조재연', '한준엽', '이필선', '정정훈', '김성민', '황윤선']}
+                assigneeOptions={assigneeList}
+                workTypeOptions={allWorkTypes}
+                sidebar={shellSidebarProps('schedule', () => setUseLegacySchedule(true))}
+                onAdd={(dateStr) => { setAddTypeModalDate(dateStr || null); setShowAddTypeModal(true); }}
+                onOpen={handleEditClick}
+                onOpenTeam={() => window.open('https://peaceful-chimera-1dced9.netlify.app/', '_blank')}
+                briefDayCount={Math.min(7, Math.max(1, +morningBriefConfig.days || 2))}
+                onSendBrief={sendMorningBrief}
+                autoSend={!!morningBriefConfig.autoSend}
+                onToggleAutoSend={currentUser?.isAdmin ? toggleMorningBriefAuto : undefined}
+              />
+            </div>
+          )}
           {/* 일정관리 */}
-          {!showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage && (
+          {!showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage && !showScheduleWorkbench && (
             <>
+              {useLegacySchedule && !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+                  <button onClick={() => setUseLegacySchedule(false)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#0F4C75', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>새 일정 화면</button>
+                </div>
+              )}
               {/* 1줄: 검색창 */}
               <div style={{ marginBottom: '10px' }}>
                 <div style={{ position: 'relative' }}>
@@ -9447,19 +9575,7 @@ const SETTLEMENT_BADGE_STYLE = {
                 // 실적 작업대(#2a) — 관리자·전체조회 계정 데스크톱 전용. 기존 헤더 위를 덮는 전체 화면.
                 <div style={{ position: 'fixed', inset: 0, zIndex: 500, overflow: 'auto', background: '#f8fafc', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>
                   {(() => {
-                    const goTo = (view, title) => {
-                      setShowDashboard(view === 'main');
-                      setShowPerformance(false);
-                      setShowMeetingView(view === 'meeting');
-                      setShowSalesView(false);
-                      setShowMyPage(false);
-                      updatePageTitle(title);
-                    };
                     const canSettle = currentUser?.isAdmin || currentUser?.name === '한준엽';
-                    const canMain = currentUser?.isAdmin || currentUser?.name === '이승우' || currentUser?.name === '황윤선';
-                    const feedbackPending = feedbackList.filter(f => f.status !== 'resolved').length;
-                    const pendingExceptions = listPendingExceptions(ptSchedules).length;
-                    const screenshotPending = (ptSchedules || []).filter(p => p?.kaptVerified?.status === 'pending-admin-review').length;
                     const qNum = q => `${q.slice(-1)}분기`;
                     return (
                       <PerformanceWorkbench
@@ -9467,27 +9583,7 @@ const SETTLEMENT_BADGE_STYLE = {
                         assigneeNames={assigneeList}
                         currentUser={currentUser}
                         confirmStateOf={workbenchConfirmState}
-                        nav={[
-                          ...(canMain ? [{ key: 'main', label: '메인', onClick: () => goTo('main', '메인') }] : []),
-                          { key: 'schedule', label: '일정', onClick: () => goTo('schedule', '일정') },
-                          { key: 'perf', label: '실적', active: true, onClick: () => {} },
-                          ...(canSettle ? [{ key: 'settle', label: '정산', onClick: () => setShowMonthlySettlement(true) }] : []),
-                        ]}
-                        adminNav={[
-                          { key: 'meeting', label: '영업회의', onClick: () => goTo('meeting', '영업회의') },
-                          ...(canSettle ? [
-                            { key: 'audit', label: '감사·이슈', badge: feedbackPending + pendingExceptions + screenshotPending || null, items: [
-                              { key: 'feedback', label: '피드백 목록', badge: feedbackPending || null, onClick: () => setShowFeedbackList(true) },
-                              { key: 'exception', label: '예외', badge: pendingExceptions || null, onClick: () => setShowExceptionQueueModal(true) },
-                              { key: 'screenshot', label: '스크린샷 검증 큐', badge: screenshotPending || null, onClick: () => setShowScreenshotReviewQueue(true) },
-                            ] },
-                            { key: 'log', label: '활동 로그', onClick: () => setShowActivityLog(true) },
-                          ] : []),
-                          { key: 'settings', label: '설정', onClick: () => setShowSettings(true) },
-                        ]}
-                        onOpenMyPage={() => { setMyPageUser(currentUser.name); setShowMyPage(true); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); }}
-                        onLogout={handleLogout}
-                        onOpenLegacy={() => setUseLegacyPerformance(true)}
+                        {...shellSidebarProps('perf', () => setUseLegacyPerformance(true))}
                         onOpenQuarterSettlement={canSettle ? () => setShowMonthlySettlement(true) : undefined}
                         exportActions={[
                           { key: 'excel', label: 'Excel', onClick: q => exportQuarterlyExcel(+q.slice(0, 4), qNum(q), 'all') },

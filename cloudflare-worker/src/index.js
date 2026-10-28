@@ -1,3 +1,6 @@
+// 아침 브리핑 메시지 — 앱과 같은 모듈 (wrangler 번들러가 함께 묶는다)
+import { nextBusinessDays, briefRows, briefRecipients, buildBriefJandiMessage } from '../../src/utils/morningBrief.js';
+
 // K-APT 자동 검증 Cloudflare Worker (V5)
 //
 // v5 변경 (VPS 프록시):
@@ -812,6 +815,11 @@ Rules:
           const sp = await runAutoSupersede(env);
           console.log('[cron] auto-supersede', sp);
         } catch (e) { console.error('[cron] auto-supersede failed', e); }
+        // 아침 브리핑 — config/morningBrief/autoSend 가 켜져 있을 때만
+        try {
+          const mb = await sendMorningBrief(env);
+          console.log('[cron] morning brief', mb);
+        } catch (e) { console.error('[cron] morning brief failed', e); }
       }
       return;
     }
@@ -2316,6 +2324,54 @@ async function autoTransitionAfterVerifyWorker(env, scheduleId, primaryAssignee)
     }
   }
   return { transitioned: transitioned.length > 0, items: transitioned, notified };
+}
+
+// ===== 아침 브리핑 (일정 화면 #6c) =====
+//   매일 09:00 KST, 다음 영업일 N일(config/morningBrief/days, 기본 2)의 확정 PT 를
+//   관리자 채널(전체) + 담당자 개인 잔디(각자 일정만)로 보낸다.
+//   - autoSend 가 true 일 때만, 주말은 건너뜀
+//   - morningBriefLog/{KST 오늘} 이 있으면(앱에서 수동 발송했거나 이미 보냄) 건너뜀
+//   - 공휴일 표는 앱에만 있어 여기서는 주말만 제외한다
+async function sendMorningBrief(env, { force = false, dryRun = false } = {}) {
+  if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) return { skipped: 'no_firebase' };
+  const base = env.FIREBASE_DB_URL;
+  const auth = `auth=${env.FIREBASE_DB_SECRET}`;
+  const cfgResp = await fetch(`${base}/config/morningBrief.json?${auth}`);
+  const cfg = cfgResp.ok ? (await cfgResp.json()) || {} : {};
+  if (!cfg.autoSend && !force) return { skipped: 'auto_off' };
+
+  const kst = new Date(Date.now() + 9 * 3600 * 1000);
+  const today = kst.toISOString().slice(0, 10);
+  const dow = kst.getUTCDay();
+  if ((dow === 0 || dow === 6) && !force) return { skipped: 'weekend', today };
+
+  const logResp = await fetch(`${base}/morningBriefLog/${today}.json?${auth}`);
+  const existing = logResp.ok ? await logResp.json() : null;
+  if (existing && !force) return { skipped: 'already_sent', today, by: existing.by };
+
+  const ptResp = await fetch(`${base}/pt.json?${auth}`);
+  if (!ptResp.ok) return { error: `pt_${ptResp.status}` };
+  const pts = Object.values((await ptResp.json()) || {});
+  const dayCount = Math.min(7, Math.max(1, +cfg.days || 2));
+  const days = nextBusinessDays(today, dayCount);
+  const rows = briefRows(pts, days);
+  if (!rows.length) return { skipped: 'no_pt', today, days };
+  if (dryRun) return { dryRun: true, today, days, count: rows.length, recipients: briefRecipients(rows) };
+
+  const adminUrl = await fetchDefaultJandiWebhook(env);
+  const adminRes = adminUrl ? await notifyJandiToUrl(adminUrl, buildBriefJandiMessage(rows, days)) : { ok: false, reason: 'no_webhook' };
+  const sent = [];
+  for (const name of briefRecipients(rows)) {
+    const url = await fetchUserJandiWebhook(env, name);
+    if (!url) continue;
+    const r = await notifyJandiToUrl(url, buildBriefJandiMessage(rows, days, name));
+    if (r.ok) sent.push(name);
+  }
+  await fetch(`${base}/morningBriefLog/${today}.json?${auth}`, {
+    method: 'PUT',
+    body: JSON.stringify({ sentAt: new Date().toISOString(), by: 'cron-worker', source: 'cron', days, count: rows.length, recipients: sent, admin: !!adminRes.ok }),
+  });
+  return { ok: true, today, days, count: rows.length, recipients: sent, admin: !!adminRes.ok };
 }
 
 // Firebase 에서 담당자별 jandi webhook 조회: config/jandi/users/{name}
