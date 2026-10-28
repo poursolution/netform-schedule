@@ -90,6 +90,7 @@ export default function PerformanceWorkbench({
   onKaptManualApprove,  // (pt, assignee) => void
   onKaptCancel,         // (pt) => void
   onOpenKaptCandidates, // (pt) => void
+  onOpenExceptions,     // () => void — 예외 승인 큐(#11a), 관리자만
   onSaveMemo,           // (pt, assignee, text) => Promise<string 결과 문구>
   onBulkRequest,        // (pts) => void
   onBulkManualApprove,  // (pts) => void
@@ -451,6 +452,7 @@ export default function PerformanceWorkbench({
             onKaptManualApprove={onKaptManualApprove}
             onKaptCancel={onKaptCancel}
             onOpenKaptCandidates={onOpenKaptCandidates}
+            onOpenExceptions={onOpenExceptions}
           />
         </div>
       </main>
@@ -490,7 +492,7 @@ function methodsOf(pt) {
 }
 
 function DetailPanel({ row, memo, setMemo, memoSaved, canMemo, onSaveMemo, onNextReview, onResult,
-  onToggleSettlementFlag, onToggleSelfPT, onKaptReverify, onKaptManualApprove, onKaptCancel, onOpenKaptCandidates }) {
+  onToggleSettlementFlag, onToggleSelfPT, onKaptReverify, onKaptManualApprove, onKaptCancel, onOpenKaptCandidates, onOpenExceptions }) {
   if (!row) {
     return <aside style={{ ...card, padding: 24, fontSize: 13, color: C.text4, textAlign: 'center' }}>왼쪽 목록에서 현장을 고르세요.</aside>;
   }
@@ -499,6 +501,8 @@ function DetailPanel({ row, memo, setMemo, memoSaved, canMemo, onSaveMemo, onNex
   const v = row.verify ? VERIFY[row.verify] : null;
   const st = row.stl ? STL[row.stl] : null;
   const stl = pt.settlement?.[row.main] || {};
+  const xReq = pt.exceptionRequests?.[row.main];
+  const xLabel = xReq?.type === 'no_bid_to_win' ? '공고문 없는 현장 신청됨' : '영업적 승리 신청됨';
   const kapt = !row.has ? ['결과 입력 후 자동 검증', '승/무/패 입력 시 K-APT(data.go.kr) 자동 조회', C.muted, C.text3, C.line]
     : row.verify === 'verified' ? ['K-APT 검증 완료', '공고 매칭 · 정산 대상 자동 전환', '#dcfce7', '#15803d', '#bbf7d0']
     : row.verify === 'cancelled' ? ['취소공고 확인됨', '발주처 취소 · 정산 제외 · 재공고 대기', '#fef2f2', '#b91c1c', '#fecaca']
@@ -531,6 +535,9 @@ function DetailPanel({ row, memo, setMemo, memoSaved, canMemo, onSaveMemo, onNex
         <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
           {v && <span style={chip(v[1], v[2])}>{v[0]}</span>}
           {st && <span style={chip(st[1], st[2])}>{st[0]}</span>}
+          {xReq?.status === 'pending' && (onOpenExceptions
+            ? <button type="button" onClick={onOpenExceptions} title="예외 승인 큐 열기" style={{ ...chip('#dbeafe', C.brand), border: 0, cursor: 'pointer', fontFamily: 'inherit' }}>{xLabel} ›</button>
+            : <span style={chip('#dbeafe', C.brand)}>{xLabel}</span>)}
           <button type="button" onClick={onNextReview} style={{ marginLeft: 'auto', height: 26, padding: '0 9px', border: `1px solid ${C.line}`, borderRadius: 7, background: '#fff', color: C.text2, fontSize: 11.5, cursor: 'pointer', fontFamily: 'inherit' }}>다음 검토 건 →</button>
         </div>
         <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-.02em', lineHeight: 1.3 }}>{pt.siteName}</div>

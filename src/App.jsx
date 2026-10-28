@@ -30,6 +30,7 @@ import {
   approveException,
   rejectException,
   listPendingExceptions,
+  exceptionWaitDays,
   buildExceptionRequestMessage,
   buildExceptionResultMessage,
 } from './utils/exceptions.js';
@@ -8011,6 +8012,14 @@ const SETTLEMENT_BADGE_STYLE = {
                   onSearch={(q) => goSchedule({ view: 'list', listFilter: 'all', search: q })}
                   onMeeting={() => goView('meeting', '영업회의')}
                   onAdd={() => { setAddTypeModalDate(null); setShowAddTypeModal(true); }}
+                  {...(() => {
+                    const xs = listPendingExceptions(ptSchedules);
+                    return {
+                      exceptionCount: xs.length,
+                      exceptionOldestDays: xs.length ? exceptionWaitDays(xs[0].requestedAt) : 0,
+                      onGoExceptions: currentUser?.isAdmin ? () => setShowExceptionQueueModal(true) : undefined,
+                    };
+                  })()}
                 />
               </div>
             );
@@ -10414,6 +10423,7 @@ const SETTLEMENT_BADGE_STYLE = {
                         onOpenKaptCandidates={kaptWorkerUrl ? workbenchOpenKaptVerify : undefined}
                         onKaptManualApprove={canFinalizeSettlementReview() ? workbenchOpenReview : undefined}
                         onKaptCancel={workbenchKaptCancel}
+                        onOpenExceptions={currentUser?.isAdmin ? () => setShowExceptionQueueModal(true) : undefined}
                         onSaveMemo={currentUser?.isAdmin ? workbenchSaveMemo : undefined}
                         onBulkRequest={workbenchBulkRequest}
                         onBulkManualApprove={canFinalizeSettlementReview() ? workbenchBulkManualApprove : undefined}

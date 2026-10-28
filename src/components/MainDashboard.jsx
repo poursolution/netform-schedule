@@ -40,6 +40,7 @@ export default function MainDashboard({
   sidebar,
   onGoReview, onGoUnassigned, onGoPending, onGoSettlement, onGoTeam,
   onSearch, onMeeting, onAdd,
+  exceptionCount = 0, exceptionOldestDays = 0, onGoExceptions, // 예외 승인 대기(#11a)
 }) {
   const [company, setCompany] = useState('전체');
   const [search, setSearch] = useState('');
@@ -196,6 +197,15 @@ export default function MainDashboard({
               </span>
             </button>
           </div>
+          {/* 예외 승인 대기(#11a 진입점) — 있을 때만 한 줄 */}
+          {exceptionCount > 0 && onGoExceptions && (
+            <button type="button" onClick={onGoExceptions} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', color: C.text }}>
+              {dot('#d97706')}
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#b45309' }}>예외 승인 대기 {exceptionCount}건</span>
+              <span style={{ fontSize: 12.5, color: C.text3 }}>영업적 승리 · 공고문 없는 현장 신청{exceptionOldestDays ? ` · 가장 오래된 건 ${exceptionOldestDays}일 대기` : ''}</span>
+              <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: C.brand, whiteSpace: 'nowrap' }}>검토 →</span>
+            </button>
+          )}
 
           {/* 블록 3 — 팀별 현황 */}
           <section aria-label="팀별 현황" style={{ ...card, overflow: 'hidden' }}>
