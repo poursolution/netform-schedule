@@ -106,6 +106,7 @@ import ScheduleWorkbench from './components/ScheduleWorkbench.jsx';
 import MainDashboard from './components/MainDashboard.jsx';
 import StaffHome from './components/StaffHome.jsx';
 import MobileStaffHome from './components/MobileStaffHome.jsx';
+import ResultRecordModal from './components/ResultRecordModal.jsx';
 import MyPage from './components/MyPage.jsx';
 import ScheduleEditModal from './components/ScheduleEditModal.jsx';
 import SettlementPage from './components/SettlementPage.jsx';
@@ -324,6 +325,7 @@ const SETTLEMENT_BADGE_STYLE = {
       const [useLegacyStaffHome, setUseLegacyStaffHome] = useState(false); // 담당자 홈(#3a) 전환 기간 — 이전 마이페이지 보기
       const [showProfilePage, setShowProfilePage] = useState(false); // 마이페이지(#9a) — 사이드바 프로필 카드로 연다
       const [showSettlementPage, setShowSettlementPage] = useState(false); // 분기정산(#8a) — 사이드바 "정산"
+      const [useLegacyResultModal, setUseLegacyResultModal] = useState(false); // 결과 기록 모달(#10a) 전환 기간 — 이전 사유 입력 창
       const [perfInit, setPerfInit] = useState({}); // 메인에서 실적 작업대로 넘어갈 때 첫 필터 { filter, who }
       const [scheduleInit, setScheduleInit] = useState({}); // 메인에서 일정으로 넘어갈 때 첫 상태 { view, listFilter, search }
       const [morningBriefConfig, setMorningBriefConfig] = useState({}); // config/morningBrief { autoSend, days }
@@ -2933,8 +2935,10 @@ const SETTLEMENT_BADGE_STYLE = {
       };
 
       // 실적 사유 저장
-      const saveResultWithReason = async () => {
-        const { scheduleId, assignee, result, reason, selectedCompetitors, customCompetitor } = resultReasonData;
+      const saveResultWithReason = async (override) => {
+        // 결과 기록 모달(#10a)은 최종 값(태그+사유 등)을 override 로 넘긴다. 기존 모달은 onClick 이벤트가 들어오므로 무시
+        const rd = { ...resultReasonData, ...(override && !override.nativeEvent && !override.target ? override : {}) };
+        const { scheduleId, assignee, result, reason, selectedCompetitors, customCompetitor } = rd;
         if (!scheduleId || !result) return;
         
         const schedule = ptSchedules.find(s => s.id === scheduleId);
@@ -2984,8 +2988,8 @@ const SETTLEMENT_BADGE_STYLE = {
         }] : [])];
 
         // 공고 정보 저장 (사용자가 입력한 경우에만 업데이트 — 비어있으면 기존 값 유지)
-        const announceBidNo = (resultReasonData.bidNo || '').trim();
-        const announceMethods = (resultReasonData.announcementMethods || '').trim();
+        const announceBidNo = (rd.bidNo || '').trim();
+        const announceMethods = (rd.announcementMethods || '').trim();
         const scheduleUpdate = { results: newResults, resultReasons: newReasons, inProgress: false, ptStatus: newPtStatus, resultConfirmDate: newConfirmDate, lastCheckDate: newLastCheck, statusLog: newStatusLog };
         if (announceBidNo) scheduleUpdate.bidNo = announceBidNo;
         if (announceMethods) scheduleUpdate.announcementMethods = announceMethods;
@@ -3006,10 +3010,10 @@ const SETTLEMENT_BADGE_STYLE = {
         setPtSchedules(prev => prev.map(s => s.id === scheduleId ? updatedSchedule : s));
 
         // === 예외 신청 처리 (영업적 승리 / 공고문 없는 현장) ===
-        if (resultReasonData.requestException && resultReasonData.exceptionType && targetAssignee) {
+        if (rd.requestException && rd.exceptionType && targetAssignee) {
           const exceptionReq = createExceptionRequest({
-            type: resultReasonData.exceptionType,
-            reason: resultReasonData.reason || '',
+            type: rd.exceptionType,
+            reason: rd.reason || '',
             requestedBy: currentUser?.name || targetAssignee,
           });
           deferredPt[`pt/${scheduleId}/exceptionRequests/${targetAssignee}`] = exceptionReq;
@@ -3020,8 +3024,8 @@ const SETTLEMENT_BADGE_STYLE = {
           sendJandiNotification(buildExceptionRequestMessage({
             assignee: targetAssignee,
             siteName: updatedSchedule.siteName,
-            type: resultReasonData.exceptionType,
-            reason: resultReasonData.reason,
+            type: rd.exceptionType,
+            reason: rd.reason,
             by: currentUser?.name,
           }));
         }
@@ -19121,7 +19125,25 @@ tr.suppressed td.fname{color:#64748b;}
           })()}
 
           {/* 실적 사유 입력 모달 */}
-          {showResultReasonModal && (
+          {/* 결과 기록 모달(#10a) · 모바일 시트(#10b) — 저장은 기존 saveResultWithReason */}
+          {showResultReasonModal && !useLegacyResultModal && (
+            <ResultRecordModal
+              data={resultReasonData}
+              setData={setResultReasonData}
+              pt={ptSchedules.find(s => s.id === resultReasonData.scheduleId)}
+              mobile={isMobile}
+              onSave={saveResultWithReason}
+              onClose={() => setShowResultReasonModal(false)}
+              onPickSupport={() => {
+                const pt = ptSchedules.find(s => s.id === resultReasonData.scheduleId);
+                setShowResultReasonModal(false);
+                if (pt) handleResultClick(pt, '지원', resultReasonData.assignee);
+              }}
+              onKaptSearch={workbenchOpenKaptVerify}
+              onOpenLegacy={() => setUseLegacyResultModal(true)}
+            />
+          )}
+          {showResultReasonModal && useLegacyResultModal && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10002, padding: '20px' }} onClick={() => setShowResultReasonModal(false)}>
               <div style={{ background: 'white', borderRadius: '16px', width: '500px', maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
                 {/* 헤더 */}
