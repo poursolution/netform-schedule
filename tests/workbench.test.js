@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  buildRow, FILTERS, kpis, settlementTargets, staffStats, quarterMeta, quarterPts, sortByPriority, matchesWho,
+  buildRow, FILTERS, kpis, settlementTargets, staffStats, quarterMeta, quarterPts, sortByPriority, sortByDate, matchesWho,
 } from '../src/utils/workbench.js';
 
 const TODAY = '2026-10-28';
@@ -85,4 +85,13 @@ test('quarter meta gives the closing date, payroll month and D-day', () => {
   assert.equal(m.closingFull, '2026-10-30');
   assert.equal(m.payrollMonth, '2026-10');
   assert.equal(m.ddayText, 'D-2');
+});
+
+test('date sort lists the latest PT first, like the previous performance list', () => {
+  const rows = sortByDate([
+    { date: '2026-09-01', time: '10:00' },
+    { date: '2026-09-30', time: '09:00' },
+    { date: '2026-09-30', time: '18:00' },
+  ]);
+  assert.deepEqual(rows.map(r => `${r.date} ${r.time}`), ['2026-09-30 18:00', '2026-09-30 09:00', '2026-09-01 10:00']);
 });
