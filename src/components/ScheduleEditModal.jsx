@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import MethodChips from './MethodChips.jsx';
 
 // 일정 수정 모달 (#7a) — 기존 수정 모달과 같은 필드를 "언제 → 어디서 → 누가 → 메모" 순서로.
 // 저장·삭제·첨부 업로드는 기존 handleSaveEdit / handleDelete / handleFileUpload 를 그대로 쓴다.
@@ -9,7 +10,6 @@ const C = {
 };
 // 회의는 별도 회의 모달에서 다루고 저장 경로도 달라 여기 칩에서 뺀다
 const KINDS = [['pt', 'PT'], ['briefing', '현설'], ['seminar', '세미나'], ['asq', '아.스.퀘'], ['personal', '개인'], ['vacation', '휴가']];
-const METHODS = ['POUR', 'CNC', 'DO', 'DETEX', '시멘트분말'];
 const WHEN = [['confirmed', '날짜 확정'], ['monthOnly', '월만 정해짐'], ['pending', '미정']];
 const TIMES = Array.from({ length: 28 }, (_, i) => `${String(Math.floor(i / 2) + 8).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
 
@@ -36,7 +36,6 @@ export default function ScheduleEditModal({
   const s = schedule;
   const set = patch => onChange({ ...s, ...patch });
   const [customName, setCustomName] = useState('');
-  const [customMethod, setCustomMethod] = useState('');
 
   const isPtLike = s.type === 'pt' || s.type === 'asq';
   const hasSite = isPtLike || s.type === 'briefing';
@@ -50,8 +49,7 @@ export default function ScheduleEditModal({
   const showWhen = s.type === 'pt';
   const dateFixed = !showWhen || s.dateType === 'confirmed';
 
-  const methods = splitNames(String(s.announcementMethods || '').replace(/,/g, '/'));
-  const setMethods = list => set({ announcementMethods: list.join(', ') });
+  const methods = String(s.announcementMethods || '').split(',').map(x => x.trim()).filter(Boolean);
   const verdict = methods.length && judgeResult ? judgeResult(methods) : null;
   const agreement = s.requester && checkAgreement ? checkAgreement(s.requester) : null;
 
@@ -129,15 +127,7 @@ export default function ScheduleEditModal({
             {s.type === 'pt' && (
               <div>
                 <span style={fieldLabel}>공고문 공법</span>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {[...METHODS, ...methods.filter(m => !METHODS.includes(m))].map(m => {
-                    const on = methods.includes(m);
-                    return <button key={m} type="button" aria-pressed={on} onClick={() => setMethods(on ? methods.filter(x => x !== m) : [...methods, m])} style={{ ...chip(on), height: 32, fontSize: 12.5 }}>{m}</button>;
-                  })}
-                  <form onSubmit={e => { e.preventDefault(); const v = customMethod.trim(); if (v && !methods.includes(v)) setMethods([...methods, v]); setCustomMethod(''); }} style={{ display: 'inline-flex' }}>
-                    <input aria-label="타공법 직접 입력" value={customMethod} onChange={e => setCustomMethod(e.target.value)} placeholder="+ 타공법 직접 입력" style={{ height: 32, width: 140, padding: '0 12px', borderRadius: 999, border: `1px dashed ${C.strong}`, fontSize: 12.5, fontFamily: 'inherit' }} />
-                  </form>
-                </div>
+                <MethodChips value={s.announcementMethods || ''} onChange={v => set({ announcementMethods: v })} />
                 <div style={{ fontSize: 11.5, color: C.text4, marginTop: 6 }}>
                   우리 공법만 있으면 승, 섞이면 무로 자동 판정
                   {verdict && <b style={{ marginLeft: 6, color: verdict === '승' ? '#15803d' : verdict === '무' ? '#b45309' : '#b91c1c' }}>→ 자동판정 {verdict}</b>}
