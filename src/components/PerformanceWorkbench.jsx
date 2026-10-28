@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildRow, FILTERS, matchesWho, matchesSearch, sortByPriority, sortByDate, kpis,
   settlementTargets, staffStats, quarterPts, quarterMeta, formatWon, mmdd, todayKey,
+  settlementStep, SETTLEMENT_STEPS, kaptCandidateText,
 } from '../utils/workbench.js';
 import AppSidebar from './AppSidebar.jsx';
 import { calculateSettlementAmount, deriveAssigneeResult, getQuarterKey } from '../utils/settlement.js';
@@ -501,13 +502,10 @@ function DetailPanel({ row, memo, setMemo, memoSaved, canMemo, onSaveMemo, onNex
   const kapt = !row.has ? ['결과 입력 후 자동 검증', '승/무/패 입력 시 K-APT(data.go.kr) 자동 조회', C.muted, C.text3, C.line]
     : row.verify === 'verified' ? ['K-APT 검증 완료', '공고 매칭 · 정산 대상 자동 전환', '#dcfce7', '#15803d', '#bbf7d0']
     : row.verify === 'cancelled' ? ['취소공고 확인됨', '발주처 취소 · 정산 제외 · 재공고 대기', '#fef2f2', '#b91c1c', '#fecaca']
-    : row.verify === 'needs_review' ? ['K-APT 공고 미매칭', candidateText(pt), '#fef3c7', '#b45309', '#fde68a']
+    : row.verify === 'needs_review' ? ['K-APT 공고 미매칭', kaptCandidateText(pt),'#fef3c7', '#b45309', '#fde68a']
     : ['K-APT 검증 전', '아직 조회 기록이 없습니다', C.muted, C.text3, C.line];
-  const stepIdx = !row.has ? 0
-    : row.stl === 'excluded' ? 1
-    : row.verify === 'needs_review' || row.stl === 'needs_review' ? 1
-    : row.stl === 'unsettled' ? 2 : row.stl === 'requested' ? 3 : row.stl === 'confirmed' ? 4 : 5;
-  const steps = ['결과 입력', 'K-APT 검증', '정산요청', '정산확정', '정산완료'].map((label, i) => {
+  const stepIdx = settlementStep(row);
+  const steps = SETTLEMENT_STEPS.map((label, i) => {
     const done = i < stepIdx, cur = i === stepIdx, warn = cur && i === 1 && row.isReview;
     const metaText = done && i === 0 ? mmdd(String(pt.resultConfirmDate?.[row.main] || row.date).slice(0, 10))
       : warn ? '처리 필요' : cur && i === 2 ? '담당자 체크 대기' : '';
@@ -629,13 +627,6 @@ function DetailPanel({ row, memo, setMemo, memoSaved, canMemo, onSaveMemo, onNex
       </div>
     </aside>
   );
-}
-
-function candidateText(pt) {
-  const list = pt.kaptVerified?.candidates?.list || [];
-  if (list.length === 1) return `후보 1건 · ${list[0].bidKaptname || list[0].bidTitle || '확인 필요'}`;
-  if (list.length > 1) return `후보 ${list.length}건 · 확인 필요`;
-  return '일치하는 공고문 없음';
 }
 
 function fmtTs(iso) {

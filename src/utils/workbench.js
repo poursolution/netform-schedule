@@ -110,6 +110,30 @@ export function buildRow(pt, today = todayKey(), now = null) {
   };
 }
 
+// 정산 단계 0~5 (결과 입력 / K-APT 검증 / 정산요청 / 정산확정 / 정산완료 / 끝) — 상세 패널·모바일 시트 공통
+export const SETTLEMENT_STEPS = ['결과 입력', 'K-APT 검증', '정산요청', '정산확정', '정산완료'];
+export function settlementStep(row) {
+  if (!row?.has) return 0;
+  if (row.stl === 'excluded') return 1;
+  if (row.verify === 'needs_review' || row.stl === 'needs_review') return 1;
+  return row.stl === 'unsettled' ? 2 : row.stl === 'requested' ? 3 : row.stl === 'confirmed' ? 4 : 5;
+}
+
+export function kaptCandidateText(pt) {
+  const list = pt?.kaptVerified?.candidates?.list || [];
+  if (list.length === 1) return `후보 1건 · ${list[0].bidKaptname || list[0].bidTitle || '확인 필요'}`;
+  if (list.length > 1) return `후보 ${list.length}건 · 확인 필요`;
+  return '일치하는 공고문 없음';
+}
+
+// "다음 검토 건 →" — 현재 행 다음의 검토필요 행(끝이면 처음부터), 현재 말고 없으면 null
+export function nextReviewId(rows, currentId) {
+  const list = (rows || []).filter(r => r.isReview);
+  const i = list.findIndex(r => r.id === currentId);
+  const next = list[i + 1] || list[0];
+  return next && next.id !== currentId ? next.id : null;
+}
+
 export const FILTERS = {
   all: () => true,
   win: r => r.result === '승',
