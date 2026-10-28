@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { todoItems, easyStatus, quarterMoney, yearRecord, finalConfirmBlockers, confirmStage, prevQuarterKeys } from '../src/utils/staffHome.js';
+import { todoItems, easyStatus, quarterMoney, yearRecord, finalConfirmBlockers, confirmStage, prevQuarterKeys, monthlyCounts, quarterHistory } from '../src/utils/staffHome.js';
 
 const today = '2026-10-28';
 
@@ -61,4 +61,23 @@ test('최종 확정 차단 기준·확인 단계·지난 분기', () => {
   assert.equal(confirmStage({ confirmed: true }), 'ok');
   assert.equal(confirmStage({ confirmed: true, finalRequestedAt: 'x' }), 'final-pending');
   assert.deepEqual(prevQuarterKeys('2026-Q1', 2), ['2025-Q4', '2025-Q3']);
+});
+
+test('마이페이지: 월별 PT 10개월 + 분기별 정산 이력(지급 완료/진행 중, 누적 수령)', () => {
+  const pts = [
+    { date: '2026-10-02', ptAssignee: 'A' },
+    { date: '2026-10-09', ptAssignee: 'A' },
+    { date: '2026-01-05', ptAssignee: 'A' },
+    { date: '2025-12-30', ptAssignee: 'A' }, // 10개월 밖
+    { date: '2026-08-01', ptAssignee: 'A', result: '승', settlement: { A: { completed: true, completedAt: '2026-10-25T01:00:00Z' } } },
+    { date: '2026-08-02', ptAssignee: 'A', result: '무', settlement: { A: { requested: true } } },
+    { date: '2026-05-01', ptAssignee: 'A', result: '승', settlement: { A: { completed: true, completedAt: '2026-07-25T01:00:00Z' } } },
+    { date: '2026-05-02', ptAssignee: 'A', result: '패' },
+  ];
+  const m = monthlyCounts(pts, 'A', new Date(2026, 9, 28));
+  assert.equal(m.length, 10);
+  assert.deepEqual([m[0].key, m[9].key, m[9].count, m[9].current], ['2026-01', '2026-10', 2, true]);
+  const h = quarterHistory(pts, 'A');
+  assert.deepEqual(h.rows.map(q => [q.key, q.count, q.amount, q.status]), [['2026-Q3', 2, 750000, 'open'], ['2026-Q2', 1, 500000, 'paid']]);
+  assert.equal(h.totalPaid, 1000000);
 });

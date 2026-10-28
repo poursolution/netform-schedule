@@ -179,6 +179,51 @@ export function finalConfirmBlockers(pts, me) {
   return { unverified, waitingSupport };
 }
 
+/** 월별 PT 건수 — 이번 달 포함 최근 n개월 (마이페이지 #9a) */
+export function monthlyCounts(pts, me, now = new Date(), n = 10) {
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    out.push({ key, label: `${d.getMonth() + 1}월`, count: 0, current: i === 0 });
+  }
+  const idx = Object.fromEntries(out.map((m, i) => [m.key, i]));
+  for (const pt of myPts(pts, me)) {
+    const i = idx[String(pt.date || '').slice(0, 7)];
+    if (i !== undefined) out[i].count += 1;
+  }
+  return out;
+}
+
+/**
+ * 분기별 정산 이력 — PT 진행일 기준 분기, 본인 몫(제외 건 빼고 금액 > 0).
+ *  status: 해당 분기 대상이 모두 지급 완료(completed)면 'paid', 아니면 'open'
+ *  paidAt: 지급 완료 건 중 가장 늦은 completedAt
+ */
+export function quarterHistory(pts, me, limit = 6) {
+  const byQ = {};
+  for (const pt of myPts(pts, me)) {
+    const m = String(pt.date || '').match(/^(\d{4})-(\d{2})/);
+    if (!m) continue;
+    const st = getSettlementStatus(pt, me);
+    if (st === SETTLEMENT_STATUS.EXCLUDED) continue;
+    const amt = calculateSettlementAmount(pt, me).amount || 0;
+    if (!amt) continue;
+    const key = `${m[1]}-Q${Math.ceil(+m[2] / 3)}`;
+    const q = byQ[key] || (byQ[key] = { key, count: 0, amount: 0, paid: 0, allPaid: true, paidAt: '' });
+    q.count += 1;
+    q.amount += amt;
+    if (st === SETTLEMENT_STATUS.COMPLETED) {
+      q.paid += amt;
+      const at = String(pt.settlement?.[me]?.completedAt || '');
+      if (at > q.paidAt) q.paidAt = at;
+    } else q.allPaid = false;
+  }
+  const rows = Object.values(byQ).sort((a, b) => b.key.localeCompare(a.key));
+  const totalPaid = rows.reduce((s, q) => s + q.paid, 0);
+  return { rows: rows.slice(0, limit).map(q => ({ ...q, status: q.allPaid ? 'paid' : 'open' })), totalPaid };
+}
+
 /** 분기 확인 카드 단계 — quarterConfirmations/{q}/{me} 를 그대로 해석 */
 export function confirmStage(conf) {
   const c = conf || {};

@@ -2365,7 +2365,7 @@ async function sendMorningBrief(env, { force = false, dryRun = false } = {}) {
   const adminRes = adminUrl ? await notifyJandiToUrl(adminUrl, buildBriefJandiMessage(rows, days, null, { unassigned })) : { ok: false, reason: 'no_webhook' };
   const sent = [];
   for (const name of briefRecipients(rows)) {
-    const url = await fetchUserJandiWebhook(env, name);
+    const url = await fetchUserJandiWebhook(env, name, 'brief');
     if (!url) continue;
     const r = await notifyJandiToUrl(url, buildBriefJandiMessage(rows, days, name));
     if (r.ok) sent.push(name);
@@ -2378,7 +2378,8 @@ async function sendMorningBrief(env, { force = false, dryRun = false } = {}) {
 }
 
 // Firebase 에서 담당자별 jandi webhook 조회: config/jandi/users/{name}
-async function fetchUserJandiWebhook(env, assignee) {
+//   pref: 'brief' | 'pay' — 담당자가 마이페이지에서 그 알림을 끈 경우(prefs[pref] === false) null
+async function fetchUserJandiWebhook(env, assignee, pref = null) {
   if (!env.FIREBASE_DB_URL || !env.FIREBASE_DB_SECRET) return null;
   try {
     const safe = encodeURIComponent(assignee);
@@ -2387,6 +2388,7 @@ async function fetchUserJandiWebhook(env, assignee) {
     if (!resp.ok) return null;
     const data = await resp.json();
     if (!data || !data.url || data.enabled === false) return null;
+    if (pref && data.prefs?.[pref] === false) return null;
     return data.url;
   } catch { return null; }
 }
@@ -2855,7 +2857,7 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
   if (opts.notifyUsers === true) {
     for (const agg of Object.values(perAssignee)) {
       if (agg.totalCount === 0) continue;
-      const personalUrl = await fetchUserJandiWebhook(env, agg.assignee);
+      const personalUrl = await fetchUserJandiWebhook(env, agg.assignee, 'pay');
       if (!personalUrl) { userNotifyResults.skipped++; continue; }
       const amountStr = (agg.estimatedAmount || 0).toLocaleString('ko-KR') + '원';
       // 정산건수 = 승 + 무 (순수 본인 실적, 지원은 별도)
