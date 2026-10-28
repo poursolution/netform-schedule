@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { parseAssignees, quarterMeta, defaultQuarterKey } from '../utils/workbench.js';
 import { rawResultOf, todoItems, quarterMoney, upcomingPts, confirmStage } from '../utils/staffHome.js';
+import MobileTabBar from './MobileTabBar.jsx';
 
 // 담당자 홈 모바일 (#5a) — [고정 헤더] + [스크롤] + [고정 하단 탭].
 // 결과 입력·공고문·분기 확인은 데스크톱 담당자 홈(#3a)과 같은 콜백을 쓴다.
@@ -31,19 +32,12 @@ function dayLabel(date, todayStr) {
   return d.getFullYear() === t.getFullYear() ? md : `${String(d.getFullYear()).slice(2)}/${md}`;
 }
 
-function TabIcon({ name, active }) {
-  const s = { width: 22, height: 22, fill: 'none', stroke: active ? C.brand : C.text4, strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
-  if (name === 'home') return <svg viewBox="0 0 24 24" style={s}><path d="M3 11l9-7 9 7" /><path d="M5 10v10h14V10" /></svg>;
-  if (name === 'calendar') return <svg viewBox="0 0 24 24" style={s}><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></svg>;
-  if (name === 'won') return <svg viewBox="0 0 24 24" style={s}><path d="M4 7l3 10 3-8 2 0 3 8 3-10" /><path d="M3 11h18" /></svg>;
-  return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="8" r="4" /><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" /></svg>;
-}
-
 export default function MobileStaffHome({
   me, ptSchedules, todayStr, quarterConfirmations,
   onSetResult, onUploadNotice, onNoNotice, onOpenPt, onAdd,
   onConfirm, onUndoConfirm, onRequestFix, onFinalConfirm,
   onGoSchedule, onGoSettlement, onGoMe,
+  topInset = 0, // 상단 고정 배너(PWA 설치 안내) 높이
 }) {
   const today = new Date(todayStr + 'T00:00:00');
   const [justSaved, setJustSaved] = useState({});
@@ -93,7 +87,7 @@ export default function MobileStaffHome({
 
   // body 에 직접 그린다 — 기존 모바일 화면 컨테이너 안이면 position:fixed 가 화면에 고정되지 않음
   return createPortal(
-    <div style={{ position: 'fixed', inset: 0, zIndex: 500, height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.muted, color: C.ink, fontVariantNumeric: 'tabular-nums', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>
+    <div style={{ position: 'fixed', top: topInset, left: 0, right: 0, bottom: 0, zIndex: 500, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.muted, color: C.ink, fontVariantNumeric: 'tabular-nums', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>
       {/* 고정 헤더 */}
       <header style={{ flex: 'none', padding: 'calc(env(safe-area-inset-top) + 14px) 16px 10px', display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -238,20 +232,7 @@ export default function MobileStaffHome({
       </main>
 
       {/* 고정 하단 탭 */}
-      <nav aria-label="하단 메뉴" style={{ flex: 'none', height: 'calc(64px + env(safe-area-inset-bottom))', paddingBottom: 'env(safe-area-inset-bottom)', boxSizing: 'border-box', background: 'rgba(255,255,255,.96)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderTop: `1px solid ${C.line}`, display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', alignItems: 'start' }}>
-        {tabs.map(t => t.primary ? (
-          <button key={t.key} type="button" onClick={t.onClick} aria-label="일정 추가" style={{ border: 0, background: 'none', padding: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'pointer', fontFamily: 'inherit', color: C.text2, fontSize: 10.5, fontWeight: 600 }}>
-            <span aria-hidden="true" style={{ width: 54, height: 54, marginTop: -22, borderRadius: '50%', background: C.brand, color: '#fff', fontSize: 28, display: 'grid', placeItems: 'center', boxShadow: '0 10px 22px rgba(15,76,117,.34)' }}>+</span>
-            {t.label}
-          </button>
-        ) : (
-          <button key={t.key} type="button" onClick={t.onClick} aria-current={t.active ? 'page' : undefined} style={{ position: 'relative', border: 0, background: 'none', padding: '10px 0 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, cursor: 'pointer', fontFamily: 'inherit', color: t.active ? C.brand : C.text4, fontSize: 10.5, fontWeight: 600 }}>
-            <TabIcon name={t.icon} active={t.active} />
-            {t.label}
-            {t.badge ? <span style={{ position: 'absolute', top: 6, left: 'calc(50% + 6px)', minWidth: 16, height: 16, padding: '0 4px', boxSizing: 'border-box', borderRadius: 999, background: '#b91c1c', color: '#fff', fontSize: 10, fontWeight: 700, display: 'grid', placeItems: 'center' }}>{t.badge}</span> : null}
-          </button>
-        ))}
-      </nav>
+      <MobileTabBar tabs={tabs} />
     </div>,
     document.body,
   );

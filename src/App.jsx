@@ -106,13 +106,16 @@ import ScheduleWorkbench from './components/ScheduleWorkbench.jsx';
 import MainDashboard from './components/MainDashboard.jsx';
 import StaffHome from './components/StaffHome.jsx';
 import MobileStaffHome from './components/MobileStaffHome.jsx';
+import MobileSchedule from './components/MobileSchedule.jsx';
 import ResultRecordModal from './components/ResultRecordModal.jsx';
 import MyPage from './components/MyPage.jsx';
 import ScheduleEditModal from './components/ScheduleEditModal.jsx';
 import SettlementPage from './components/SettlementPage.jsx';
 import { quarterMeta } from './utils/workbench.js';
-import { finalConfirmBlockers } from './utils/staffHome.js';
+import { finalConfirmBlockers, todoItems } from './utils/staffHome.js';
 import { buildBriefJandiMessage, briefRecipients, unassignedUpcoming } from './utils/morningBrief.js';
+
+const INSTALL_BANNER_H = 57; // PWA 설치 안내 배너 높이 — 새 모바일 화면(#5a·#5b)은 이만큼 아래에서 시작
 
 // 정산 상태 6단계 배지 스타일 (#4 — 실적 카드용)
 const SETTLEMENT_BADGE_STYLE = {
@@ -326,6 +329,7 @@ const SETTLEMENT_BADGE_STYLE = {
       const [showProfilePage, setShowProfilePage] = useState(false); // 마이페이지(#9a) — 사이드바 프로필 카드로 연다
       const [showSettlementPage, setShowSettlementPage] = useState(false); // 분기정산(#8a) — 사이드바 "정산"
       const [useLegacyResultModal, setUseLegacyResultModal] = useState(false); // 결과 기록 모달(#10a) 전환 기간 — 이전 사유 입력 창
+      const [useLegacyMobileSchedule, setUseLegacyMobileSchedule] = useState(false); // 모바일 일정(#5b) 전환 기간 — 이전 화면
       const [perfInit, setPerfInit] = useState({}); // 메인에서 실적 작업대로 넘어갈 때 첫 필터 { filter, who }
       const [scheduleInit, setScheduleInit] = useState({}); // 메인에서 일정으로 넘어갈 때 첫 상태 { view, listFilter, search }
       const [morningBriefConfig, setMorningBriefConfig] = useState({}); // config/morningBrief { autoSend, days }
@@ -6343,6 +6347,31 @@ const SETTLEMENT_BADGE_STYLE = {
         : (STAFF_HOME_MEMBERS.includes(myPageUser) ? myPageUser : null);
       const showStaffHome = showMyPage && !isMobile && !!staffHomeMe && !useLegacyStaffHome;
       const showMobileStaffHome = showMyPage && isMobile && !!staffHomeMe && !useLegacyStaffHome;
+      // ===== 일정 모바일(#5b) — 모바일 "일정" 화면을 덮는 전체 화면 =====
+      const showMobileSchedule = isMobile && isLoggedIn && !!currentUser && !useLegacyMobileSchedule
+        && !showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage;
+      const mobileScheduleTabs = () => {
+        const reset = () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); };
+        const add = { key: 'add', primary: true, label: '일정추가', onClick: () => { setAddTypeModalDate(null); setShowAddTypeModal(true); } };
+        const schedule = { key: 'schedule', label: '일정', icon: 'calendar', active: true, onClick: () => {} };
+        if (hasFullDataViewAccess(currentUser)) {
+          return [
+            { key: 'main', label: '메인', icon: 'home', onClick: () => { reset(); setShowDashboard(true); updatePageTitle('메인'); } },
+            schedule, add,
+            { key: 'perf', label: '실적', icon: 'chart', onClick: () => { reset(); setShowPerformance(true); setSettlementFilter('all'); updatePageTitle('실적'); } },
+            { key: 'settle', label: '정산', icon: 'won', onClick: openSettlement },
+          ];
+        }
+        const me = currentUser.name;
+        const openMy = (legacy) => { reset(); setUseLegacyStaffHome(legacy); setMyPageUser(me); setShowMyPage(true); };
+        const badge = todoItems(ptSchedules, me, todayStr, new Date()).filter(t => !t.sent).length;
+        return [
+          { key: 'home', label: '홈', icon: 'home', badge, onClick: () => { openMy(false); updatePageTitle('홈'); } },
+          schedule, add,
+          { key: 'settle', label: '정산', icon: 'won', onClick: () => openMy(true) },
+          { key: 'me', label: '내정보', icon: 'me', onClick: () => openMy(true) },
+        ];
+      };
       const staffSidebarProps = () => {
         const base = shellSidebarProps('home', () => setUseLegacyStaffHome(true));
         const full = hasFullDataViewAccess(currentUser);
@@ -9126,6 +9155,11 @@ const SETTLEMENT_BADGE_STYLE = {
           {/* 일정관리 */}
           {!showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage && !showScheduleWorkbench && (
             <>
+              {useLegacyMobileSchedule && isMobile && isLoggedIn && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+                  <button onClick={() => setUseLegacyMobileSchedule(false)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#0F4C75', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>새 일정 화면</button>
+                </div>
+              )}
               {useLegacySchedule && !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && (
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
                   <button onClick={() => setUseLegacySchedule(false)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#0F4C75', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>새 일정 화면</button>
@@ -13693,8 +13727,22 @@ tr.suppressed td.fname{color:#64748b;}
                 onGoSchedule={() => { setShowMyPage(false); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); updatePageTitle('일정'); }}
                 onGoSettlement={() => setUseLegacyStaffHome(true)}
                 onGoMe={() => setUseLegacyStaffHome(true)}
+                topInset={showInstallBanner ? INSTALL_BANNER_H : 0}
               />
             </>
+          )}
+          {/* 일정 모바일(#5b) — 기존 모바일 일정 화면 위를 덮는 전체 화면(하단 탭 포함) */}
+          {showMobileSchedule && (
+            <MobileSchedule
+              me={hasFullDataViewAccess(currentUser) ? null : currentUser.name}
+              schedules={allSchedules}
+              todayStr={todayStr}
+              holidayName={getHolidayByDateStr}
+              tabs={mobileScheduleTabs()}
+              onOpen={handleEditClick}
+              onLegacy={() => setUseLegacyMobileSchedule(true)}
+              topInset={showInstallBanner ? INSTALL_BANNER_H : 0}
+            />
           )}
           {showMyPage && !showStaffHome && !showMobileStaffHome && useLegacyStaffHome && staffHomeMe && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
@@ -19516,7 +19564,7 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* Bottom Navigation — 모바일 앱 느낌 (상단 nav 유지, 추가 접근 경로) */}
-          {isMobile && isLoggedIn && !showMobileStaffHome && (() => {
+          {isMobile && isLoggedIn && !showMobileStaffHome && !showMobileSchedule && (() => {
             const navItems = [
               { key: 'home', label: '홈', icon: 'home', active: showDashboard, onClick: () => { setShowDashboard(true); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); } },
               { key: 'perf', label: '실적', icon: 'performance', active: showPerformance, onClick: () => { setShowDashboard(false); setShowPerformance(true); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); setSettlementFilter('all'); } },
@@ -20754,7 +20802,9 @@ tr.suppressed td.fname{color:#64748b;}
               right: 0,
               background: '#1e293b',
               color: 'white',
-              padding: '12px 16px',
+              height: `${INSTALL_BANNER_H}px`, // 새 모바일 화면(#5a·#5b)이 이 높이만큼 아래에서 시작
+              boxSizing: 'border-box',
+              padding: '0 16px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',

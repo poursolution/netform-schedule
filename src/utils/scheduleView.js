@@ -96,6 +96,17 @@ export function sortDay(items) {
   return [...items].sort((a, b) => timeKey(a.time) - timeKey(b.time) || TYPE_ORDER.indexOf(a.type) - TYPE_ORDER.indexOf(b.type));
 }
 
+// #5b 모바일 일정 — "내 일정" = 주담 또는 지원(참석)으로 들어간 일정
+export function isMine(s, me) {
+  return !!me && assigneesOf(s).includes(me);
+}
+
+// #5b 빈 날 안내 — 그 날 이후 첫 일정
+export function nextItemAfter(items, date) {
+  return sortDay((items || []).filter(s => s && s.date > date))
+    .sort((a, b) => a.date.localeCompare(b.date))[0] || null;
+}
+
 // #6c 리스트 필터 (PT 기준)
 export const LIST_FILTERS = {
   upcoming: (s, today) => s.date > today,
