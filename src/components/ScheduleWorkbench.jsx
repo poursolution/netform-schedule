@@ -36,6 +36,8 @@ export default function ScheduleWorkbench({
   assigneeOptions,
   workTypeOptions,
   initialView = 'month',
+  initialListFilter = 'upcoming',
+  initialSearch = '',
   sidebar,              // AppSidebar props
   onAdd,                // (dateStr|null) => void
   onOpen,               // (schedule) => void — 기존 수정 창
@@ -49,10 +51,10 @@ export default function ScheduleWorkbench({
   const [month, setMonth] = useState(() => { const d = new Date(todayStr + 'T00:00:00'); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [selDate, setSelDate] = useState(todayStr);
   const [typeFilter, setTypeFilter] = useState('all');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(initialSearch);
   const [who, setWho] = useState('all');
   const [wt, setWt] = useState('all');
-  const [listFilter, setListFilter] = useState('upcoming');
+  const [listFilter, setListFilter] = useState(initialListFilter);
   const [listYear, setListYear] = useState('all');
   const [listMonth, setListMonth] = useState('all');
   const [listMode, setListMode] = useState('detail');

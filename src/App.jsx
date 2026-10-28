@@ -103,6 +103,7 @@ import { scoreJandiEvidenceCandidate } from './utils/jandiFileParser.js';
 import * as theme from './utils/theme.js';
 import PerformanceWorkbench from './components/PerformanceWorkbench.jsx';
 import ScheduleWorkbench from './components/ScheduleWorkbench.jsx';
+import MainDashboard from './components/MainDashboard.jsx';
 import { buildBriefJandiMessage, briefRecipients, unassignedUpcoming } from './utils/morningBrief.js';
 
 // 정산 상태 6단계 배지 스타일 (#4 — 실적 카드용)
@@ -312,6 +313,9 @@ const SETTLEMENT_BADGE_STYLE = {
       const [previewAssignee, setPreviewAssignee] = useState(null); // 담당자 현장목록 프리뷰
       const [useLegacyPerformance, setUseLegacyPerformance] = useState(false); // 실적 작업대 전환 기간 — 이전 화면 보기
       const [useLegacySchedule, setUseLegacySchedule] = useState(false); // 일정 화면(#6b·#6c) 전환 기간 — 이전 화면 보기
+      const [useLegacyMain, setUseLegacyMain] = useState(false); // 메인(#6a) 전환 기간 — 이전 화면 보기
+      const [perfInit, setPerfInit] = useState({}); // 메인에서 실적 작업대로 넘어갈 때 첫 필터 { filter, who }
+      const [scheduleInit, setScheduleInit] = useState({}); // 메인에서 일정으로 넘어갈 때 첫 상태 { view, listFilter, search }
       const [morningBriefConfig, setMorningBriefConfig] = useState({}); // config/morningBrief { autoSend, days }
       useEffect(() => {
         if (!firebaseEnabled || !database) return undefined;
@@ -6267,8 +6271,11 @@ const SETTLEMENT_BADGE_STYLE = {
 
       // ===== 새 화면 공통 셸(사이드바) — 실적 작업대·일정 화면 =====
       const showScheduleWorkbench = !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && !useLegacySchedule;
+      const showMainWorkbench = !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && !useLegacyMain;
       const shellSidebarProps = (active, onOpenLegacy) => {
         const goTo = (view, title) => {
+          setPerfInit({});
+          setScheduleInit({});
           setShowDashboard(view === 'main');
           setShowPerformance(view === 'perf');
           setShowMeetingView(view === 'meeting');
@@ -7216,7 +7223,56 @@ const SETTLEMENT_BADGE_STYLE = {
 
 
           {/* 메인 */}
-          {showDashboard && (() => {
+          {/* 메인(#6a) — 관리자·전체조회 계정 데스크톱 전용. 기존 헤더 위를 덮는 전체 화면. */}
+          {showDashboard && showMainWorkbench && (() => {
+            const goView = (view, title) => {
+              setShowDashboard(false);
+              setShowPerformance(view === 'perf');
+              setShowMeetingView(view === 'meeting');
+              setShowSalesView(false);
+              setShowMyPage(false);
+              updatePageTitle(title);
+            };
+            const goPerf = (init) => { setPerfInit(init); setScheduleInit({}); goView('perf', '실적'); };
+            const goSchedule = (init) => { setScheduleInit(init); setPerfInit({}); goView('schedule', '일정'); };
+            const canSettle = currentUser?.isAdmin || currentUser?.name === '한준엽';
+            return (
+              <div style={{ position: 'fixed', inset: 0, zIndex: 500, overflow: 'auto', background: '#f8fafc', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>
+                <MainDashboard
+                  pipeline={pipelineData}
+                  ptSchedules={ptSchedules}
+                  schedules={allSchedules}
+                  todayStr={todayStr}
+                  year={mainYearFilter}
+                  years={['all', ...[...new Set([String(new Date().getFullYear() + 1), String(new Date().getFullYear()), ...ptSchedules.map(s => (s.date || '').slice(0, 4)).filter(Boolean)])].sort().reverse()]}
+                  onYearChange={setMainYearFilter}
+                  totals={{ all: allSchedules.length, confirmed: confirmedSchedules.length, pending: pendingSchedules.length }}
+                  teams={[
+                    { name: '영업1팀', members: ['한준엽', '조재연', '정정훈', '김성민'] },
+                    { name: '영업2팀', members: ['이필선'] },
+                    { name: '영업3팀', members: ['조현식', '한인규'] },
+                  ]}
+                  confirmStateOf={workbenchConfirmState}
+                  assigneeNames={assigneeList}
+                  sidebar={shellSidebarProps('main', () => setUseLegacyMain(true))}
+                  onGoReview={() => goPerf({ filter: 'review' })}
+                  onGoUnassigned={() => goSchedule({ view: 'list', listFilter: 'unassigned' })}
+                  onGoPending={() => { setUseLegacySchedule(true); goSchedule({}); setListFilter('pending'); setViewMode('list'); }}
+                  onGoSettlement={() => (canSettle ? setShowMonthlySettlement(true) : goPerf({}))}
+                  onGoTeam={(team) => goPerf({ who: { label: team.name, names: team.members } })}
+                  onSearch={(q) => goSchedule({ view: 'list', listFilter: 'all', search: q })}
+                  onMeeting={() => goView('meeting', '영업회의')}
+                  onAdd={() => { setAddTypeModalDate(null); setShowAddTypeModal(true); }}
+                />
+              </div>
+            );
+          })()}
+          {showDashboard && !showMainWorkbench && useLegacyMain && !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+              <button onClick={() => setUseLegacyMain(false)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#0F4C75', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>새 메인 화면</button>
+            </div>
+          )}
+          {showDashboard && !showMainWorkbench && (() => {
             const team1 = ['한준엽', '조재연', '정정훈', '김성민'];
             const team2 = ['이필선'];
             const team3 = ['조현식', '한인규'];
@@ -8341,6 +8397,9 @@ const SETTLEMENT_BADGE_STYLE = {
                 assigneeOptions={assigneeList}
                 workTypeOptions={allWorkTypes}
                 sidebar={shellSidebarProps('schedule', () => setUseLegacySchedule(true))}
+                initialView={scheduleInit.view || 'month'}
+                initialListFilter={scheduleInit.listFilter || 'upcoming'}
+                initialSearch={scheduleInit.search || ''}
                 onAdd={(dateStr) => { setAddTypeModalDate(dateStr || null); setShowAddTypeModal(true); }}
                 onOpen={handleEditClick}
                 onOpenTeam={() => window.open('https://peaceful-chimera-1dced9.netlify.app/', '_blank')}
@@ -9585,6 +9644,8 @@ const SETTLEMENT_BADGE_STYLE = {
                         currentUser={currentUser}
                         confirmStateOf={workbenchConfirmState}
                         {...shellSidebarProps('perf', () => setUseLegacyPerformance(true))}
+                        initialFilter={perfInit.filter}
+                        initialWho={perfInit.who}
                         onOpenQuarterSettlement={canSettle ? () => setShowMonthlySettlement(true) : undefined}
                         exportActions={[
                           { key: 'excel', label: 'Excel', onClick: q => exportQuarterlyExcel(+q.slice(0, 4), qNum(q), 'all') },
