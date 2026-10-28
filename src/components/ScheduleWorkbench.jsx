@@ -11,7 +11,7 @@ import {
 // 일정 — #6b 월 달력 + #6c 리스트·아침 브리핑 (디자인 핸드오프 design_handoff_pour_sales_ops 기준)
 
 const C = {
-  brand: '#0F4C75', accent: '#BBE1FA', active: '#eef5fb', dark: '#1e293b',
+  brand: '#0F4C75', accent: '#BBE1FA', active: '#eef5fb',
   line: '#e2e8f0', line2: '#f1f5f9', strong: '#cbd5e1', muted: '#f8fafc', blank: '#fafbfc',
   text: '#1e293b', text2: '#475569', text3: '#64748b', text4: '#94a3b8',
 };
@@ -129,9 +129,9 @@ export default function ScheduleWorkbench({
     }
   };
 
-  const seg = (on, first) => ({ padding: '6px 12px', border: 0, borderLeft: first ? 0 : `1px solid ${C.line}`, background: on ? C.dark : '#fff', color: on ? '#fff' : C.text3, fontWeight: on ? 600 : 400, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5 });
-  const typeChip = on => ({ padding: '5px 10px', borderRadius: 999, fontSize: 12.5, fontFamily: 'inherit', cursor: 'pointer', border: `1px solid ${on ? C.dark : C.line}`, background: on ? C.dark : '#fff', color: on ? '#fff' : C.text2, fontWeight: on ? 700 : 500 });
-  const listChip = (on, warn) => ({ padding: '6px 12px', borderRadius: 8, fontSize: 12.5, fontFamily: 'inherit', cursor: 'pointer', fontWeight: on ? 700 : 500, border: `1px solid ${on ? (warn ? '#fde68a' : C.dark) : C.line}`, background: on ? (warn ? '#fef3c7' : C.dark) : '#fff', color: on ? (warn ? '#b45309' : '#fff') : warn ? '#b45309' : C.text2 });
+  const seg = (on, first) => ({ padding: '6px 12px', border: 0, borderLeft: first ? 0 : `1px solid ${C.line}`, background: on ? C.brand : '#fff', color: on ? '#fff' : C.text3, fontWeight: on ? 600 : 400, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5 });
+  const typeChip = on => ({ padding: '5px 10px', borderRadius: 999, fontSize: 12.5, fontFamily: 'inherit', cursor: 'pointer', border: `1px solid ${on ? C.brand : C.line}`, background: on ? C.brand : '#fff', color: on ? '#fff' : C.text2, fontWeight: on ? 700 : 500 });
+  const listChip = (on, warn) => ({ padding: '6px 12px', borderRadius: 8, fontSize: 12.5, fontFamily: 'inherit', cursor: 'pointer', fontWeight: on ? 700 : 500, border: `1px solid ${on ? (warn ? '#fde68a' : C.brand) : C.line}`, background: on ? (warn ? '#fef3c7' : C.brand) : '#fff', color: on ? (warn ? '#b45309' : '#fff') : warn ? '#b45309' : C.text2 });
   const selD = new Date(selDate + 'T00:00:00');
 
   return (
