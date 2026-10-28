@@ -105,6 +105,7 @@ import PerformanceWorkbench from './components/PerformanceWorkbench.jsx';
 import ScheduleWorkbench from './components/ScheduleWorkbench.jsx';
 import MainDashboard from './components/MainDashboard.jsx';
 import StaffHome from './components/StaffHome.jsx';
+import MobileStaffHome from './components/MobileStaffHome.jsx';
 import MyPage from './components/MyPage.jsx';
 import ScheduleEditModal from './components/ScheduleEditModal.jsx';
 import SettlementPage from './components/SettlementPage.jsx';
@@ -6337,6 +6338,7 @@ const SETTLEMENT_BADGE_STYLE = {
         : !hasFullDataViewAccess(currentUser) ? currentUser.name
         : (STAFF_HOME_MEMBERS.includes(myPageUser) ? myPageUser : null);
       const showStaffHome = showMyPage && !isMobile && !!staffHomeMe && !useLegacyStaffHome;
+      const showMobileStaffHome = showMyPage && isMobile && !!staffHomeMe && !useLegacyStaffHome;
       const staffSidebarProps = () => {
         const base = shellSidebarProps('home', () => setUseLegacyStaffHome(true));
         const full = hasFullDataViewAccess(currentUser);
@@ -13667,7 +13669,30 @@ tr.suppressed td.fname{color:#64748b;}
               />
             </div>
           )}
-          {showMyPage && !showStaffHome && useLegacyStaffHome && !isMobile && staffHomeMe && (
+          {/* 담당자 홈 모바일(#5a) — 기존 모바일 마이페이지 위를 덮는 전체 화면(하단 탭 포함) */}
+          {showMobileStaffHome && (
+            <>
+              <MobileStaffHome
+                me={staffHomeMe}
+                ptSchedules={ptSchedules}
+                todayStr={todayStr}
+                quarterConfirmations={quarterConfirmations}
+                onSetResult={handleResultClick}
+                onUploadNotice={workbenchOpenKaptVerify}
+                onNoNotice={(pt) => staffNoNotice(pt, staffHomeMe)}
+                onOpenPt={handleEditClick}
+                onAdd={() => { setAddTypeModalDate(null); setShowAddTypeModal(true); }}
+                onConfirm={(q) => staffConfirmQuarter(q, staffHomeMe)}
+                onUndoConfirm={(q) => staffUndoConfirmQuarter(q, staffHomeMe)}
+                onRequestFix={(q, text) => staffRequestFix(q, staffHomeMe, text)}
+                onFinalConfirm={(q) => staffFinalConfirm(q, staffHomeMe)}
+                onGoSchedule={() => { setShowMyPage(false); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); updatePageTitle('일정'); }}
+                onGoSettlement={() => setUseLegacyStaffHome(true)}
+                onGoMe={() => setUseLegacyStaffHome(true)}
+              />
+            </>
+          )}
+          {showMyPage && !showStaffHome && !showMobileStaffHome && useLegacyStaffHome && staffHomeMe && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
               <button onClick={() => setUseLegacyStaffHome(false)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#0F4C75', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>새 담당자 홈</button>
             </div>
@@ -19469,7 +19494,7 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* Bottom Navigation — 모바일 앱 느낌 (상단 nav 유지, 추가 접근 경로) */}
-          {isMobile && isLoggedIn && (() => {
+          {isMobile && isLoggedIn && !showMobileStaffHome && (() => {
             const navItems = [
               { key: 'home', label: '홈', icon: 'home', active: showDashboard, onClick: () => { setShowDashboard(true); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); } },
               { key: 'perf', label: '실적', icon: 'performance', active: showPerformance, onClick: () => { setShowDashboard(false); setShowPerformance(true); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); setSettlementFilter('all'); } },
