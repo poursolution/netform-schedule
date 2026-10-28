@@ -3,6 +3,7 @@ import AppSidebar from './AppSidebar.jsx';
 import { filterPipeline, filterPtByYear, flow, teamRows, eok } from '../utils/mainDashboard.js';
 import { buildRow, FILTERS, settlementTargets, quarterPts, quarterMeta, defaultQuarterKey } from '../utils/workbench.js';
 import { unassignedUpcoming } from '../utils/morningBrief.js';
+import { getQuarterKey } from '../utils/settlement.js';
 
 // 메인 (#6a) — 흐름 한 줄 + 처리할 것 + 팀별 현황. 수치 정의는 기존 메인과 같다 (utils/mainDashboard.js).
 
@@ -49,13 +50,16 @@ export default function MainDashboard({
   const f = useMemo(() => flow(pipeYear, ptYear), [pipeYear, ptYear]);
   const team = useMemo(() => teamRows(filterPipeline(pipeline, { year, company }), ptYear, teams), [pipeline, year, company, ptYear, teams]);
 
-  const qKey = defaultQuarterKey(today);
-  // 실적 작업대가 처음 여는 분기와 같은 기준 — 카드 숫자와 넘어간 목록 건수가 같게
+  // 실적 작업대가 처음 여는 분기(이번 분기)와 같은 기준 — 카드 숫자와 넘어간 목록 건수가 같게
+  const qKey = getQuarterKey(today);
+  // 분기정산 카드는 마감 처리할 분기(지난 분기 마감 전이면 지난 분기)
+  const stlKey = defaultQuarterKey(today);
   const reviewCount = useMemo(() => quarterPts(ptSchedules || [], qKey).map(pt => buildRow(pt, todayStr)).filter(FILTERS.review).length, [ptSchedules, qKey, todayStr]);
   const unassignedCount = useMemo(() => unassignedUpcoming(schedules, todayStr).length, [schedules, todayStr]);
-  const qMeta = quarterMeta(qKey, today);
-  const qAmount = useMemo(() => settlementTargets(quarterPts(ptSchedules || [], qKey)).amount, [ptSchedules, qKey]);
-  const finalCount = (assigneeNames || []).filter(n => confirmStateOf && confirmStateOf(qKey, n) === '최종확정').length;
+  const reviewQ = quarterMeta(qKey, today)?.quarter;
+  const qMeta = quarterMeta(stlKey, today);
+  const qAmount = useMemo(() => settlementTargets(quarterPts(ptSchedules || [], stlKey)).amount, [ptSchedules, stlKey]);
+  const finalCount = (assigneeNames || []).filter(n => confirmStateOf && confirmStateOf(stlKey, n) === '최종확정').length;
 
   const pt = f.pt;
   const barW = n => `${pt.total ? n / pt.total * 100 : 0}%`;
@@ -173,7 +177,7 @@ export default function MainDashboard({
           {/* 블록 2 — 처리할 것 */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
             <button type="button" onClick={onGoReview} style={queueBtn(reviewCount > 0)}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: '#b45309', whiteSpace: 'nowrap' }}>{dot('#d97706')}검토필요 · K-APT 미매칭 · Q{qMeta?.quarter}</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: '#b45309', whiteSpace: 'nowrap' }}>{dot('#d97706')}검토필요 · K-APT 미매칭 · Q{reviewQ}</span>
               <span style={{ display: 'flex', alignItems: 'baseline', width: '100%' }}>{queueNum(reviewCount)}<span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: C.brand }}>실적에서 처리 →</span></span>
             </button>
             <button type="button" onClick={onGoUnassigned} style={{ ...queueBtn(false), ...(unassignedCount > 0 ? { background: '#fef2f2', border: '1px solid #fecaca' } : {}) }}>
