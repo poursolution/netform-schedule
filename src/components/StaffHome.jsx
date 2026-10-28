@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import AppSidebar from './AppSidebar.jsx';
 import { parseAssignees, mmdd, formatWon, quarterMeta, defaultQuarterKey } from '../utils/workbench.js';
 import {
@@ -65,7 +65,11 @@ export default function StaffHome({
   const qMeta = quarterMeta(qKey, today);
   const year = today.getFullYear();
 
-  const todos = useMemo(() => todoItems(ptSchedules, me, todayStr), [ptSchedules, me, todayStr]);
+  // 1분마다 다시 계산 — 오늘 PT는 시간이 지나는 순간 할 일에 올라온다
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => { const t = setInterval(() => setNow(new Date()), 60000); return () => clearInterval(t); }, []);
+  const minuteKey = `${now.getHours()}:${now.getMinutes()}`;
+  const todos = useMemo(() => todoItems(ptSchedules, me, todayStr, now), [ptSchedules, me, todayStr, minuteKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const money = useMemo(() => quarterMoney(ptSchedules, me, qKey, today), [ptSchedules, me, qKey, todayStr]);
   const rec = useMemo(() => yearRecord(ptSchedules, me, year), [ptSchedules, me, year]);
   const teamAvg = useMemo(() => teamRate(ptSchedules, teamNames, year), [ptSchedules, teamNames, year]);
@@ -245,7 +249,7 @@ export default function StaffHome({
               </div>
               {history.map(pt => {
                 const r = rawResultOf(pt, me);
-                const st = easyStatus(pt, me, todayStr);
+                const st = easyStatus(pt, me, todayStr, now);
                 const amt = r ? calculateSettlementAmount(pt, me).amount || 0 : 0;
                 const tone = RESULT_TONE[r];
                 return (

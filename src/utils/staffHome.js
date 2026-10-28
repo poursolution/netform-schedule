@@ -9,7 +9,7 @@ import {
   getSettlementStatus,
   isInQuarterSettlementScope,
 } from './settlement.js';
-import { parseAssignees } from './workbench.js';
+import { parseAssignees, isPtOver } from './workbench.js';
 
 export function rawResultOf(pt, me) {
   if (pt?.results && pt.results[me] !== undefined) return pt.results[me] || null;
@@ -30,14 +30,14 @@ export function myPts(pts, me) {
  *  review : 결과 있음 && K-APT needs_review && 증빙 없음
  *           sent=true — 공고문을 올려 관리자 확인 대기(pending-admin-review)이거나 "공고 없었어요"를 보낸 건
  */
-export function todoItems(pts, me, today) {
+export function todoItems(pts, me, today, now = null) {
   const out = [];
   for (const pt of pts || []) {
     const tokens = parseAssignees(pt.ptAssignee);
     if (tokens[0] !== me || !pt.date) continue;
     const r = rawResultOf(pt, me);
     if (!r) {
-      if (pt.date <= today) out.push({ kind: 'pending', pt });
+      if (isPtOver(pt, today, now)) out.push({ kind: 'pending', pt });
       continue;
     }
     const uploaded = pt.kaptVerified?.status === 'pending-admin-review';
@@ -61,10 +61,10 @@ const REASON_TEXT = {
 };
 
 /** 내부 정산 상태 → 담당자 홈 쉬운 말 (핸드오프 "상태 라벨 매핑") */
-export function easyStatus(pt, me, today) {
+export function easyStatus(pt, me, today, now = null) {
   const r = rawResultOf(pt, me);
   if (!r) {
-    return pt.date && pt.date <= today
+    return isPtOver(pt, today, now)
       ? { label: '결과 입력 필요', bg: '#fef3c7', fg: '#b45309' }
       : { label: '예정', bg: '#f1f5f9', fg: '#64748b' };
   }
