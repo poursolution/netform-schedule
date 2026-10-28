@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  nextBusinessDays, briefRows, buildBriefText, buildBriefJandiMessage, briefRecipients, kTime, kDate,
+  nextBusinessDays, briefRows, buildBriefText, buildBriefJandiMessage, briefRecipients, kTime, kDate, unassignedUpcoming,
 } from '../src/utils/morningBrief.js';
 
 test('next business days skip weekends and holidays', () => {
@@ -50,4 +50,22 @@ test('jandi message groups by day', () => {
   const msg = buildBriefJandiMessage(briefRows(pts, days), days, '김성민');
   assert.equal(msg.connectInfo.length, 3); // 10/29, 10/30, 안내
   assert.match(msg.body, /김성민님 · 2건/);
+});
+
+test('admin message lists upcoming unassigned PT and briefing; personal message does not', () => {
+  const all = [
+    { id: 'p1', type: 'pt', date: '2026-10-30', time: '09:30', siteName: '파주 운정', ptAssignee: '' },
+    { id: 'p2', type: 'pt', date: '2026-10-28', siteName: '오늘 건', ptAssignee: '' },
+    { id: 'b1', type: 'briefing', date: '2026-11-02', siteName: '고덕 현설', assignee: '' },
+    { id: 'p3', type: 'pt', date: '2026-11-03', siteName: '배정됨', ptAssignee: '한인규' },
+    { id: 's1', type: 'personal', date: '2026-11-03', siteName: '개인', assignees: [] },
+  ];
+  const un = unassignedUpcoming(all, '2026-10-28');
+  assert.deepEqual(un.map(u => u.id), ['p1', 'b1']);
+  const rows = briefRows(pts, days);
+  const admin = buildBriefJandiMessage(rows, days, null, { unassigned: un });
+  assert.match(admin.body, /미배정 2건/);
+  assert.ok(admin.connectInfo.some(c => /담당 미배정 2건/.test(c.title)));
+  const mine = buildBriefJandiMessage(rows, days, '김성민', { unassigned: un });
+  assert.ok(!mine.connectInfo.some(c => /미배정/.test(c.title)));
 });

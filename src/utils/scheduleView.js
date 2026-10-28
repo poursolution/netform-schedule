@@ -38,6 +38,14 @@ export function isUnassignedItem(s) {
   return false;
 }
 
+// 미배정 PT 강조 규칙 — PT·현설, 오늘 이후, 담당 비어 있음 (핸드오프 "미배정 PT 강조 규칙")
+export function isUnassignedPT(s, todayStr) {
+  if (!s || !s.date || s.date <= todayStr) return false;
+  if (s.type === 'pt') return !s.ptAssignee;
+  if (s.type === 'briefing') return !s.assignee;
+  return false;
+}
+
 export function titleOf(s) {
   return s?.siteName || s?.title || '(제목 없음)';
 }

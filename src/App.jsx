@@ -103,7 +103,7 @@ import { scoreJandiEvidenceCandidate } from './utils/jandiFileParser.js';
 import * as theme from './utils/theme.js';
 import PerformanceWorkbench from './components/PerformanceWorkbench.jsx';
 import ScheduleWorkbench from './components/ScheduleWorkbench.jsx';
-import { buildBriefJandiMessage, briefRecipients } from './utils/morningBrief.js';
+import { buildBriefJandiMessage, briefRecipients, unassignedUpcoming } from './utils/morningBrief.js';
 
 // 정산 상태 6단계 배지 스타일 (#4 — 실적 카드용)
 const SETTLEMENT_BADGE_STYLE = {
@@ -6314,16 +6314,17 @@ const SETTLEMENT_BADGE_STYLE = {
         const withHook = recipients.filter(n => jandiUserWebhooks?.[n]?.url && jandiUserWebhooks[n].enabled !== false);
         const noHook = recipients.filter(n => !withHook.includes(n));
         const adminOn = !!(jandiUrl && jandiEnabled);
+        const unassigned = unassignedUpcoming(allSchedules, todayStr);
         const summary = [
           `PT ${rows.length}건 (${days.join(', ')})`,
-          `관리자 채널: ${adminOn ? '전체 일정' : '미설정 — 건너뜀'}`,
+          `관리자 채널: ${adminOn ? `전체 일정${unassigned.length ? ` + 담당 미배정 ${unassigned.length}건 목록` : ''}` : '미설정 — 건너뜀'}`,
           `담당자 개인: ${withHook.length ? withHook.join(', ') : '없음'}`,
           noHook.length ? `개인 웹훅 없음(건너뜀): ${noHook.join(', ')}` : '',
         ].filter(Boolean).join('\n');
         if (!window.confirm(`아침 브리핑을 잔디로 보냅니다.\n\n${summary}\n\n보낼까요?`)) return '';
         let adminOk = false;
         if (adminOn) {
-          const r = await sendJandiNotification(buildBriefJandiMessage(rows, days));
+          const r = await sendJandiNotification(buildBriefJandiMessage(rows, days, null, { unassigned }));
           adminOk = !!(r && (r.ok || r.queued));
         }
         const sent = [];
@@ -6341,7 +6342,7 @@ const SETTLEMENT_BADGE_STYLE = {
         }
         if (firebaseEnabled && database) {
           try {
-            await database.ref(`morningBriefLog/${todayStr}`).set({ sentAt: new Date().toISOString(), by: currentUser?.name || 'admin', source: 'manual', days, count: rows.length, recipients: sent, admin: adminOk });
+            await database.ref(`morningBriefLog/${todayStr}`).set({ sentAt: new Date().toISOString(), by: currentUser?.name || 'admin', source: 'manual', days, count: rows.length, unassigned: unassigned.length, recipients: sent, admin: adminOk });
           } catch (e) { console.warn('[morning brief] log failed', e); }
         }
         const parts = [`잔디 발송 완료 · 담당자 ${sent.length}명${adminOk ? ' + 관리자 채널' : ''}`];

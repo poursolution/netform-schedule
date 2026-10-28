@@ -101,15 +101,35 @@ export function buildBriefText(rows, days, assignee = null) {
   return parts.join('\n');
 }
 
-// 잔디 웹훅 payload — 날짜별 connectInfo
-export function buildBriefJandiMessage(rows, days, assignee = null) {
+// 앞으로(오늘 이후) 담당 미배정 PT·현설 — 관리자 채널 메시지에 붙인다
+export function unassignedUpcoming(schedules, todayStr) {
+  return (schedules || [])
+    .filter(s => s && s.date && s.date > todayStr && (!s.dateType || s.dateType === 'confirmed')
+      && (s.type === 'pt' ? !s.ptAssignee : s.type === 'briefing' ? !s.assignee : false))
+    .map(s => ({ id: s.id, date: s.date, time: s.time || '', siteName: s.siteName || s.title || '(현장명 없음)', workType: s.workType || '', kind: s.type === 'briefing' ? '현설' : 'PT' }))
+    .sort((a, b) => a.date.localeCompare(b.date) || timeSortKey(a.time) - timeSortKey(b.time));
+}
+
+const UNASSIGNED_LIMIT = 15;
+
+// 잔디 웹훅 payload — 날짜별 connectInfo. 관리자 채널(assignee 없음)에만 미배정 목록을 붙인다.
+export function buildBriefJandiMessage(rows, days, assignee = null, { unassigned = [] } = {}) {
   const mine = rowsFor(rows, assignee);
   const groups = groupByDay(mine, days);
+  const unInfo = !assignee && unassigned.length ? [{
+    title: `⚠ 담당 미배정 ${unassigned.length}건`,
+    description: [
+      ...unassigned.slice(0, UNASSIGNED_LIMIT).map(u => `${kDayShort(u.date)} ${kTime(u.time)} · ${u.kind} · ${u.siteName}${u.workType ? ` · ${u.workType}` : ''}`),
+      ...(unassigned.length > UNASSIGNED_LIMIT ? [`…외 ${unassigned.length - UNASSIGNED_LIMIT}건`] : []),
+      '배정되지 않은 PT는 아침 브리핑에도, 담당자 일정에도 안 나갑니다.',
+    ].join('\n'),
+  }] : [];
   return {
-    body: `${briefTitle(days)}${assignee ? ` — ${assignee}님` : ''} · ${mine.length}건`,
-    connectColor: '#0F4C75',
+    body: `${briefTitle(days)}${assignee ? ` — ${assignee}님` : ''} · ${mine.length}건${unInfo.length ? ` · 미배정 ${unassigned.length}건` : ''}`,
+    connectColor: unInfo.length ? '#b91c1c' : '#0F4C75',
     connectInfo: [
       ...groups.map(g => ({ title: `▸ ${kDayShort(g.day)}`, description: g.items.map(line).join('\n') })),
+      ...unInfo,
       { title: '안내', description: BRIEF_FOOTER },
     ],
   };

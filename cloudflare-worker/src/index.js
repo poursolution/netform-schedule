@@ -1,5 +1,5 @@
 // 아침 브리핑 메시지 — 앱과 같은 모듈 (wrangler 번들러가 함께 묶는다)
-import { nextBusinessDays, briefRows, briefRecipients, buildBriefJandiMessage } from '../../src/utils/morningBrief.js';
+import { nextBusinessDays, briefRows, briefRecipients, buildBriefJandiMessage, unassignedUpcoming } from '../../src/utils/morningBrief.js';
 
 // K-APT 자동 검증 Cloudflare Worker (V5)
 //
@@ -2351,15 +2351,18 @@ async function sendMorningBrief(env, { force = false, dryRun = false } = {}) {
 
   const ptResp = await fetch(`${base}/pt.json?${auth}`);
   if (!ptResp.ok) return { error: `pt_${ptResp.status}` };
-  const pts = Object.values((await ptResp.json()) || {});
+  const pts = Object.values((await ptResp.json()) || {}).map(p => ({ ...p, type: p.type || 'pt' }));
+  const brResp = await fetch(`${base}/briefing.json?${auth}`);
+  const briefings = brResp.ok ? Object.values((await brResp.json()) || {}).map(b => ({ ...b, type: b.type || 'briefing' })) : [];
   const dayCount = Math.min(7, Math.max(1, +cfg.days || 2));
   const days = nextBusinessDays(today, dayCount);
   const rows = briefRows(pts, days);
-  if (!rows.length) return { skipped: 'no_pt', today, days };
-  if (dryRun) return { dryRun: true, today, days, count: rows.length, recipients: briefRecipients(rows) };
+  const unassigned = unassignedUpcoming([...pts, ...briefings], today);
+  if (!rows.length && !unassigned.length) return { skipped: 'no_pt', today, days };
+  if (dryRun) return { dryRun: true, today, days, count: rows.length, unassigned: unassigned.length, recipients: briefRecipients(rows) };
 
   const adminUrl = await fetchDefaultJandiWebhook(env);
-  const adminRes = adminUrl ? await notifyJandiToUrl(adminUrl, buildBriefJandiMessage(rows, days)) : { ok: false, reason: 'no_webhook' };
+  const adminRes = adminUrl ? await notifyJandiToUrl(adminUrl, buildBriefJandiMessage(rows, days, null, { unassigned })) : { ok: false, reason: 'no_webhook' };
   const sent = [];
   for (const name of briefRecipients(rows)) {
     const url = await fetchUserJandiWebhook(env, name);
@@ -2369,9 +2372,9 @@ async function sendMorningBrief(env, { force = false, dryRun = false } = {}) {
   }
   await fetch(`${base}/morningBriefLog/${today}.json?${auth}`, {
     method: 'PUT',
-    body: JSON.stringify({ sentAt: new Date().toISOString(), by: 'cron-worker', source: 'cron', days, count: rows.length, recipients: sent, admin: !!adminRes.ok }),
+    body: JSON.stringify({ sentAt: new Date().toISOString(), by: 'cron-worker', source: 'cron', days, count: rows.length, unassigned: unassigned.length, recipients: sent, admin: !!adminRes.ok }),
   });
-  return { ok: true, today, days, count: rows.length, recipients: sent, admin: !!adminRes.ok };
+  return { ok: true, today, days, count: rows.length, unassigned: unassigned.length, recipients: sent, admin: !!adminRes.ok };
 }
 
 // Firebase 에서 담당자별 jandi webhook 조회: config/jandi/users/{name}

@@ -1,11 +1,11 @@
 import React, { useMemo, useRef, useState } from 'react';
 import AppSidebar from './AppSidebar.jsx';
 import {
-  TYPE_ORDER, typeMeta, assigneesOf, isUnassignedItem, titleOf, subOf, shortTime, matchesSearch, matchesWorkType,
+  TYPE_ORDER, typeMeta, assigneesOf, isUnassignedItem, isUnassignedPT, titleOf, subOf, shortTime, matchesSearch, matchesWorkType,
   matchesWho, monthCells, sortDay, LIST_FILTERS, LIST_TITLES,
 } from '../utils/scheduleView.js';
 import {
-  nextBusinessDays, briefRows, buildBriefText, groupByDay, briefTitle, briefRecipients, kDate, kTime, kDayShort, BRIEF_FOOTER,
+  nextBusinessDays, briefRows, buildBriefText, groupByDay, briefTitle, briefRecipients, kDate, kTime, kDayShort, BRIEF_FOOTER, unassignedUpcoming,
 } from '../utils/morningBrief.js';
 
 // 일정 — #6b 월 달력 + #6c 리스트·아침 브리핑 (디자인 핸드오프 design_handoff_pour_sales_ops 기준)
@@ -66,7 +66,9 @@ export default function ScheduleWorkbench({
   const filtered = useMemo(() => (schedules || []).filter(s => s && s.date && (!s.dateType || s.dateType === 'confirmed')
     && matchesSearch(s, search) && matchesWho(s, who) && matchesWorkType(s, wt)), [schedules, search, who, wt]);
   const inMonth = useMemo(() => filtered.filter(s => s.date.startsWith(monthKey)), [filtered, monthKey]);
-  const visible = useMemo(() => filtered.filter(s => typeFilter === 'all' || s.type === typeFilter), [filtered, typeFilter]);
+  const isUn = s => isUnassignedPT(s, todayStr);
+  const visible = useMemo(() => filtered.filter(s => typeFilter === 'all' || (typeFilter === 'un' ? isUnassignedPT(s, todayStr) : s.type === typeFilter)), [filtered, typeFilter, todayStr]);
+  const unMonth = inMonth.filter(s => isUnassignedPT(s, todayStr)).length;
   const byDate = useMemo(() => {
     const map = {};
     visible.forEach(s => { (map[s.date] = map[s.date] || []).push(s); });
@@ -79,7 +81,6 @@ export default function ScheduleWorkbench({
   const dayItems = byDate[selDate] || [];
   const busy = new Set((schedules || []).filter(s => s && s.date === selDate).flatMap(assigneesOf));
   const free = (roster || []).filter(n => !busy.has(n));
-  const unassignedThisMonth = (ptSchedules || []).filter(s => s.date && s.date.startsWith(monthKey) && s.date >= todayStr && !s.ptAssignee).length;
 
   const shiftMonth = k => setMonth(new Date(y, m0 + k, 1));
   const goToday = () => { const d = new Date(todayStr + 'T00:00:00'); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); setSelDate(todayStr); };
@@ -100,6 +101,7 @@ export default function ScheduleWorkbench({
   const bRows = useMemo(() => briefRows(ptSchedules, briefDays), [ptSchedules, briefDays]);
   const bGroups = groupByDay(bRows, briefDays);
   const bUnassigned = bRows.filter(r => !r.assignees.length).length;
+  const unUpcoming = useMemo(() => unassignedUpcoming(schedules, todayStr), [schedules, todayStr]);
 
   const saveImage = (el, name) => {
     if (!el || !window.html2canvas) { alert('이미지 저장 기능을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'); return; }
@@ -172,9 +174,17 @@ export default function ScheduleWorkbench({
                   {typeChips.map(([k, l]) => (
                     <button key={k} type="button" aria-pressed={typeFilter === k} onClick={() => setTypeFilter(k)} style={typeChip(typeFilter === k)}>{l} {k === 'all' ? inMonth.length : inMonth.filter(s => s.type === k).length}</button>
                   ))}
+                  <button type="button" aria-pressed={typeFilter === 'un'} onClick={() => setTypeFilter(f => f === 'un' ? 'all' : 'un')} style={{ ...typeChip(typeFilter === 'un'), border: `1px solid ${typeFilter === 'un' ? '#b91c1c' : '#fecaca'}`, background: typeFilter === 'un' ? '#b91c1c' : '#fef2f2', color: typeFilter === 'un' ? '#fff' : '#b91c1c', fontWeight: 700 }}>미배정 {unMonth}</button>
                   <div style={{ flex: 1 }} />
                   <span style={{ fontSize: 12, color: C.text4 }}>이번 달 {inMonth.length}건</span>
                 </div>
+                {unMonth > 0 && (
+                  <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', background: '#b91c1c', color: '#fff', fontSize: 13 }}>
+                    <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: '50%', background: '#fff', color: '#b91c1c', fontWeight: 800, fontSize: 13, display: 'grid', placeItems: 'center', flex: 'none' }}>!</span>
+                    <span><b>담당 미배정 PT {unMonth}건</b> — 배정되지 않은 PT는 아침 브리핑에도, 담당자 일정에도 안 나갑니다</span>
+                    <button type="button" onClick={() => setTypeFilter('un')} style={{ marginLeft: 'auto', height: 30, padding: '0 12px', border: 0, borderRadius: 7, background: '#fff', color: '#b91c1c', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', flex: 'none' }}>미배정만 보기</button>
+                  </div>
+                )}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', fontSize: 11.5, fontWeight: 600, color: C.text4, textAlign: 'center', borderBottom: `1px solid ${C.line2}` }}>
                   {KDAY.map((d, i) => <span key={d} style={{ padding: '8px 0', color: i === 0 ? '#b91c1c' : i === 6 ? C.brand : C.text4 }}>{d}</span>)}
                 </div>
@@ -191,12 +201,15 @@ export default function ScheduleWorkbench({
                           <button type="button" aria-label={`${+ds.slice(5, 7)}월 ${+ds.slice(8)}일${hol ? ` ${hol}` : ''} 선택`} aria-pressed={isSel} onClick={e => { e.stopPropagation(); setSelDate(ds); }} style={{ width: 22, height: 22, borderRadius: 11, display: 'grid', placeItems: 'center', border: 0, padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: isToday ? 800 : 600, color: isToday ? '#fff' : red ? '#b91c1c' : dow === 6 ? C.brand : C.text2, background: isToday ? C.brand : 'transparent', flex: 'none' }}>{+ds.slice(8)}</button>
                           {hol && <span style={{ fontSize: 10.5, color: '#b91c1c', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{hol}</span>}
                         </div>
-                        {items.slice(0, 3).map(s => (
-                          <button key={s.id} type="button" onClick={e => { e.stopPropagation(); pickItem(s); }} title={titleOf(s)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 5px', borderRadius: 5, background: C.muted, fontSize: 11.5, minWidth: 0, cursor: 'pointer', border: 0, fontFamily: 'inherit', textAlign: 'left', boxShadow: isUnassignedItem(s) ? 'inset 2px 0 0 #d97706' : 'none' }}>
-                            <span style={tag(s.type)}>{typeMeta(s.type).label}</span>
-                            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: C.text }}>{titleOf(s)}</span>
-                          </button>
-                        ))}
+                        {items.slice(0, 3).map(s => {
+                          const un = isUn(s);
+                          return (
+                            <button key={s.id} type="button" onClick={e => { e.stopPropagation(); pickItem(s); }} title={un ? `${titleOf(s)} — 담당 미배정` : titleOf(s)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 5px', borderRadius: 5, background: un ? '#fef2f2' : C.muted, border: un ? '1px dashed #f87171' : '1px solid transparent', fontSize: 11.5, minWidth: 0, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', fontWeight: un ? 700 : 500, color: un ? '#b91c1c' : C.text }}>
+                              <span style={un ? { ...tag(s.type), background: '#b91c1c', color: '#fff' } : tag(s.type)}>{un ? '미배정' : typeMeta(s.type).label}</span>
+                              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{titleOf(s)}</span>
+                            </button>
+                          );
+                        })}
                         {items.length > 3 && <span style={{ fontSize: 11, color: C.text3, paddingLeft: 5 }}>+{items.length - 3}건 더</span>}
                       </div>
                     );
@@ -206,7 +219,7 @@ export default function ScheduleWorkbench({
                   {['pt', 'briefing', 'seminar', 'meeting', 'vacation'].map(t => (
                     <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: typeMeta(t).bg, border: `1px solid ${C.strong}` }} />{typeMeta(t).label}</span>
                   ))}
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 3, height: 10, background: '#d97706' }} />담당 미배정</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: '#fef2f2', border: '1px dashed #f87171', boxSizing: 'border-box' }} /><b style={{ color: '#b91c1c' }}>미배정</b></span>
                   <span style={{ marginLeft: 'auto' }}>날짜 클릭 → 우측에 상세 · 일정 클릭 → 일정 열기</span>
                 </div>
               </section>
@@ -227,22 +240,28 @@ export default function ScheduleWorkbench({
                       const mainName = names[0];
                       const result = s.type === 'pt' ? ((mainName && s.results?.[mainName]) || s.result) : null;
                       const review = s.type === 'pt' && result && s.kaptVerified?.status === 'needs_review' && !Object.keys(s.evidenceFiles || {}).length;
+                      const un = isUn(s);
                       return (
-                        <button key={s.id} type="button" onClick={() => onOpen && onOpen(s)} style={{ display: 'flex', gap: 12, width: '100%', padding: '12px 16px', border: 0, borderBottom: `1px solid ${C.muted}`, background: '#fff', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', color: C.text }}>
+                        <div key={s.id} onClick={() => onOpen && onOpen(s)} style={{ display: 'flex', gap: 12, padding: '12px 16px', borderBottom: `1px solid ${C.muted}`, background: un ? '#fef2f2' : '#fff', cursor: 'pointer' }}>
                           <span style={{ flex: 'none', width: 44 }}>
                             <span style={{ display: 'block', fontSize: 13, fontWeight: 800 }}>{shortTime(s.time)}</span>
                             <span style={tag(s.type)}>{typeMeta(s.type).label}</span>
                           </span>
                           <span style={{ minWidth: 0, flex: 1 }}>
-                            <span style={{ display: 'block', fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{titleOf(s)}</span>
+                            <button type="button" onClick={e => { e.stopPropagation(); onOpen && onOpen(s); }} style={{ display: 'block', maxWidth: '100%', padding: 0, border: 0, background: 'transparent', fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer', color: C.text, fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{titleOf(s)}</button>
                             {subOf(s) && <span style={{ display: 'block', fontSize: 12, color: C.text3, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{subOf(s)}</span>}
                             <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12, color: C.text2, flexWrap: 'wrap' }}>
-                              {names.length ? <span style={{ fontWeight: 600 }}>{names.join(' · ')}</span> : isUnassignedItem(s) ? <span style={pill('#fef2f2', '#b91c1c', { border: '1px solid #fecaca' })}>미배정</span> : null}
+                              {un ? (
+                                <>
+                                  <span style={pill('#b91c1c', '#fff', { padding: '3px 8px', fontWeight: 700 })}>담당 미배정</span>
+                                  <button type="button" onClick={e => { e.stopPropagation(); onOpen && onOpen(s); }} style={{ height: 26, padding: '0 10px', border: 0, borderRadius: 7, background: C.brand, color: '#fff', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>지금 배정</button>
+                                </>
+                              ) : names.length ? <span style={{ fontWeight: 600 }}>{names.join(' · ')}</span> : isUnassignedItem(s) ? <span style={pill('#fef2f2', '#b91c1c', { border: '1px solid #fecaca' })}>미배정</span> : null}
                               {result && RES[result] && <span style={pill(RES[result][0], RES[result][1])}>{result}</span>}
                               {review && <span style={pill('#fef3c7', '#b45309')}>검토필요</span>}
                             </span>
                           </span>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -257,13 +276,17 @@ export default function ScheduleWorkbench({
                     <div style={{ fontSize: 11.5, color: C.text4, marginTop: 6 }}>미배정 PT에 배정할 때 참고</div>
                   </section>
                 )}
-                {unassignedThisMonth > 0 && (
-                  <section aria-label="담당 미배정 PT" style={{ ...card, border: '1px solid #fde68a', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                {unMonth > 0 ? (
+                  <section aria-label="담당 미배정 PT" style={{ ...card, border: '1px solid #fecaca', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: '#b45309' }}>담당 미배정 PT {unassignedThisMonth}건</div>
-                      <div style={{ fontSize: 12, color: C.text3, marginTop: 2 }}>이번 달 예정 PT 중 담당자가 없는 건</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#b91c1c' }}>담당 미배정 PT {unMonth}건</div>
+                      <div style={{ fontSize: 12, color: C.text3, marginTop: 2 }}>이번 달 예정 PT 중 담당자가 없는 건 · 아침 브리핑 때 관리자 잔디에 목록 포함</div>
                     </div>
-                    <button type="button" onClick={() => { setView('list'); setListFilter('unassigned'); }} style={{ ...primary(30), fontSize: 12, borderRadius: 7, padding: '0 10px' }}>배정하기</button>
+                    <button type="button" onClick={() => setTypeFilter('un')} style={{ ...primary(30), background: '#b91c1c', fontSize: 12, borderRadius: 7, padding: '0 10px' }}>배정하기</button>
+                  </section>
+                ) : (
+                  <section aria-label="담당 미배정 PT" style={{ ...card, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: '#15803d', fontWeight: 600 }}>
+                    <span aria-hidden="true" style={{ width: 18, height: 18, borderRadius: '50%', background: '#16a34a', color: '#fff', fontSize: 11, display: 'grid', placeItems: 'center' }}>✓</span>이번 달 미배정 PT 없음
                   </section>
                 )}
               </div>
@@ -351,6 +374,15 @@ export default function ScheduleWorkbench({
                         ))}
                       </div>
                     ))}
+                    {unUpcoming.length > 0 && (
+                      <div style={{ marginBottom: 8, color: '#b91c1c' }}>
+                        <div style={{ fontWeight: 700 }}>⚠ 담당 미배정 {unUpcoming.length}건 <span style={{ fontWeight: 400, color: C.text3 }}>(관리자 채널에만)</span></div>
+                        {unUpcoming.slice(0, 5).map(u => (
+                          <div key={u.id} style={{ paddingLeft: 10 }}>{kDayShort(u.date)} {kTime(u.time)} · {u.kind} · {u.siteName}</div>
+                        ))}
+                        {unUpcoming.length > 5 && <div style={{ paddingLeft: 10, color: C.text3 }}>…외 {unUpcoming.length - 5}건</div>}
+                      </div>
+                    )}
                     <div style={{ color: C.text3, marginTop: 4 }}>{BRIEF_FOOTER}</div>
                   </div>
                   <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -363,7 +395,7 @@ export default function ScheduleWorkbench({
                     )}
                     {(brief.status === 'error' || brief.status === 'copied') && <div role="status" style={{ fontSize: 12, fontWeight: 600, color: brief.status === 'error' ? '#b91c1c' : '#15803d' }}>{brief.text}</div>}
                     {onSendBrief && brief.status !== 'sent' && (
-                      <button type="button" onClick={sendBrief} disabled={brief.status === 'sending' || bRows.length === 0} style={{ ...primary(40), borderRadius: 9, fontSize: 13.5, opacity: brief.status === 'sending' || bRows.length === 0 ? 0.6 : 1 }}>{brief.status === 'sending' ? '보내는 중…' : '잔디로 보내기'}</button>
+                      <button type="button" onClick={sendBrief} disabled={brief.status === 'sending' || (bRows.length === 0 && unUpcoming.length === 0)} style={{ ...primary(40), borderRadius: 9, fontSize: 13.5, opacity: brief.status === 'sending' || (bRows.length === 0 && unUpcoming.length === 0) ? 0.6 : 1 }}>{brief.status === 'sending' ? '보내는 중…' : '잔디로 보내기'}</button>
                     )}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                       <button type="button" onClick={() => saveImage(briefRef.current, `아침브리핑_${todayStr}.png`)} style={secondary()}>이미지로 저장</button>
