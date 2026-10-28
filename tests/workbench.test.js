@@ -1,0 +1,88 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  buildRow, FILTERS, kpis, settlementTargets, staffStats, quarterMeta, quarterPts, sortByPriority, matchesWho,
+} from '../src/utils/workbench.js';
+
+const TODAY = '2026-10-28';
+
+const pts = [
+  { id: 'a', date: '2026-10-26', ptAssignee: '김성민', results: { 김성민: '승' }, kaptVerified: { status: 'needs_review' } },
+  { id: 'b', date: '2026-10-20', ptAssignee: '한준엽', results: { 한준엽: '승' }, kaptVerified: { status: 'verified' }, settlement: { 한준엽: { requested: true } } },
+  { id: 'c', date: '2026-10-19', ptAssignee: '조재연/한준엽', results: { 조재연: '무', 한준엽: '지원' }, kaptVerified: { status: 'verified' } },
+  { id: 'd', date: '2026-10-18', ptAssignee: '이필선', results: { 이필선: '패' } },
+  { id: 'e', date: '2026-10-11', ptAssignee: '김성민' },
+  { id: 'f', date: '2026-11-04', ptAssignee: '조재연' },
+  { id: 'g', date: '2026-07-02', ptAssignee: '김성민', results: { 김성민: '승' }, kaptVerified: { status: 'verified' } },
+];
+
+test('row uses the main assignee and settlement.js status and amount', () => {
+  const a = buildRow(pts[0], TODAY);
+  assert.equal(a.main, '김성민');
+  assert.equal(a.stl, 'needs_review');
+  assert.equal(a.amount, 500000);
+  assert.equal(a.isReview, true);
+
+  const c = buildRow(pts[2], TODAY);
+  assert.equal(c.multi, true);
+  assert.deepEqual(c.sups, ['한준엽']);
+  assert.equal(c.amount, 250000);
+});
+
+test('pending means no result and PT date not after today; future PTs are not pending', () => {
+  assert.equal(buildRow(pts[4], TODAY).isPending, true);
+  const f = buildRow(pts[5], TODAY);
+  assert.equal(f.isPending, false);
+  assert.equal(f.isFuture, true);
+});
+
+test('win rate excludes draws', () => {
+  const rows = pts.slice(0, 6).map(p => buildRow(p, TODAY));
+  const k = kpis(rows);
+  assert.deepEqual([k.w, k.d, k.l, k.p], [2, 1, 1, 2]);
+  assert.equal(k.rate, 67); // 2 / (2 + 1)
+});
+
+test('quarter filter follows the PT date', () => {
+  assert.equal(quarterPts(pts, '2026-Q4').length, 6);
+  assert.equal(quarterPts(pts, '2026-Q3').length, 1);
+});
+
+test('settlement targets count every participant and skip excluded ones', () => {
+  const t = settlementTargets(quarterPts(pts, '2026-Q4'));
+  // a 500k(검토필요) + b 500k(요청) + c 조재연 무 250k ; c 한준엽 지원은 주담 무 → 제외, d 패 제외
+  assert.equal(t.count, 3);
+  assert.equal(t.amount, 1250000);
+  assert.equal(t.byStatus.excluded, 2);
+  assert.equal(t.byStatus.needs_review, 1);
+});
+
+test('filters and who-matching include supporters', () => {
+  const rows = pts.map(p => buildRow(p, TODAY));
+  assert.equal(rows.filter(FILTERS.sup).length, 1);
+  assert.equal(rows.filter(FILTERS.requested).length, 1);
+  assert.equal(rows.filter(r => matchesWho(r, '한준엽')).length, 2);
+});
+
+test('priority sort puts review, then pending, then requested first', () => {
+  const rows = sortByPriority(pts.slice(0, 5).map(p => buildRow(p, TODAY)));
+  assert.deepEqual(rows.slice(0, 3).map(r => r.id), ['a', 'e', 'b']);
+});
+
+test('staff stats use the supporter rule and win rate without draws', () => {
+  const s = staffStats(quarterPts(pts, '2026-Q4'), ['한준엽', '김성민']);
+  const han = s.find(x => x.name === '한준엽');
+  assert.deepEqual([han.w, han.d, han.l], [1, 0, 0]);
+  assert.equal(han.est, 500000); // 지원 건은 주담 무 → 제외
+  const kim = s.find(x => x.name === '김성민');
+  assert.equal(kim.p, 1);
+  assert.equal(kim.review, 1);
+});
+
+test('quarter meta gives the closing date, payroll month and D-day', () => {
+  const m = quarterMeta('2026-Q3', new Date(2026, 9, 28));
+  assert.equal(m.closingFull, '2026-10-30');
+  assert.equal(m.payrollMonth, '2026-10');
+  assert.equal(m.ddayText, 'D-2');
+});
