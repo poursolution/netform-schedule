@@ -129,6 +129,11 @@ export function sortByPriority(rows) {
   return [...rows].sort((a, b) => rank(a) - rank(b) || b.date.localeCompare(a.date) || String(b.time).localeCompare(String(a.time)));
 }
 
+// 날짜순: 기존 실적 목록처럼 최근 PT가 위로 차곡차곡
+export function sortByDate(rows) {
+  return [...rows].sort((a, b) => b.date.localeCompare(a.date) || String(b.time).localeCompare(String(a.time)));
+}
+
 export function kpis(rows) {
   const w = rows.filter(r => r.result === '승').length;
   const d = rows.filter(r => r.result === '무').length;
