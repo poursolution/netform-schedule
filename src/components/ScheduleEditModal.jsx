@@ -14,7 +14,8 @@ const WHEN = [['confirmed', '날짜 확정'], ['monthOnly', '월만 정해짐'],
 const TIMES = Array.from({ length: 28 }, (_, i) => `${String(Math.floor(i / 2) + 8).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
 
 const input = { height: 42, width: '100%', boxSizing: 'border-box', padding: '0 12px', border: `1px solid ${C.line}`, borderRadius: 9, fontSize: 13.5, fontFamily: 'inherit', background: '#fff', color: C.ink };
-const fieldLabel = { display: 'block', fontSize: 12, fontWeight: 600, color: C.text2, marginBottom: 6 };
+const mobileInput = { ...input, height: 48, borderRadius: 10, fontSize: 15 };
+const fieldLabel ={ display: 'block', fontSize: 12, fontWeight: 600, color: C.text2, marginBottom: 6 };
 const splitNames = v => String(v || '').split(/[\/,]/).map(x => x.trim()).filter(Boolean);
 
 function Section({ n, title, optional, children }) {
@@ -32,8 +33,14 @@ function Section({ n, title, optional, children }) {
 export default function ScheduleEditModal({
   schedule, onChange, onSave, onDelete, onClose, onUpload, onBriefingImage,
   assigneeList, briefingAssigneeList, checkAgreement, judgeResult,
+  mode = 'edit',   // 'edit' | 'add' — 추가면 제목 "일정 추가", 삭제 없음
+  mobile = false,  // #7b 모바일 전체화면 시트
+  onLegacy,        // 전환 기간 — 이전 입력 화면
+  topInset = 0,    // 모바일: 상단 고정 배너(PWA 설치 안내) 높이
 }) {
   const s = schedule;
+  const title = mode === 'add' ? '일정 추가' : '일정 수정';
+  const field = mobile ? mobileInput : input;
   const set = patch => onChange({ ...s, ...patch });
   const [customName, setCustomName] = useState('');
 
@@ -56,25 +63,49 @@ export default function ScheduleEditModal({
   const noAssignee = (hasSite) && who.length === 0;
   const chip = on => ({ height: 36, padding: '0 14px', borderRadius: 999, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', fontWeight: on ? 700 : 500, border: `1px solid ${on ? C.brand : C.line}`, background: on ? C.brand : '#fff', color: on ? '#fff' : C.text2 });
 
+  const font = '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif';
+  const textBtn = { height: 44, padding: '0 6px', border: 0, background: 'none', fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' };
+  const kindChips = (
+    <div role="group" aria-label="일정 종류" style={{ display: 'flex', gap: 6, marginTop: mobile ? 8 : 12, flexWrap: mobile ? 'nowrap' : 'wrap', overflowX: mobile ? 'auto' : 'visible', scrollbarWidth: 'none', paddingBottom: mobile ? 2 : 0 }}>
+      {KINDS.map(([k, l]) => <button key={k} type="button" aria-pressed={s.type === k} onClick={() => set({ type: k })} style={{ ...chip(s.type === k), flex: 'none' }}>{l}</button>)}
+    </div>
+  );
+  const briefingImageBtn = s.type === 'briefing' && onBriefingImage && mode === 'edit'
+    ? <button type="button" onClick={onBriefingImage} style={{ height: 32, padding: '0 12px', marginRight: 8, borderRadius: 8, border: `1px solid ${C.line}`, background: '#fff', fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit' }}>이미지</button>
+    : null;
+
   return (
-    <div role="presentation" onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,76,117,.4)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 40, overflowY: 'auto', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>
+    <div role="presentation" onClick={mobile ? undefined : onClose} style={mobile
+      ? { position: 'fixed', top: topInset, left: 0, right: 0, bottom: 0, zIndex: 1000, background: '#fff', fontFamily: font }
+      : { position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,76,117,.4)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 40, overflowY: 'auto', fontFamily: font }}>
       <div role="dialog" aria-modal="true" aria-labelledby="sem-title" onClick={e => e.stopPropagation()}
-        style={{ width: 600, maxWidth: 'calc(100% - 32px)', background: '#fff', borderRadius: 16, boxShadow: '0 24px 64px rgba(15,23,42,.28)', display: 'flex', flexDirection: 'column', maxHeight: 'min(820px, calc(100vh - 60px))', marginBottom: 20, color: C.ink }}>
-        {/* 헤더 */}
-        <div style={{ padding: '18px 22px 14px', borderBottom: `1px solid ${C.line2}` }}>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <h2 id="sem-title" style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>일정 수정</h2>
-            <div style={{ flex: 1 }} />
-            {s.type === 'briefing' && onBriefingImage && <button type="button" onClick={onBriefingImage} style={{ height: 32, padding: '0 12px', marginRight: 8, borderRadius: 8, border: `1px solid ${C.line}`, background: '#fff', fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit' }}>이미지</button>}
-            <button type="button" aria-label="닫기" onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: 0, background: 'transparent', fontSize: 18, color: C.text3, cursor: 'pointer' }}>✕</button>
+        style={mobile
+          ? { position: 'absolute', inset: 0, background: '#fff', display: 'flex', flexDirection: 'column', color: C.ink }
+          : { width: 600, maxWidth: 'calc(100% - 32px)', background: '#fff', borderRadius: 16, boxShadow: '0 24px 64px rgba(15,23,42,.28)', display: 'flex', flexDirection: 'column', maxHeight: 'min(820px, calc(100vh - 60px))', marginBottom: 20, color: C.ink }}>
+        {/* 헤더 — 모바일은 [취소] 제목 [저장] */}
+        {mobile ? (
+          <div style={{ flex: 'none', padding: 'calc(env(safe-area-inset-top) + 6px) 12px 10px', borderBottom: `1px solid ${C.line2}` }}>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <button type="button" onClick={onClose} style={{ ...textBtn, color: C.text2 }}>취소</button>
+              <h2 id="sem-title" style={{ flex: 1, margin: 0, textAlign: 'center', fontSize: 17, fontWeight: 800 }}>{title}</h2>
+              <button type="button" onClick={onSave} style={{ ...textBtn, color: C.brand, fontWeight: 800 }}>저장</button>
+            </div>
+            <div style={{ padding: '0 4px' }}>{kindChips}</div>
           </div>
-          <div role="group" aria-label="일정 종류" style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
-            {KINDS.map(([k, l]) => <button key={k} type="button" aria-pressed={s.type === k} onClick={() => set({ type: k })} style={chip(s.type === k)}>{l}</button>)}
+        ) : (
+          <div style={{ padding: '18px 22px 14px', borderBottom: `1px solid ${C.line2}` }}>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <h2 id="sem-title" style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>{title}</h2>
+              <div style={{ flex: 1 }} />
+              {briefingImageBtn}
+              <button type="button" aria-label="닫기" onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: 0, background: 'transparent', fontSize: 18, color: C.text3, cursor: 'pointer' }}>✕</button>
+            </div>
+            {kindChips}
           </div>
-        </div>
+        )}
 
         {/* 본문 */}
-        <div style={{ padding: '4px 22px 8px', overflowY: 'auto', flex: 1 }}>
+        <div style={{ padding: mobile ? '4px 16px 16px' : '4px 22px 8px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
           {noAssignee && (
             <div role="alert" style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 14, padding: '12px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, fontSize: 13, color: '#b91c1c' }}>
               <span aria-hidden="true" style={{ width: 20, height: 20, borderRadius: '50%', background: '#b91c1c', color: '#fff', fontSize: 12, fontWeight: 800, display: 'grid', placeItems: 'center', flex: 'none' }}>!</span>
@@ -92,38 +123,38 @@ export default function ScheduleEditModal({
               </div>
             )}
             {dateFixed && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: 8 }}>
-                <label style={fieldLabel}>날짜<input type="date" value={s.date || ''} onChange={e => set({ date: e.target.value })} style={{ ...input, marginTop: 6 }} /></label>
+              <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr 1fr' : '1.2fr 1fr 1fr', gap: 8 }}>
+                <label style={{ ...fieldLabel, gridColumn: mobile ? '1 / -1' : undefined }}>날짜<input type="date" value={s.date || ''} onChange={e => set({ date: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>
                 <label style={fieldLabel}>시작
-                  <input list="sem-times" value={s.time || ''} onChange={e => set({ time: e.target.value })} placeholder="00:00" style={{ ...input, marginTop: 6 }} />
+                  <input list="sem-times" value={s.time || ''} onChange={e => set({ time: e.target.value })} placeholder="00:00" style={{ ...field, marginTop: 6 }} />
                 </label>
                 <label style={fieldLabel}>종료 (선택)
-                  <input list="sem-times" value={s.endTime || ''} onChange={e => set({ endTime: e.target.value })} placeholder="00:00" style={{ ...input, marginTop: 6 }} />
+                  <input list="sem-times" value={s.endTime || ''} onChange={e => set({ endTime: e.target.value })} placeholder="00:00" style={{ ...field, marginTop: 6 }} />
                 </label>
                 <datalist id="sem-times">{TIMES.map(t => <option key={t} value={t} />)}</datalist>
               </div>
             )}
             {showWhen && s.dateType === 'monthOnly' && (
-              <label style={fieldLabel}>예정월<input type="month" value={s.expectedMonth || ''} onChange={e => set({ expectedMonth: e.target.value })} style={{ ...input, marginTop: 6 }} /></label>
+              <label style={fieldLabel}>예정월<input type="month" value={s.expectedMonth || ''} onChange={e => set({ expectedMonth: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>
             )}
             {showWhen && s.dateType === 'pending' && (
-              <label style={fieldLabel}>일정 메모<input value={s.dateNote || ''} onChange={e => set({ dateNote: e.target.value })} placeholder="예: 조율중, 협의필요" style={{ ...input, marginTop: 6 }} /></label>
+              <label style={fieldLabel}>일정 메모<input value={s.dateNote || ''} onChange={e => set({ dateNote: e.target.value })} placeholder="예: 조율중, 협의필요" style={{ ...field, marginTop: 6 }} /></label>
             )}
           </Section>
 
           <Section n="2" title="어디서">
-            {isTitled && <label style={fieldLabel}>일정명<input value={s.title || ''} onChange={e => set({ title: e.target.value })} style={{ ...input, marginTop: 6 }} /></label>}
+            {isTitled && <label style={fieldLabel}>일정명<input value={s.title || ''} onChange={e => set({ title: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>}
             {hasSite && (
               <>
-                <label style={fieldLabel}>현장명<input value={s.siteName || ''} onChange={e => set({ siteName: e.target.value })} style={{ ...input, marginTop: 6, fontWeight: 600 }} /></label>
-                <label style={fieldLabel}>주소<input value={s.address || ''} onChange={e => set({ address: e.target.value })} style={{ ...input, marginTop: 6 }} /></label>
+                <label style={fieldLabel}>현장명<input value={s.siteName || ''} onChange={e => set({ siteName: e.target.value })} style={{ ...field, marginTop: 6, fontWeight: 600 }} /></label>
+                <label style={fieldLabel}>주소<input value={s.address || ''} onChange={e => set({ address: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>
                 <div style={{ display: 'grid', gridTemplateColumns: isPtLike ? '1fr 1fr' : '1fr', gap: 8 }}>
-                  <label style={fieldLabel}>공종<input value={s.workType || ''} onChange={e => set({ workType: e.target.value })} style={{ ...input, marginTop: 6 }} /></label>
-                  {isPtLike && <label style={fieldLabel}>참여인원<input value={s.participants || ''} onChange={e => set({ participants: e.target.value })} style={{ ...input, marginTop: 6 }} /></label>}
+                  <label style={fieldLabel}>공종<input value={s.workType || ''} onChange={e => set({ workType: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>
+                  {isPtLike && <label style={fieldLabel}>참여인원<input value={s.participants || ''} onChange={e => set({ participants: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>}
                 </div>
               </>
             )}
-            {(s.type === 'personal' || s.type === 'seminar') && <label style={fieldLabel}>장소<input value={s.location || ''} onChange={e => set({ location: e.target.value })} style={{ ...input, marginTop: 6 }} /></label>}
+            {(s.type === 'personal' || s.type === 'seminar') && <label style={fieldLabel}>장소<input value={s.location || ''} onChange={e => set({ location: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>}
             {s.type === 'pt' && (
               <div>
                 <span style={fieldLabel}>공고문 공법</span>
@@ -136,8 +167,8 @@ export default function ScheduleEditModal({
             )}
             {s.type === 'briefing' && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <label style={fieldLabel}>입찰마감<input type="date" value={s.bidDeadline || ''} onChange={e => set({ bidDeadline: e.target.value })} style={{ ...input, marginTop: 6 }} /></label>
-                <label style={fieldLabel}>요청서류<input value={s.requiredDocs || ''} onChange={e => set({ requiredDocs: e.target.value })} placeholder="견적서, 시방서 등" style={{ ...input, marginTop: 6 }} /></label>
+                <label style={fieldLabel}>입찰마감<input type="date" value={s.bidDeadline || ''} onChange={e => set({ bidDeadline: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>
+                <label style={fieldLabel}>요청서류<input value={s.requiredDocs || ''} onChange={e => set({ requiredDocs: e.target.value })} placeholder="견적서, 시방서 등" style={{ ...field, marginTop: 6 }} /></label>
               </div>
             )}
           </Section>
@@ -166,20 +197,20 @@ export default function ScheduleEditModal({
             {hasSite && (
               <div style={{ display: 'grid', gridTemplateColumns: isPtLike ? '1fr 1fr' : '1fr', gap: 8 }}>
                 <label style={fieldLabel}>요청사 · 연락처
-                  <input value={s.requester || ''} onChange={e => set({ requester: e.target.value })} style={{ ...input, marginTop: 6, borderColor: agreement && !agreement.isAgreement ? '#fca5a5' : C.line }} />
+                  <input value={s.requester || ''} onChange={e => set({ requester: e.target.value })} style={{ ...field, marginTop: 6, borderColor: agreement && !agreement.isAgreement ? '#fca5a5' : C.line }} />
                   {agreement && (
                     <span style={{ display: 'block', fontSize: 11.5, fontWeight: 600, marginTop: 4, color: agreement.isAgreement ? '#15803d' : '#b91c1c' }}>
                       {agreement.isAgreement ? `협약업체${agreement.grade ? ` ${agreement.grade}등급` : ''}` : 'POUR공법 협약업체가 아니에요 · 확인해 주세요'}
                     </span>
                   )}
                 </label>
-                {isPtLike && <label style={fieldLabel}>경쟁사<input value={s.competitor || ''} onChange={e => set({ competitor: e.target.value })} style={{ ...input, marginTop: 6 }} /></label>}
+                {isPtLike && <label style={fieldLabel}>경쟁사<input value={s.competitor || ''} onChange={e => set({ competitor: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>}
               </div>
             )}
           </Section>
 
           <Section n="4" title="메모 · 첨부" optional>
-            <textarea aria-label="비고" value={s.note || ''} onChange={e => set({ note: e.target.value })} placeholder="연락처, 특이사항 등" style={{ ...input, height: 64, padding: 10, resize: 'vertical' }} />
+            <textarea aria-label="비고" value={s.note || ''} onChange={e => set({ note: e.target.value })} placeholder="연락처, 특이사항 등" style={{ ...field, height: 64, padding: 10, resize: 'vertical' }} />
             {s.attachmentUrl ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', border: `1px solid ${C.line}`, borderRadius: 10, fontSize: 13 }}>
                 <span aria-hidden="true">📎</span>
@@ -195,14 +226,22 @@ export default function ScheduleEditModal({
           </Section>
         </div>
 
-        {/* 푸터 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 22px', borderTop: `1px solid ${C.line2}` }}>
-          <button type="button" onClick={onDelete} style={{ padding: '0 4px', border: 0, background: 'none', color: '#b91c1c', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>삭제</button>
-          <span style={{ fontSize: 12, color: C.text4 }}>저장하면 일정·실적에 바로 반영돼요</span>
-          <div style={{ flex: 1 }} />
-          <button type="button" onClick={onClose} style={{ height: 40, padding: '0 16px', borderRadius: 8, border: `1px solid ${C.line}`, background: '#fff', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit', color: C.ink }}>취소</button>
-          <button type="button" onClick={onSave} style={{ height: 40, padding: '0 20px', borderRadius: 8, border: 0, background: C.brand, color: '#fff', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>저장</button>
-        </div>
+        {/* 푸터 — 모바일은 하단 고정 [저장] 50px */}
+        {mobile ? (
+          <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px calc(env(safe-area-inset-bottom) + 10px)', borderTop: `1px solid ${C.line2}`, background: '#fff' }}>
+            {mode === 'edit' && onDelete && <button type="button" onClick={onDelete} style={{ height: 50, padding: '0 6px', border: 0, background: 'none', color: '#b91c1c', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>삭제</button>}
+            {onLegacy && <button type="button" onClick={onLegacy} style={{ height: 50, padding: 0, border: 0, background: 'none', color: C.text4, fontSize: 12, textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>이전 입력 화면</button>}
+            <button type="button" onClick={onSave} style={{ flex: 1, height: 50, borderRadius: 12, border: 0, background: C.brand, color: '#fff', fontSize: 16, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>저장</button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 22px', borderTop: `1px solid ${C.line2}` }}>
+            {mode === 'edit' && onDelete && <button type="button" onClick={onDelete} style={{ padding: '0 4px', border: 0, background: 'none', color: '#b91c1c', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>삭제</button>}
+            <span style={{ fontSize: 12, color: C.text4 }}>저장하면 일정·실적에 바로 반영돼요</span>
+            <div style={{ flex: 1 }} />
+            <button type="button" onClick={onClose} style={{ height: 40, padding: '0 16px', borderRadius: 8, border: `1px solid ${C.line}`, background: '#fff', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit', color: C.ink }}>취소</button>
+            <button type="button" onClick={onSave} style={{ height: 40, padding: '0 20px', borderRadius: 8, border: 0, background: C.brand, color: '#fff', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>저장</button>
+          </div>
+        )}
       </div>
     </div>
   );
