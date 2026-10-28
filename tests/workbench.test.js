@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  buildRow, FILTERS, kpis, settlementTargets, staffStats, quarterMeta, quarterPts, sortByPriority, sortByDate, matchesWho,
+  buildRow, FILTERS, kpis, settlementTargets, staffStats, quarterMeta, quarterPts, sortByPriority, sortByDate, matchesWho, isPtOver,
 } from '../src/utils/workbench.js';
 
 const TODAY = '2026-10-28';
@@ -94,4 +94,27 @@ test('date sort lists the latest PT first, like the previous performance list', 
     { date: '2026-09-30', time: '18:00' },
   ]);
   assert.deepEqual(rows.map(r => `${r.date} ${r.time}`), ['2026-09-30 18:00', '2026-09-30 09:00', '2026-09-01 10:00']);
+});
+
+test('today PT becomes 미입력 once its time passes', () => {
+  const now = new Date(2026, 9, 28, 15, 30);
+  const today = '2026-10-28';
+  assert.equal(isPtOver({ date: '2026-10-28', time: '14:00' }, today, now), true);
+  assert.equal(isPtOver({ date: '2026-10-28', time: '16:00' }, today, now), false);
+  assert.equal(isPtOver({ date: '2026-10-28', time: '15시 30분' }, today, now), true);
+  assert.equal(isPtOver({ date: '2026-10-28' }, today, now), true);
+  assert.equal(isPtOver({ date: '2026-10-27', time: '23:00' }, today, now), true);
+  assert.equal(isPtOver({ date: '2026-10-29', time: '09:00' }, today, now), false);
+  const row = buildRow({ id: 'x', date: '2026-10-28', time: '16:00', ptAssignee: 'A' }, today, now);
+  assert.deepEqual([row.isPending, row.isFuture], [false, true]);
+});
+
+test('date sort keeps upcoming PTs below finished ones', () => {
+  const rows = sortByDate([
+    { date: '2026-12-23', time: '18:00', isFuture: true },
+    { date: '2026-10-28', time: '10:00', isFuture: false },
+    { date: '2026-10-30', time: '09:00', isFuture: true },
+    { date: '2026-10-27', time: '14:00', isFuture: false },
+  ]);
+  assert.deepEqual(rows.map(r => r.date), ['2026-10-28', '2026-10-27', '2026-10-30', '2026-12-23']);
 });

@@ -4,7 +4,7 @@ import {
   settlementTargets, staffStats, quarterPts, quarterMeta, formatWon, mmdd, todayKey,
 } from '../utils/workbench.js';
 import AppSidebar from './AppSidebar.jsx';
-import { calculateSettlementAmount, deriveAssigneeResult, getQuarterKey, getQuarterClosingDate } from '../utils/settlement.js';
+import { calculateSettlementAmount, deriveAssigneeResult, getQuarterKey } from '../utils/settlement.js';
 
 // 실적 작업대 (#2a) — 디자인 핸드오프 design_handoff_pour_sales_ops 기준.
 // 데이터 저장·정산 계산은 전부 App 이 넘겨준 콜백과 settlement.js 에서 처리한다.
@@ -59,15 +59,6 @@ const dot = (bg, r = '50%') => ({ width: 7, height: 7, borderRadius: r, backgrou
 const GRID = '24px 48px 1fr 84px 52px 76px 70px 78px';
 const STAFF_GRID = '68px 40px 40px 40px 44px minmax(120px,1fr) 64px 92px 76px';
 
-// 지난 분기 마감(다음 달 30일) 전이면 지난 분기를 먼저 연다 — 마감 처리할 분기가 우선
-function defaultQuarterKey(now = new Date()) {
-  const cur = getQuarterKey(now);
-  const [y, q] = [+cur.slice(0, 4), +cur.slice(-1)];
-  const prev = q === 1 ? `${y - 1}-Q4` : `${y}-Q${q - 1}`;
-  const closing = getQuarterClosingDate(prev);
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return closing && closing >= start ? prev : cur;
-}
 
 function quarterOptions(now = new Date()) {
   const y = now.getFullYear();
@@ -104,8 +95,12 @@ export default function PerformanceWorkbench({
   onRequestFinalConfirm,// (quarterKey) => void
   reportInfo,           // (quarterKey) => string
 }) {
-  const today = todayKey();
-  const [quarterKey, setQuarterKey] = useState(initialQuarterKey || defaultQuarterKey());
+  // 1분마다 다시 계산 — 오늘 PT는 시간이 지나는 순간 "결과 미입력"으로 올라온다
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => { const t = setInterval(() => setNow(new Date()), 60000); return () => clearInterval(t); }, []);
+  const today = todayKey(now);
+  // 기본은 이번 분기 — 오늘 PT가 바로 보이게. 지난 분기 마감 작업은 분기정산 화면에서 그 분기로 넘어온다
+  const [quarterKey, setQuarterKey] = useState(initialQuarterKey || getQuarterKey());
   const [tab, setTab] = useState('sites');
   const [filter, setFilter] = useState('all');
   const [who, setWho] = useState('전체');
@@ -119,7 +114,8 @@ export default function PerformanceWorkbench({
 
   const meta = useMemo(() => quarterMeta(quarterKey), [quarterKey]);
   const qPts = useMemo(() => quarterPts(ptSchedules || [], quarterKey), [ptSchedules, quarterKey]);
-  const allRows = useMemo(() => qPts.map(pt => buildRow(pt, today)), [qPts, today]);
+  const minuteKey = `${today} ${now.getHours()}:${now.getMinutes()}`;
+  const allRows = useMemo(() => qPts.map(pt => buildRow(pt, today, now)), [qPts, minuteKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const searched = useMemo(() => allRows.filter(r => matchesSearch(r, search)), [allRows, search]);
   const byWho = useMemo(() => searched.filter(r => matchesWho(r, who)), [searched, who]);
   const [sortMode, setSortMode] = useState('date');

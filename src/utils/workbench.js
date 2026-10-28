@@ -64,9 +64,22 @@ export function quarterMeta(quarterKey, now = new Date()) {
 }
 
 /**
+ * PT가 끝났는지 — 지난 날짜면 끝, 오늘이면 PT 시간이 지났을 때 끝(시간 없으면 오늘부터 끝으로 본다).
+ *  now 없이 부르면 날짜만 본다 (예전 동작).
+ */
+export function isPtOver(pt, today = todayKey(), now = null) {
+  const date = pt?.date || '';
+  if (!date || date > today) return false;
+  if (date < today || !now) return true;
+  const m = String(pt.time || '').match(/(\d{1,2})\s*[:시]\s*(\d{2})?/);
+  if (!m) return true;
+  return now.getHours() * 60 + now.getMinutes() >= +m[1] * 60 + (m[2] ? +m[2] : 0);
+}
+
+/**
  * PT 1건 → 작업대 행. 담당 기준은 주담당(첫 토큰).
  */
-export function buildRow(pt, today = todayKey()) {
+export function buildRow(pt, today = todayKey(), now = null) {
   const tokens = parseAssignees(pt.ptAssignee);
   const main = tokens[0] || '';
   const sups = tokens.slice(1);
@@ -90,8 +103,8 @@ export function buildRow(pt, today = todayKey()) {
     verify,
     stl,
     amount: calc ? calc.amount : null,
-    isPending: !has && !!date && date <= today,
-    isFuture: !has && !!date && date > today,
+    isPending: !has && isPtOver(pt, today, now),
+    isFuture: !has && !!date && !isPtOver(pt, today, now),
     isReview: stl === SETTLEMENT_STATUS.NEEDS_REVIEW,
     isRequested: stl === SETTLEMENT_STATUS.REQUESTED,
   };
@@ -126,9 +139,11 @@ export function sortByPriority(rows) {
   return [...rows].sort((a, b) => rank(a) - rank(b) || b.date.localeCompare(a.date) || String(b.time).localeCompare(String(a.time)));
 }
 
-// 날짜순: 기존 실적 목록처럼 최근 PT가 위로 차곡차곡
+// 날짜순: 기존 실적 목록처럼 끝난 PT가 최근 것부터 위로 차곡차곡, 아직 안 한 예정 PT는 맨 아래(가까운 날짜 먼저)
 export function sortByDate(rows) {
-  return [...rows].sort((a, b) => b.date.localeCompare(a.date) || String(b.time).localeCompare(String(a.time)));
+  const done = rows.filter(r => !r.isFuture).sort((a, b) => b.date.localeCompare(a.date) || String(b.time).localeCompare(String(a.time)));
+  const future = rows.filter(r => r.isFuture).sort((a, b) => a.date.localeCompare(b.date) || String(a.time).localeCompare(String(b.time)));
+  return [...done, ...future];
 }
 
 export function kpis(rows) {
