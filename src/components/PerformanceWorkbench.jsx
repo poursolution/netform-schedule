@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  buildRow, FILTERS, matchesWho, matchesSearch, sortByPriority, kpis,
+  buildRow, FILTERS, matchesWho, matchesSearch, sortByPriority, sortByDate, kpis,
   settlementTargets, staffStats, quarterPts, quarterMeta, formatWon, mmdd, todayKey,
 } from '../utils/workbench.js';
 import AppSidebar from './AppSidebar.jsx';
@@ -122,7 +122,8 @@ export default function PerformanceWorkbench({
   const allRows = useMemo(() => qPts.map(pt => buildRow(pt, today)), [qPts, today]);
   const searched = useMemo(() => allRows.filter(r => matchesSearch(r, search)), [allRows, search]);
   const byWho = useMemo(() => searched.filter(r => matchesWho(r, who)), [searched, who]);
-  const rows = useMemo(() => sortByPriority(byWho.filter(FILTERS[filter] || FILTERS.all)), [byWho, filter]);
+  const [sortMode, setSortMode] = useState('date');
+  const rows = useMemo(() => (sortMode === 'priority' ? sortByPriority : sortByDate)(byWho.filter(FILTERS[filter] || FILTERS.all)), [byWho, filter, sortMode]);
   const k = useMemo(() => kpis(allRows), [allRows]);
   const targets = useMemo(() => settlementTargets(qPts), [qPts]);
   const staff = useMemo(() => staffStats(qPts, assigneeNames || []), [qPts, assigneeNames]);
@@ -309,7 +310,13 @@ export default function PerformanceWorkbench({
                   <button type="button" aria-pressed={filter === 'review'} onClick={() => setFilter('review')} style={filterBtn(filter === 'review', true)}>검토필요 {filterCount('review')}</button>
                   {filter === 'requested' && <button type="button" aria-pressed="true" onClick={() => setFilter('all')} style={filterBtn(true)}>정산요청 {filterCount('requested')} ✕</button>}
                   <div style={{ flex: 1 }} />
-                  <span style={{ color: C.text4 }}>정렬: 처리 우선</span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: C.text4 }}>
+                    정렬
+                    <select value={sortMode} onChange={e => setSortMode(e.target.value)} style={{ border: 0, background: 'transparent', color: C.text3, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer' }}>
+                      <option value="date">날짜순 (최근 위)</option>
+                      <option value="priority">처리 우선</option>
+                    </select>
+                  </label>
                 </div>
                 {nChecked > 0 && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: C.active, borderBottom: `1px solid ${C.accent}`, fontSize: 12.5 }}>
