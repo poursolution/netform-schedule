@@ -10,7 +10,7 @@ import { calculateSettlementAmount, deriveAssigneeResult, getQuarterKey, getQuar
 // 데이터 저장·정산 계산은 전부 App 이 넘겨준 콜백과 settlement.js 에서 처리한다.
 
 const C = {
-  brand: '#0F4C75', brand2: '#3282B8', dark: '#1B262C', accent: '#BBE1FA', active: '#eef5fb',
+  brand: '#0F4C75', brand2: '#3282B8', accent: '#BBE1FA', active: '#eef5fb',
   line: '#e2e8f0', line2: '#f1f5f9', strong: '#cbd5e1', muted: '#f8fafc',
   text: '#1e293b', text2: '#475569', text3: '#64748b', text4: '#94a3b8',
 };
@@ -180,7 +180,7 @@ export default function PerformanceWorkbench({
   // ===== 스타일 조각 =====
   const tabBtn = key => ({ padding: '10px 2px', border: 0, background: 'transparent', fontSize: 13.5, fontFamily: 'inherit', cursor: 'pointer', fontWeight: tab === key ? 700 : 500, color: tab === key ? C.brand : C.text3, boxShadow: tab === key ? `inset 0 -2px 0 ${C.brand}` : 'none' });
   const queueStyle = (key, on) => ({ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, padding: '14px 16px', minWidth: 0, background: key === 'review' && !on ? '#fffbeb' : '#fff', border: `1px solid ${on ? C.brand : key === 'review' ? '#fde68a' : C.line}`, borderRadius: 12, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', boxShadow: on ? `0 0 0 3px ${C.accent}` : 'none' });
-  const filterBtn = (on, warn) => ({ padding: '5px 10px', borderRadius: 7, border: 0, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer', fontWeight: on ? 700 : 500, background: on ? (warn ? '#fef3c7' : C.text) : 'transparent', color: on ? (warn ? '#b45309' : '#fff') : warn ? '#b45309' : C.text2 });
+  const filterBtn = (on, warn) => ({ padding: '5px 10px', borderRadius: 7, border: 0, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer', fontWeight: on ? 700 : 500, background: on ? (warn ? '#fef3c7' : C.brand) : 'transparent', color: on ? (warn ? '#b45309' : '#fff') : warn ? '#b45309' : C.text2 });
   const whoChip = on => ({ padding: '4px 9px', borderRadius: 999, fontSize: 12, cursor: 'pointer', border: `1px solid ${on ? C.brand : C.line}`, background: on ? C.brand : '#fff', color: on ? '#fff' : C.text2, fontWeight: on ? 700 : 500, fontFamily: 'inherit' });
   const confirmTone = s => s === '최종확정' ? ['#dcfce7', '#15803d'] : s === '1R 확인' ? ['#dbeafe', C.brand] : s === '검증요청' ? ['#fef3c7', '#b45309'] : ['#f1f5f9', C.text3];
 
@@ -274,7 +274,7 @@ export default function PerformanceWorkbench({
               </span>
             </button>
           ))}
-          <button type="button" onClick={() => setTab('stl')} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, padding: '14px 16px', background: C.dark, border: 0, borderRadius: 12, color: '#fff', minWidth: 0, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+          <button type="button" onClick={() => setTab('stl')} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, padding: '14px 16px', background: C.brand, border: 0, borderRadius: 12, color: '#fff', minWidth: 0, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
             <span style={{ fontSize: 12, fontWeight: 600, opacity: .75, whiteSpace: 'nowrap' }}>{qLabel} 정산 예상 · 대상 {targets.count}건</span>
             <span style={{ display: 'flex', alignItems: 'baseline', width: '100%' }}>
               <span style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-.02em', lineHeight: 1.1, whiteSpace: 'nowrap' }}>{targets.amount.toLocaleString('ko-KR')}<span style={{ fontSize: 13, fontWeight: 600, marginLeft: 2, opacity: .8 }}>원</span></span>
