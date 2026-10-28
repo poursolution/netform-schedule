@@ -25,7 +25,6 @@ import {
   matchOurTechnology,
 } from './utils/technologies.js';
 import {
-  EXCEPTION_TYPES,
   EXCEPTION_STATUSES,
   createExceptionRequest,
   approveException,
@@ -108,6 +107,7 @@ import StaffHome from './components/StaffHome.jsx';
 import MobileStaffHome from './components/MobileStaffHome.jsx';
 import MobileSchedule from './components/MobileSchedule.jsx';
 import MobilePerformance from './components/MobilePerformance.jsx';
+import ExceptionQueueModal from './components/ExceptionQueueModal.jsx';
 import ResultRecordModal from './components/ResultRecordModal.jsx';
 import MyPage from './components/MyPage.jsx';
 import ScheduleEditModal from './components/ScheduleEditModal.jsx';
@@ -791,7 +791,6 @@ const SETTLEMENT_BADGE_STYLE = {
       const [showExceptionQueueModal, setShowExceptionQueueModal] = useState(false);
       // 스크린샷 검증 대기 큐 (관리자가 사용자 요청 [승인/거부] 처리)
       const [showScreenshotReviewQueue, setShowScreenshotReviewQueue] = useState(false);
-      const [exceptionReviewNote, setExceptionReviewNote] = useState({}); // { scheduleId_assignee: '검토사유' }
 
       // 공법 선택 모달
       const [showMethodSelectionModal, setShowMethodSelectionModal] = useState(false);
@@ -20886,109 +20885,31 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* 예외 승인 큐 모달 (admin) */}
-          {showExceptionQueueModal && (() => {
-            const pending = listPendingExceptions(ptSchedules);
-            const handleApprove = (item) => {
-              const note = exceptionReviewNote[`${item.scheduleId}_${item.assignee}`] || '';
-              const updated = approveException(
-                { type: item.type, reason: item.reason, requestedBy: item.requestedBy, requestedAt: item.requestedAt, status: 'pending', reviewedBy: '', reviewedAt: '', reviewNote: '' },
-                { reviewedBy: currentUser?.name || 'admin', reviewNote: note }
-              );
-              if (firebaseEnabled && database) {
-                database.ref(`pt/${item.scheduleId}/exceptionRequests/${item.assignee}`).set(updated);
-              }
-              setPtSchedules(prev => prev.map(s => s.id === item.scheduleId
-                ? { ...s, exceptionRequests: { ...(s.exceptionRequests || {}), [item.assignee]: updated } }
-                : s));
-              sendJandiNotification(buildExceptionResultMessage({
-                assignee: item.assignee, siteName: item.siteName, type: item.type,
-                status: 'approved', reviewedBy: currentUser?.name, reviewNote: note,
-              }));
-              setExceptionReviewNote(prev => ({ ...prev, [`${item.scheduleId}_${item.assignee}`]: '' }));
-            };
-            const handleReject = (item) => {
-              const note = exceptionReviewNote[`${item.scheduleId}_${item.assignee}`] || '';
-              if (!note.trim()) { alert('거절 사유를 입력해주세요.'); return; }
-              const updated = rejectException(
-                { type: item.type, reason: item.reason, requestedBy: item.requestedBy, requestedAt: item.requestedAt, status: 'pending', reviewedBy: '', reviewedAt: '', reviewNote: '' },
-                { reviewedBy: currentUser?.name || 'admin', reviewNote: note }
-              );
-              if (firebaseEnabled && database) {
-                database.ref(`pt/${item.scheduleId}/exceptionRequests/${item.assignee}`).set(updated);
-              }
-              setPtSchedules(prev => prev.map(s => s.id === item.scheduleId
-                ? { ...s, exceptionRequests: { ...(s.exceptionRequests || {}), [item.assignee]: updated } }
-                : s));
-              sendJandiNotification(buildExceptionResultMessage({
-                assignee: item.assignee, siteName: item.siteName, type: item.type,
-                status: 'rejected', reviewedBy: currentUser?.name, reviewNote: note,
-              }));
-              setExceptionReviewNote(prev => ({ ...prev, [`${item.scheduleId}_${item.assignee}`]: '' }));
-            };
-            return (
-              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 16 }}>
-                <div style={{ background: 'white', borderRadius: 12, maxWidth: 800, width: '100%', maxHeight: '90vh', overflow: 'auto' }}>
-                  <div style={{ padding: 24, borderBottom: '1px solid #e2e8f0', position: 'sticky', top: 0, background: '#fff', zIndex: 1 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#1e293b' }}>📋 PT 결과 예외 승인 큐</h2>
-                      <button onClick={() => setShowExceptionQueueModal(false)} style={{ background: 'transparent', border: 'none', fontSize: 24, cursor: 'pointer', color: '#64748b' }}>×</button>
-                    </div>
-                    <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>
-                      대기 중 <strong>{pending.length}건</strong> · 승인 시 자동으로 결과가 [승]으로 변경됩니다.
-                    </div>
-                  </div>
-                  <div style={{ padding: 24 }}>
-                    {pending.length === 0 ? (
-                      <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8', fontSize: 14 }}>
-                        대기 중인 예외 신청이 없습니다.
-                      </div>
-                    ) : (
-                      pending.map((item) => {
-                        const meta = EXCEPTION_TYPES[item.type] || { label: item.type, badge: { bg: '#f1f5f9', text: '#475569' } };
-                        const key = `${item.scheduleId}_${item.assignee}`;
-                        return (
-                          <div key={key} style={{ marginBottom: 16, padding: 16, border: '1px solid #e2e8f0', borderRadius: 10, background: '#f8fafc' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-                              <div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                  <span style={{ display: 'inline-block', padding: '2px 8px', background: meta.badge.bg, color: meta.badge.text, borderRadius: 6, fontSize: 11, fontWeight: 700 }}>{meta.label}</span>
-                                  <span style={{ fontSize: 14, fontWeight: 700, color: '#1e293b' }}>{item.siteName || '단지명 미입력'}</span>
-                                  <span style={{ fontSize: 12, color: '#64748b' }}>· {item.assignee} 담당</span>
-                                </div>
-                                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
-                                  PT일: {item.ptDate} · 공고번호: {item.bidNo || '-'} · 신청: {item.requestedAt?.slice(0, 16).replace('T', ' ')}
-                                </div>
-                              </div>
-                            </div>
-                            <div style={{ background: '#fff', padding: 10, borderRadius: 6, marginBottom: 10, fontSize: 12, color: '#475569', lineHeight: 1.6 }}>
-                              <strong style={{ color: '#1e293b' }}>신청 사유</strong><br />
-                              {item.reason || '(사유 미입력)'}
-                            </div>
-                            <textarea
-                              value={exceptionReviewNote[key] || ''}
-                              onChange={e => setExceptionReviewNote(prev => ({ ...prev, [key]: e.target.value }))}
-                              placeholder="검토 사유 (거절 시 필수, 승인 시 선택)"
-                              style={{ width: '100%', padding: 8, border: '1px solid #cbd5e1', borderRadius: 6, fontSize: 12, minHeight: 50, resize: 'vertical', boxSizing: 'border-box', marginBottom: 8 }}
-                            />
-                            <div style={{ display: 'flex', gap: 8 }}>
-                              <button
-                                onClick={() => handleApprove(item)}
-                                style={{ flex: 1, padding: 10, background: '#16a34a', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                              >✅ 승인 (승리 처리)</button>
-                              <button
-                                onClick={() => handleReject(item)}
-                                style={{ flex: 1, padding: 10, background: '#dc2626', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                              >❌ 거절</button>
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
+          {/* PT 결과 예외 승인 큐(#11a) — 한 번에 한 건. 처리 결과는 닫을 때 기존 approve/reject 경로로 저장 + 담당자 잔디 */}
+          {showExceptionQueueModal && (
+            <ExceptionQueueModal
+              items={listPendingExceptions(ptSchedules)}
+              ptSchedules={ptSchedules}
+              onClose={() => setShowExceptionQueueModal(false)}
+              onCommit={(decisions) => {
+                decisions.forEach(({ item, status, note }) => {
+                  const base = { type: item.type, reason: item.reason, requestedBy: item.requestedBy, requestedAt: item.requestedAt, status: 'pending', reviewedBy: '', reviewedAt: '', reviewNote: '' };
+                  const review = { reviewedBy: currentUser?.name || 'admin', reviewNote: note };
+                  const updated = status === 'approved' ? approveException(base, review) : rejectException(base, review);
+                  if (firebaseEnabled && database) {
+                    database.ref(`pt/${item.scheduleId}/exceptionRequests/${item.assignee}`).set(updated);
+                  }
+                  setPtSchedules(prev => prev.map(s => s.id === item.scheduleId
+                    ? { ...s, exceptionRequests: { ...(s.exceptionRequests || {}), [item.assignee]: updated } }
+                    : s));
+                  sendJandiNotification(buildExceptionResultMessage({
+                    assignee: item.assignee, siteName: item.siteName, type: item.type,
+                    status, reviewedBy: currentUser?.name, reviewNote: note,
+                  }));
+                });
+              }}
+            />
+          )}
 
           {/* K-APT Worker URL 설정 모달 */}
           {showKaptModal && (
