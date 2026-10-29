@@ -105,6 +105,7 @@ import PerformanceWorkbench from './components/PerformanceWorkbench.jsx';
 import ScheduleWorkbench from './components/ScheduleWorkbench.jsx';
 import MainDashboard from './components/MainDashboard.jsx';
 import ShellBehaviors from './components/ShellBehaviors.jsx';
+import MobileTabBar from './components/MobileTabBar.jsx';
 import StaffHome from './components/StaffHome.jsx';
 import MobileStaffHome from './components/MobileStaffHome.jsx';
 import MobileSchedule from './components/MobileSchedule.jsx';
@@ -6456,7 +6457,7 @@ const SETTLEMENT_BADGE_STYLE = {
         const schedule = { key: 'schedule', label: '일정', icon: 'calendar', active: active === 'schedule', onClick: () => { reset(); updatePageTitle('일정'); } };
         if (hasFullDataViewAccess(currentUser)) {
           return [
-            { key: 'main', label: '메인', icon: 'home', onClick: () => { reset(); setShowDashboard(true); updatePageTitle('메인'); } },
+            { key: 'main', label: '메인', icon: 'home', active: active === 'main', onClick: () => { reset(); setShowDashboard(true); updatePageTitle('메인'); } },
             schedule, add,
             { key: 'perf', label: '실적', icon: 'chart', active: active === 'perf', onClick: () => { reset(); setShowPerformance(true); setSettlementFilter('all'); updatePageTitle('실적'); } },
             { key: 'settle', label: '정산', icon: 'won', onClick: openSettlement },
@@ -6466,10 +6467,10 @@ const SETTLEMENT_BADGE_STYLE = {
         const openMy = (legacy) => { reset(); setUseLegacyStaffHome(legacy); setMyPageUser(me); setShowMyPage(true); };
         const badge = todoItems(ptSchedules, me, todayStr, new Date()).filter(t => !t.sent).length;
         return [
-          { key: 'home', label: '홈', icon: 'home', badge, onClick: () => { openMy(false); updatePageTitle('홈'); } },
+          { key: 'home', label: '홈', icon: 'home', badge, active: active === 'home', onClick: () => { openMy(false); updatePageTitle('홈'); } },
           schedule, add,
           { key: 'settle', label: '정산', icon: 'won', onClick: () => openMy(true) },
-          { key: 'me', label: '내정보', icon: 'me', onClick: () => openMy(true) },
+          { key: 'me', label: '내정보', icon: 'me', active: active === 'me', onClick: () => openMy(true) },
         ];
       };
       const staffSidebarProps = () => {
@@ -19844,25 +19845,17 @@ tr.suppressed td.fname{color:#64748b;}
             </button>
           )}
 
-          {/* Bottom Navigation — 모바일 앱 느낌 (상단 nav 유지, 추가 접근 경로) */}
+          {/* 하단 탭 — 기존 화면에서도 새 모바일 화면(일정·실적)과 같은 탭(mobileScheduleTabs)·같은 순서 */}
           {isMobile && isLoggedIn && !showMobileStaffHome && !showMobileSchedule && !showMobilePerformance
             && !(showMobileScheduleSheet && (showModal || (showEditModal && editingSchedule))) && (() => {
-            const navItems = [
-              { key: 'home', label: '홈', icon: 'home', active: showDashboard, onClick: () => { setShowDashboard(true); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); } },
-              { key: 'perf', label: '실적', icon: 'performance', active: showPerformance, onClick: () => { setShowDashboard(false); setShowPerformance(true); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); setSettlementFilter('all'); } },
-              { key: 'add', label: '', icon: 'plus', primary: true, active: false, onClick: () => { setAddTypeModalDate(null); setShowAddTypeModal(true); } },
-              { key: 'schedule', label: '일정', icon: 'calendar', active: !showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage, onClick: () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); updatePageTitle('일정'); } },
-              { key: 'my', label: '마이', icon: 'user', active: showMyPage, onClick: () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(true); setMyPageUser(currentUser?.name || null); } },
-            ];
+            const full = hasFullDataViewAccess(currentUser);
+            const active = showDashboard ? (full ? 'main' : 'home')
+              : showPerformance ? 'perf'
+              : showMyPage ? (full ? null : 'me')
+              : (!showMeetingView && !showSalesView ? 'schedule' : null);
             return (
-              <div className="mobile-app-nav">
-                {navItems.map(it => (
-                  <button key={it.key} onClick={it.onClick} aria-label={it.label || '일정 추가'}
-                    className={`mobile-app-nav__item${it.active ? ' is-active' : ''}${it.primary ? ' is-primary' : ''}`}>
-                    <span className="mobile-app-nav__icon"><AppIcon name={it.icon} size={it.primary ? 25 : 21} strokeWidth={it.primary ? 2.1 : 1.75} /></span>
-                    {it.label && <span>{it.label}</span>}
-                  </button>
-                ))}
+              <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 9998 }}>
+                <MobileTabBar tabs={mobileScheduleTabs(active)} />
               </div>
             );
           })()}
