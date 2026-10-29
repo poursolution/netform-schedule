@@ -506,11 +506,12 @@ function SiteRow({ r, selected, checked, today, onSelect, onCheck }) {
       <input type="checkbox" aria-label={`${pt.siteName || ''} 선택`} checked={checked} onClick={e => e.stopPropagation()} onChange={onCheck} style={{ margin: 0, width: 14, height: 14 }} />
       <span style={{ fontSize: 12, color: C.text3 }}>
         {mmdd(r.date)}
-        {r.carry && <span title="지난 분기 PT — 아직 확인이 안 끝남" style={{ display: 'block', width: 'fit-content', marginTop: 2, padding: '0 4px', borderRadius: 4, background: '#fef3c7', color: '#b45309', fontSize: 10, fontWeight: 700 }}>{quarterLabelOf(r.date)}</span>}
+        {r.carry && <span title="지난 분기 PT — 아직 확인이 안 끝남" style={{ display: 'block', width: 'fit-content', marginTop: 2, padding: '0 4px', borderRadius: 4, background: '#fef3c7', color: '#b45309', fontSize: 11, fontWeight: 700 }}>{quarterLabelOf(r.date)}</span>}
       </span>
       <div style={{ minWidth: 0, paddingRight: 10 }}>
         <button type="button" onClick={onSelect} style={{ display: 'block', maxWidth: '100%', padding: 0, border: 0, background: 'transparent', fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer', color: C.text, fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pt.siteName || '(현장명 없음)'}</button>
-        <div style={{ fontSize: 11.5, color: C.text4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{[pt.workType, methods.length ? methods.join(' · ') : '공법 미입력'].filter(Boolean).join(' · ')}</div>
+        {/* 공법은 입력된 것만 — 거의 모든 행에 반복되던 "공법 미입력"은 뺀다(상세 패널에서 입력) */}
+        {(pt.workType || methods.length > 0) && <div style={{ fontSize: 12, color: C.text3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{[pt.workType, ...methods].filter(Boolean).join(' · ')}</div>}
       </div>
       <span style={{ fontSize: 12.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: 6 }}>{r.main}{r.sups.length ? ` +${r.sups.join(',')}` : ''}</span>
       <span style={{ textAlign: 'center' }}><span style={r.has ? chip(c[0], c[1]) : chip('#f1f5f9', C.text4)}>{r.has ? r.result : r.isFuture ? '예정' : '미입력'}</span></span>
