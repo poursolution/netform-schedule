@@ -163,20 +163,29 @@ export default function PerformanceWorkbench({
 
   // 키보드: ↑↓ 이동, 1~4 결과 입력, / 검색
   const keyState = useRef({});
-  keyState.current = { rows, selected, tab };
+  keyState.current = { rows, selected, tab, picked: !!selectedId && selected?.id === selectedId };
   useEffect(() => {
     const onKey = e => {
       const t = e.target;
       const tag = t && t.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
-      const { rows: rs, selected: sel, tab: tb } = keyState.current;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+      // 결과 입력 창 등 대화상자가 열려 있으면 목록 단축키 무시
+      if (document.querySelector('[role="dialog"], [aria-modal="true"]')) return;
+      const { rows: rs, selected: sel, tab: tb, picked } = keyState.current;
       if (tb !== 'sites') return;
       if (e.key === '/') { e.preventDefault(); searchRef.current?.focus(); return; }
+      // 아직 아무 행도 안 골랐으면 ↑↓ 첫 입력은 첫 행을 고르는 것
+      if (!picked && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && rs[0]) { e.preventDefault(); setSelectedId(rs[0].id); return; }
       const i = rs.findIndex(r => r.id === sel?.id);
       if (e.key === 'ArrowDown' && rs[i + 1]) { e.preventDefault(); setSelectedId(rs[i + 1].id); }
       else if (e.key === 'ArrowUp' && rs[i - 1]) { e.preventDefault(); setSelectedId(rs[i - 1].id); }
       else if (e.key === ' ' && sel) { e.preventDefault(); setChecked(c => ({ ...c, [sel.id]: !c[sel.id] })); }
-      else if (['1', '2', '3', '4'].includes(e.key) && sel) setResult(sel, RESULT_KEYS[+e.key - 1]);
+      else if (['1', '2', '3', '4'].includes(e.key) && sel) {
+        // 직접 고른 행(클릭·↑↓)에만, 이미 같은 결과면 아무것도 안 함 — 키 한 번으로 저장된 결과가 취소되지 않게
+        if (!picked || sel.result === RESULT_KEYS[+e.key - 1]) return;
+        setResult(sel, RESULT_KEYS[+e.key - 1]);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
