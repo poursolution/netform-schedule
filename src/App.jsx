@@ -127,6 +127,8 @@ import { finalConfirmBlockers, todoItems } from './utils/staffHome.js';
 import { buildBriefJandiMessage, briefRecipients, unassignedUpcoming } from './utils/morningBrief.js';
 
 const INSTALL_BANNER_H = 57; // PWA 설치 안내 배너 높이 — 새 모바일 화면(#5a·#5b)은 이만큼 아래에서 시작
+// 등록 후 새 일정 입력값 초기 상태
+const BLANK_NEW_SCHEDULE = { siteName: '', address: '', date: '', time: '', workType: '', participants: '', requester: '', competitor: '', mainCategory: '재도장', status: '확정', ptAssignee: '', ptProduct: '', bidDeadline: '', title: '', location: '', assignee: '', assignees: [], note: '', dateType: 'confirmed', expectedMonth: '', dateNote: '', bidNo: '', announcementMethods: '' };
 
 // 정산 상태 6단계 배지 스타일 (#4 — 실적 카드용)
 const SETTLEMENT_BADGE_STYLE = {
@@ -344,6 +346,9 @@ const SETTLEMENT_BADGE_STYLE = {
       const [useLegacyMobilePerformance, setUseLegacyMobilePerformance] = useState(false); // 모바일 관리자 실적(#5c) 전환 기간 — 이전 화면
       const [useLegacyMobileScheduleSheet, setUseLegacyMobileScheduleSheet] = useState(false); // 모바일 일정 추가·수정 시트(#7b) 전환 기간 — 이전 입력 화면
       const showMobileScheduleSheet = isMobile && !useLegacyMobileScheduleSheet;
+      // 데스크톱 일정 추가(#14b) 전환 기간 — "이전 입력 화면"을 고르면 이번 등록만 기존 모달
+      const [useLegacyDesktopAdd, setUseLegacyDesktopAdd] = useState(false);
+      useEffect(() => { if (!showModal) setUseLegacyDesktopAdd(false); }, [showModal]);
       const [perfInit, setPerfInit] = useState({}); // 메인에서 실적 작업대로 넘어갈 때 첫 필터 { filter, who }
       const [scheduleInit, setScheduleInit] = useState({}); // 메인에서 일정으로 넘어갈 때 첫 상태 { view, listFilter, search }
       const [morningBriefConfig, setMorningBriefConfig] = useState({}); // config/morningBrief { autoSend, days }
@@ -7436,10 +7441,12 @@ const SETTLEMENT_BADGE_STYLE = {
       const upcomingPtSchedules = filteredPtByAssignee.filter(s => s.dateType === 'confirmed' && s.date >= todayStr).sort((a, b) => a.date.localeCompare(b.date));
       const pendingPtSchedules = filteredPtByAssignee.filter(s => s.dateType !== 'confirmed');
 
-      const handleAddSchedule = () => {
-        const data = { ...newSchedule, result: null };
+      // 새 일정 저장 — 등록 모달·날짜 팝오버(#14a 개인·휴가 바로 저장) 공통. 만든 항목 id 를 돌려준다
+      const saveNewSchedule = (modalType, fields) => {
+        const data = { ...fields, result: null };
+        let createdId = null;
         if (modalType === 'pt') {
-          const newItem = { id: `pt_${Date.now()}`, type: 'pt', ...data };
+          const newItem = { id: `pt_${Date.now()}`, type: 'pt', ...data }; createdId = newItem.id;
           const updated = [...ptSchedules, newItem];
           setPtSchedules(updated);
           if (firebaseEnabled && database) {
@@ -7448,7 +7455,7 @@ const SETTLEMENT_BADGE_STYLE = {
             saveToLocal('pt_schedules', updated);
           }
         } else if (modalType === 'briefing') {
-          const newItem = { id: `br_${Date.now()}`, type: 'briefing', ...data };
+          const newItem = { id: `br_${Date.now()}`, type: 'briefing', ...data }; createdId = newItem.id;
           const updated = [...briefingSchedules, newItem];
           setBriefingSchedules(updated);
           if (firebaseEnabled && database) {
@@ -7457,7 +7464,7 @@ const SETTLEMENT_BADGE_STYLE = {
             saveToLocal('briefing_schedules', updated);
           }
         } else if (modalType === 'seminar') {
-          const newItem = { id: `sem_${Date.now()}`, type: 'seminar', ...data };
+          const newItem = { id: `sem_${Date.now()}`, type: 'seminar', ...data }; createdId = newItem.id;
           const updated = [...seminarSchedules, newItem];
           setSeminarSchedules(updated);
           if (firebaseEnabled && database) {
@@ -7466,7 +7473,7 @@ const SETTLEMENT_BADGE_STYLE = {
             saveToLocal('seminar_schedules', updated);
           }
         } else if (modalType === 'asq') {
-          const newItem = { id: `asq_${Date.now()}`, type: 'asq', ...data };
+          const newItem = { id: `asq_${Date.now()}`, type: 'asq', ...data }; createdId = newItem.id;
           const updated = [...asqSchedules, newItem];
           setAsqSchedules(updated);
           if (firebaseEnabled && database) {
@@ -7475,7 +7482,7 @@ const SETTLEMENT_BADGE_STYLE = {
             saveToLocal('asq_schedules', updated);
           }
         } else if (modalType === 'vacation') {
-          const newItem = { id: `vac_${Date.now()}`, type: 'vacation', ...data };
+          const newItem = { id: `vac_${Date.now()}`, type: 'vacation', ...data }; createdId = newItem.id;
           const updated = [...vacationSchedules, newItem];
           setVacationSchedules(updated);
           if (firebaseEnabled && database) {
@@ -7484,7 +7491,7 @@ const SETTLEMENT_BADGE_STYLE = {
             saveToLocal('vacation_schedules', updated);
           }
         } else {
-          const newItem = { id: `per_${Date.now()}`, type: 'personal', ...data };
+          const newItem = { id: `per_${Date.now()}`, type: 'personal', ...data }; createdId = newItem.id;
           const updated = [...personalSchedules, newItem];
           setPersonalSchedules(updated);
           if (firebaseEnabled && database) {
@@ -7505,8 +7512,29 @@ const SETTLEMENT_BADGE_STYLE = {
           }
         }
         setLastSaved(new Date().toLocaleTimeString());
+        return createdId;
+      };
+      const handleAddSchedule = () => {
+        saveNewSchedule(modalType, newSchedule);
         setShowModal(false);
-        setNewSchedule({ siteName: '', address: '', date: '', time: '', workType: '', participants: '', requester: '', competitor: '', mainCategory: '재도장', status: '확정', ptAssignee: '', ptProduct: '', bidDeadline: '', title: '', location: '', assignee: '', assignees: [], note: '', dateType: 'confirmed', expectedMonth: '', dateNote: '', bidNo: '', announcementMethods: '' });
+        setNewSchedule({ ...BLANK_NEW_SCHEDULE });
+      };
+      // #14a 날짜 팝오버 — 개인·휴가는 팝오버 안에서 바로 저장, "되돌리기"는 방금 만든 항목만 지운다
+      const addQuickSchedule = ({ type, date, title, assignees, time }) =>
+        saveNewSchedule(type, { ...BLANK_NEW_SCHEDULE, date, title, assignees, time });
+      const undoQuickSchedule = async (type, id) => {
+        const [setter, path] = type === 'vacation' ? [setVacationSchedules, 'vacation'] : [setPersonalSchedules, 'personal'];
+        setter(prev => prev.filter(s => s.id !== id));
+        if (firebaseEnabled && database) await database.ref(`${path}/${id}`).remove();
+        setLastSaved(new Date().toLocaleTimeString());
+      };
+      // 팝오버에서 종류를 고르면 해당 입력 창 — 기존 "일정 유형 선택" 모달 버튼과 같은 경로
+      const openAddKind = (date, kind) => {
+        if (kind === 'sales') { setNewSchedule(prev => ({ ...prev, date })); setShowSalesModal(true); return; }
+        if (kind === 'meeting') { setNewMeeting(prev => ({ ...prev, date })); setShowMeetingModal(true); return; }
+        setModalType(kind);
+        setNewSchedule(prev => ({ ...prev, date, dateType: 'confirmed' }));
+        setShowModal(true);
       };
 
       // CRM 엑셀 파일 업로드 처리
@@ -9245,6 +9273,10 @@ const SETTLEMENT_BADGE_STYLE = {
                 initialListFilter={scheduleInit.listFilter || 'upcoming'}
                 initialSearch={scheduleInit.search || ''}
                 onAdd={(dateStr) => { setAddTypeModalDate(dateStr || null); setShowAddTypeModal(true); }}
+                onAddKind={openAddKind}
+                onQuickAdd={addQuickSchedule}
+                onUndoQuick={undoQuickSchedule}
+                me={currentUser?.name}
                 onOpen={handleEditClick}
                 onOpenTeam={() => window.open('https://peaceful-chimera-1dced9.netlify.app/', '_blank')}
                 briefDayCount={Math.min(7, Math.max(1, +morningBriefConfig.days || 2))}
@@ -15968,7 +16000,24 @@ tr.suppressed td.fname{color:#64748b;}
               judgeResult={judgeResult}
             />
           )}
-          {showModal && !showMobileScheduleSheet && (
+          {/* 일정 추가(#14b) — 데스크톱 모달. 날짜·종류는 팝오버에서 채워 오고, 저장은 같은 handleAddSchedule */}
+          {showModal && !isMobile && !useLegacyDesktopAdd && (
+            <ScheduleEditModal
+              mode="add"
+              schedule={{ ...newSchedule, type: modalType }}
+              onChange={({ type, ...rest }) => { if (type !== modalType) setModalType(type); setNewSchedule(rest); }}
+              onSave={handleAddSchedule}
+              onClose={() => setShowModal(false)}
+              onUpload={(e) => handleFileUpload(e, false)}
+              onLegacy={() => setUseLegacyDesktopAdd(true)}
+              assigneeList={assigneeList}
+              briefingAssigneeList={briefingAssigneeList}
+              checkAgreement={checkPourAgreement}
+              judgeResult={judgeResult}
+              workTypeOptions={allWorkTypes}
+            />
+          )}
+          {showModal && !showMobileScheduleSheet && (isMobile || useLegacyDesktopAdd) && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowModal(false)}>
               <div style={{ background: 'white', borderRadius: '12px', padding: '16px', width: '480px', maxWidth: '90%' }} onClick={e => e.stopPropagation()}>
                 <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', flexWrap: 'wrap' }}>

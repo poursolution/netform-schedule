@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import AppSidebar from './AppSidebar.jsx';
+import DatePopover from './DatePopover.jsx';
 import {
   TYPE_ORDER, typeMeta, assigneesOf, isUnassignedItem, isUnassignedPT, titleOf, subOf, shortTime, matchesSearch, matchesWorkType,
   matchesWho, monthCells, sortDay, LIST_FILTERS, LIST_TITLES,
@@ -40,6 +41,10 @@ export default function ScheduleWorkbench({
   initialSearch = '',
   sidebar,              // AppSidebar props
   onAdd,                // (dateStr|null) => void
+  onAddKind,            // (dateStr, kind) => void — #14a 팝오버에서 종류를 고르면 입력 창
+  onQuickAdd,           // ({ type, date, title, assignees, time }) => Promise<id> — 개인·휴가 바로 저장
+  onUndoQuick,          // (type, id) => Promise
+  me,                   // 로그인 이름 — 간단 폼 담당자 기본값
   onOpen,               // (schedule) => void — 기존 수정 창
   onOpenTeam,           // 팀 캘린더(외부 링크)
   briefDayCount = 2,
@@ -63,6 +68,7 @@ export default function ScheduleWorkbench({
   const briefRef = useRef(null);
   const gridRef = useRef(null);
   const [gridH, setGridH] = useState(0);
+  const [pop, setPop] = useState(null); // { date, rect } — #14a 날짜 팝오버
 
   const y = month.getFullYear(), m0 = month.getMonth();
   const monthKey = `${y}-${String(m0 + 1).padStart(2, '0')}`;
@@ -100,6 +106,13 @@ export default function ScheduleWorkbench({
   const shiftMonth = k => setMonth(new Date(y, m0 + k, 1));
   const goToday = () => { const d = new Date(todayStr + 'T00:00:00'); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); setSelDate(todayStr); };
   const pickItem = s => { setSelDate(s.date); onOpen && onOpen(s); };
+  // 날짜 칸에 붙는 팝오버 — 칸이 화면에 없으면(다른 달·리스트 보기) 기존 추가 경로
+  const openAdd = (ds, el) => {
+    const cell = el || (ds && gridRef.current?.querySelector(`[data-date="${ds}"]`));
+    if (!onAddKind || !cell) { onAdd && onAdd(ds || null); return; }
+    setSelDate(ds);
+    setPop({ date: ds, rect: cell.getBoundingClientRect() });
+  };
 
   // ===== #6c 리스트 =====
   const ptBase = useMemo(() => (ptSchedules || []).filter(s => s && s.date && (!s.dateType || s.dateType === 'confirmed')
@@ -172,7 +185,7 @@ export default function ScheduleWorkbench({
             <option value="all">공종 전체</option>
             {(workTypeOptions || []).map(n => <option key={n} value={n}>{n}</option>)}
           </select>
-          {onAdd && <button type="button" onClick={() => onAdd(view === 'month' ? selDate : null)} style={primary()}>+ 일정 추가</button>}
+          {onAdd && <button type="button" onClick={() => (view === 'month' ? openAdd(selDate) : onAdd(null))} style={primary()}>+ 일정 추가</button>}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 16, padding: '16px 24px 24px', flex: 1, minHeight: 0, alignItems: 'start' }}>
@@ -208,11 +221,11 @@ export default function ScheduleWorkbench({
                     if (!ds) return <div key={`b${i}`} style={{ minHeight: 104, background: C.blank }} />;
                     const items = byDate[ds] || [];
                     const shown = items.length <= fitAll ? items.length : fitMore;
-                    const dow = i % 7, isToday = ds === todayStr, isSel = ds === selDate;
+                    const dow = i % 7, isToday = ds === todayStr, isSel = ds === selDate, isPop = pop?.date === ds;
                     const hol = holidayName ? holidayName(ds) : null;
                     const red = dow === 0 || !!hol;
                     return (
-                      <div key={ds} onClick={() => setSelDate(ds)} style={{ minHeight: 104, padding: '6px 6px 4px', display: 'flex', flexDirection: 'column', gap: 3, cursor: 'pointer', background: isSel ? C.active : '#fff', boxShadow: isSel ? `inset 0 0 0 1.5px ${C.brand}` : 'none', minWidth: 0 }}>
+                      <div key={ds} data-date={ds} title={items.length ? undefined : '눌러서 일정 추가'} onClick={e => { setSelDate(ds); if (!items.length) openAdd(ds, e.currentTarget); }} style={{ minHeight: 104, padding: '6px 6px 4px', display: 'flex', flexDirection: 'column', gap: 3, cursor: 'pointer', background: isSel ? C.active : '#fff', boxShadow: isPop ? `inset 0 0 0 2px ${C.brand}` : isSel ? `inset 0 0 0 1.5px ${C.brand}` : 'none', minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2, minWidth: 0 }}>
                           <button type="button" aria-label={`${+ds.slice(5, 7)}월 ${+ds.slice(8)}일${hol ? ` ${hol}` : ''} 선택`} aria-pressed={isSel} onClick={e => { e.stopPropagation(); setSelDate(ds); }} style={{ width: 22, height: 22, borderRadius: 11, display: 'grid', placeItems: 'center', border: 0, padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: isToday ? 800 : 600, color: isToday ? '#fff' : red ? '#b91c1c' : dow === 6 ? C.brand : C.text2, background: isToday ? C.brand : 'transparent', flex: 'none' }}>{+ds.slice(8)}</button>
                           {hol && <span style={{ fontSize: 10.5, color: '#b91c1c', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{hol}</span>}
@@ -246,7 +259,7 @@ export default function ScheduleWorkbench({
                   <div style={{ display: 'flex', alignItems: 'center', padding: '14px 16px', borderBottom: `1px solid ${C.line2}` }}>
                     <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>{selD.getMonth() + 1}월 {selD.getDate()}일 ({KDAY[selD.getDay()]})</h2>
                     <span style={{ marginLeft: 6, fontSize: 12, color: C.text3 }}>{dayItems.length}건</span>
-                    {onAdd && <button type="button" onClick={() => onAdd(selDate)} style={{ ...outline(), marginLeft: 'auto' }}>+ 이 날에 추가</button>}
+                    {onAdd && <button type="button" onClick={() => openAdd(selDate)} style={{ ...outline(), marginLeft: 'auto' }}>+ 이 날에 추가</button>}
                   </div>
                   {holidayName && holidayName(selDate) && <div style={{ padding: '6px 16px', fontSize: 12, color: '#b91c1c', borderBottom: `1px solid ${C.muted}` }}>{holidayName(selDate)}</div>}
                   {dayItems.length === 0 && <div style={{ padding: 28, textAlign: 'center', color: C.text4, fontSize: 13 }}>선택한 날짜에 일정이 없습니다</div>}
@@ -439,6 +452,19 @@ export default function ScheduleWorkbench({
           )}
         </div>
       </main>
+      {pop && (
+        <DatePopover
+          key={pop.date}
+          date={pop.date}
+          anchor={pop.rect}
+          people={roster || []}
+          me={me}
+          onClose={() => setPop(null)}
+          onPickKind={kind => { const d = pop.date; setPop(null); onAddKind(d, kind); }}
+          onQuickSave={({ type, title, assignees, time }) => onQuickAdd({ type, date: pop.date, title, assignees, time })}
+          onUndo={onUndoQuick}
+        />
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import MethodChips from './MethodChips.jsx';
+import { dateTitle } from './DatePopover.jsx';
 
 // 일정 수정 모달 (#7a) — 기존 수정 모달과 같은 필드를 "언제 → 어디서 → 누가 → 메모" 순서로.
 // 저장·삭제·첨부 업로드는 기존 handleSaveEdit / handleDelete / handleFileUpload 를 그대로 쓴다.
@@ -11,7 +12,10 @@ const C = {
 // 회의는 별도 회의 모달에서 다루고 저장 경로도 달라 여기 칩에서 뺀다
 const KINDS = [['pt', 'PT'], ['briefing', '현설'], ['seminar', '세미나'], ['asq', '아.스.퀘'], ['personal', '개인'], ['vacation', '휴가']];
 const WHEN = [['confirmed', '날짜 확정'], ['monthOnly', '월만 정해짐'], ['pending', '미정']];
-const TIMES = Array.from({ length: 28 }, (_, i) => `${String(Math.floor(i / 2) + 8).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
+// 시작·종료는 셀렉트 하나(#14b) — 정시 07~20시, 저장돼 있던 다른 값(09:30 등)은 그대로 옵션에 남긴다
+const HOURS = Array.from({ length: 14 }, (_, i) => `${String(i + 7).padStart(2, '0')}:00`);
+const timeOptions = v => (v && !HOURS.includes(v) ? [...HOURS, v].sort() : HOURS);
+const KIND_LABEL = Object.fromEntries(KINDS);
 
 const input = { height: 42, width: '100%', boxSizing: 'border-box', padding: '0 12px', border: `1px solid ${C.line}`, borderRadius: 9, fontSize: 13.5, fontFamily: 'inherit', background: '#fff', color: C.ink };
 const mobileInput = { ...input, height: 48, borderRadius: 10, fontSize: 15 };
@@ -32,7 +36,7 @@ function Section({ n, title, optional, children }) {
 
 export default function ScheduleEditModal({
   schedule, onChange, onSave, onDelete, onClose, onUpload, onBriefingImage,
-  assigneeList, briefingAssigneeList, checkAgreement, judgeResult,
+  assigneeList, briefingAssigneeList, checkAgreement, judgeResult, workTypeOptions,
   mode = 'edit',   // 'edit' | 'add' — 추가면 제목 "일정 추가", 삭제 없음
   mobile = false,  // #7b 모바일 전체화면 시트
   onLegacy,        // 전환 기간 — 이전 입력 화면
@@ -61,6 +65,13 @@ export default function ScheduleEditModal({
   const agreement = s.requester && checkAgreement ? checkAgreement(s.requester) : null;
 
   const noAssignee = (hasSite) && who.length === 0;
+  // #14b 추가 모드 필수: 현장명(현장 있는 종류) · 담당자(PT·현설) — 비면 등록 비활성
+  const isAdd = mode === 'add';
+  // PT는 날짜가 확정일 때만 담당자 필수 — 날짜가 '미정'이면 담당자도 나중에
+  const needWho = (s.type === 'pt' && (s.dateType || 'confirmed') === 'confirmed') || s.type === 'briefing';
+  const missing = isAdd ? [hasSite && !String(s.siteName || '').trim() && '현장명', needWho && who.length === 0 && '담당자'].filter(Boolean) : [];
+  const canSave = missing.length === 0;
+  const req = <span style={{ color: '#b91c1c' }}> *</span>;
   const chip = on => ({ height: 36, padding: '0 14px', borderRadius: 999, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', fontWeight: on ? 700 : 500, border: `1px solid ${on ? C.brand : C.line}`, background: on ? C.brand : '#fff', color: on ? '#fff' : C.text2 });
 
   const font = '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif';
@@ -88,7 +99,7 @@ export default function ScheduleEditModal({
             <div style={{ display: 'flex', alignItems: 'center' }}>
               <button type="button" onClick={onClose} style={{ ...textBtn, color: C.text2 }}>취소</button>
               <h2 id="sem-title" style={{ flex: 1, margin: 0, textAlign: 'center', fontSize: 17, fontWeight: 800 }}>{title}</h2>
-              <button type="button" onClick={onSave} style={{ ...textBtn, color: C.brand, fontWeight: 800 }}>저장</button>
+              <button type="button" disabled={!canSave} onClick={onSave} style={{ ...textBtn, color: canSave ? C.brand : C.strong, fontWeight: 800 }}>저장</button>
             </div>
             <div style={{ padding: '0 4px' }}>{kindChips}</div>
           </div>
@@ -96,6 +107,7 @@ export default function ScheduleEditModal({
           <div style={{ padding: '18px 22px 14px', borderBottom: `1px solid ${C.line2}` }}>
             <div style={{ display: 'flex', alignItems: 'center' }}>
               <h2 id="sem-title" style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>{title}</h2>
+              {isAdd && s.date && dateFixed && <span style={{ marginLeft: 10, fontSize: 13, color: C.text3 }}>{dateTitle(s.date)}</span>}
               <div style={{ flex: 1 }} />
               {briefingImageBtn}
               <button type="button" aria-label="닫기" onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: 0, background: 'transparent', fontSize: 18, color: C.text3, cursor: 'pointer' }}>✕</button>
@@ -106,7 +118,7 @@ export default function ScheduleEditModal({
 
         {/* 본문 */}
         <div style={{ padding: mobile ? '4px 16px 16px' : '4px 22px 8px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
-          {noAssignee && (
+          {noAssignee && !(isAdd && needWho) && (
             <div role="alert" style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 14, padding: '12px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, fontSize: 13, color: '#b91c1c' }}>
               <span aria-hidden="true" style={{ width: 20, height: 20, borderRadius: '50%', background: '#b91c1c', color: '#fff', fontSize: 12, fontWeight: 800, display: 'grid', placeItems: 'center', flex: 'none' }}>!</span>
               <span>담당자가 없어요. 이대로 저장하면 미배정으로 남고 아침 브리핑에 경고로 나갑니다.</span>
@@ -126,12 +138,17 @@ export default function ScheduleEditModal({
               <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr 1fr' : '1.2fr 1fr 1fr', gap: 8 }}>
                 <label style={{ ...fieldLabel, gridColumn: mobile ? '1 / -1' : undefined }}>날짜<input type="date" value={s.date || ''} onChange={e => set({ date: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>
                 <label style={fieldLabel}>시작
-                  <input list="sem-times" value={s.time || ''} onChange={e => set({ time: e.target.value })} placeholder="00:00" style={{ ...field, marginTop: 6 }} />
+                  <select value={s.time || ''} onChange={e => set({ time: e.target.value })} style={{ ...field, marginTop: 6, padding: '0 10px' }}>
+                    <option value="">시간 선택</option>
+                    {timeOptions(s.time).map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
                 </label>
                 <label style={fieldLabel}>종료 (선택)
-                  <input list="sem-times" value={s.endTime || ''} onChange={e => set({ endTime: e.target.value })} placeholder="00:00" style={{ ...field, marginTop: 6 }} />
+                  <select value={s.endTime || ''} onChange={e => set({ endTime: e.target.value })} style={{ ...field, marginTop: 6, padding: '0 10px' }}>
+                    <option value="">—</option>
+                    {timeOptions(s.endTime).map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
                 </label>
-                <datalist id="sem-times">{TIMES.map(t => <option key={t} value={t} />)}</datalist>
               </div>
             )}
             {showWhen && s.dateType === 'monthOnly' && (
@@ -146,10 +163,11 @@ export default function ScheduleEditModal({
             {isTitled && <label style={fieldLabel}>일정명<input value={s.title || ''} onChange={e => set({ title: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>}
             {hasSite && (
               <>
-                <label style={fieldLabel}>현장명<input value={s.siteName || ''} onChange={e => set({ siteName: e.target.value })} style={{ ...field, marginTop: 6, fontWeight: 600 }} /></label>
+                <label style={fieldLabel}><span>현장명{isAdd && req}</span><input value={s.siteName || ''} onChange={e => set({ siteName: e.target.value })} placeholder="아파트명" style={{ ...field, marginTop: 6, fontWeight: 600 }} /></label>
                 <label style={fieldLabel}>주소<input value={s.address || ''} onChange={e => set({ address: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>
                 <div style={{ display: 'grid', gridTemplateColumns: isPtLike ? '1fr 1fr' : '1fr', gap: 8 }}>
-                  <label style={fieldLabel}>공종<input value={s.workType || ''} onChange={e => set({ workType: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>
+                  <label style={fieldLabel}>공종<input list={workTypeOptions?.length ? 'sem-worktypes' : undefined} value={s.workType || ''} onChange={e => set({ workType: e.target.value })} placeholder="선택" style={{ ...field, marginTop: 6 }} /></label>
+                  {workTypeOptions?.length > 0 && <datalist id="sem-worktypes">{workTypeOptions.map(w => <option key={w} value={w} />)}</datalist>}
                   {isPtLike && <label style={fieldLabel}>참여인원<input value={s.participants || ''} onChange={e => set({ participants: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>}
                 </div>
               </>
@@ -157,7 +175,7 @@ export default function ScheduleEditModal({
             {(s.type === 'personal' || s.type === 'seminar') && <label style={fieldLabel}>장소<input value={s.location || ''} onChange={e => set({ location: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>}
             {s.type === 'pt' && (
               <div>
-                <span style={fieldLabel}>공고문 공법</span>
+                <span style={fieldLabel}>공고문 공법{isAdd && <span style={{ fontWeight: 400, color: C.text4 }}> · 아직 모르면 비워두세요 (결과 입력 때 다시 물어요)</span>}</span>
                 <MethodChips value={s.announcementMethods || ''} onChange={v => set({ announcementMethods: v })} />
                 <div style={{ fontSize: 11.5, color: C.text4, marginTop: 6 }}>
                   우리 공법만 있으면 승, 섞이면 무로 자동 판정
@@ -173,7 +191,7 @@ export default function ScheduleEditModal({
             )}
           </Section>
 
-          <Section n="3" title="누가">
+          <Section n="3" title={isAdd && needWho ? <span>누가{req}</span> : '누가'}>
             <div>
               <div role="group" aria-label="담당자" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {[...roster, ...who.filter(n => !roster.includes(n))].map(name => {
@@ -189,9 +207,15 @@ export default function ScheduleEditModal({
                   <input aria-label="기타 담당자 입력" value={customName} onChange={e => setCustomName(e.target.value)} placeholder="+ 기타" style={{ height: 34, width: 96, padding: '0 12px', borderRadius: 999, border: `1px dashed ${C.strong}`, fontSize: 12.5, fontFamily: 'inherit' }} />
                 </form>
               </div>
-              <div style={{ fontSize: 12.5, marginTop: 8, color: who.length ? C.brand : '#b91c1c', fontWeight: who.length ? 600 : 500 }}>
+              {isAdd && needWho && who.length === 0 && (
+                <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, padding: '9px 12px', borderRadius: 9, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 12.5 }}>
+                  <span aria-hidden="true" style={{ width: 18, height: 18, borderRadius: '50%', background: '#b91c1c', color: '#fff', fontWeight: 800, fontSize: 11, display: 'grid', placeItems: 'center', flex: 'none' }}>!</span>
+                  <span><b>{KIND_LABEL[s.type]}는 담당자 없이 등록할 수 없어요.</b>{s.type === 'pt' ? " 아직 미정이면 1단계에서 '미정' 일정으로 저장하세요." : ''}</span>
+                </div>
+              )}
+              {!(isAdd && needWho && who.length === 0) && <div style={{ fontSize: 12.5, marginTop: 8, color: who.length ? C.brand : '#b91c1c', fontWeight: who.length ? 600 : 500 }}>
                 {who.length === 0 ? '아직 아무도 선택되지 않았어요' : hasSite ? who.map((n, i) => `${n} (${i === 0 ? '주담' : '지원'})`).join(' + ') : who.join(', ')}
-              </div>
+              </div>}
               {hasSite && who.length > 1 && <div style={{ fontSize: 11.5, color: C.text4, marginTop: 2 }}>먼저 고른 사람이 주담당이에요</div>}
             </div>
             {hasSite && (
@@ -231,15 +255,18 @@ export default function ScheduleEditModal({
           <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px calc(env(safe-area-inset-bottom) + 10px)', borderTop: `1px solid ${C.line2}`, background: '#fff' }}>
             {mode === 'edit' && onDelete && <button type="button" onClick={onDelete} style={{ height: 50, padding: '0 6px', border: 0, background: 'none', color: '#b91c1c', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>삭제</button>}
             {onLegacy && <button type="button" onClick={onLegacy} style={{ height: 50, padding: 0, border: 0, background: 'none', color: C.text4, fontSize: 12, textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>이전 입력 화면</button>}
-            <button type="button" onClick={onSave} style={{ flex: 1, height: 50, borderRadius: 12, border: 0, background: C.brand, color: '#fff', fontSize: 16, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>저장</button>
+            <button type="button" disabled={!canSave} onClick={onSave} style={{ flex: 1, height: 50, borderRadius: 12, border: 0, background: canSave ? C.brand : C.strong, color: '#fff', fontSize: 16, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>저장</button>
           </div>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 22px', borderTop: `1px solid ${C.line2}` }}>
             {mode === 'edit' && onDelete && <button type="button" onClick={onDelete} style={{ padding: '0 4px', border: 0, background: 'none', color: '#b91c1c', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>삭제</button>}
-            <span style={{ fontSize: 12, color: C.text4 }}>저장하면 일정·실적에 바로 반영돼요</span>
+            {missing.length > 0
+              ? <span style={{ fontSize: 12.5, color: '#b91c1c', fontWeight: 600 }}>필수: {missing.join(' · ')}</span>
+              : <span style={{ fontSize: 12, color: C.text4 }}>저장하면 일정·실적에 바로 반영돼요</span>}
+            {onLegacy && <button type="button" onClick={onLegacy} style={{ padding: 0, border: 0, background: 'none', color: C.text4, fontSize: 12, textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>이전 입력 화면</button>}
             <div style={{ flex: 1 }} />
             <button type="button" onClick={onClose} style={{ height: 40, padding: '0 16px', borderRadius: 8, border: `1px solid ${C.line}`, background: '#fff', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit', color: C.ink }}>취소</button>
-            <button type="button" onClick={onSave} style={{ height: 40, padding: '0 20px', borderRadius: 8, border: 0, background: C.brand, color: '#fff', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>저장</button>
+            <button type="button" disabled={!canSave} title={canSave ? undefined : `필수: ${missing.join(' · ')}`} onClick={onSave} style={{ height: 40, padding: '0 20px', borderRadius: 8, border: 0, background: canSave ? C.brand : C.strong, color: '#fff', fontSize: 13.5, fontWeight: 700, cursor: canSave ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>{isAdd ? '등록' : '저장'}</button>
           </div>
         )}
       </div>
