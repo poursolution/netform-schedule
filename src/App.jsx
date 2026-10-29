@@ -101,6 +101,7 @@ const EXCLUSION_REASON_LABEL = {
 import { normalizeApartmentName, addApartmentAlias } from './utils/apartmentMatch.js';
 import { scoreJandiEvidenceCandidate } from './utils/jandiFileParser.js';
 import * as theme from './utils/theme.js';
+import PerformanceWorkbench from './components/PerformanceWorkbench.jsx';
 
 // 정산 상태 6단계 배지 스타일 (#4 — 실적 카드용)
 const SETTLEMENT_BADGE_STYLE = {
@@ -307,6 +308,7 @@ const SETTLEMENT_BADGE_STYLE = {
       const [expandedAssigneeAnalysis, setExpandedAssigneeAnalysis] = useState(null); // 담당자 분석 펼침
       const [expandedCompany, setExpandedCompany] = useState(null); // 업체별 현황 펼침
       const [previewAssignee, setPreviewAssignee] = useState(null); // 담당자 현장목록 프리뷰
+      const [useLegacyPerformance, setUseLegacyPerformance] = useState(false); // 실적 작업대 전환 기간 — 이전 화면 보기
       const [siteListTab, setSiteListTab] = useState('all'); // 현장목록 상태 탭
       const [settlementFilter, setSettlementFilter] = useState('all'); // all, pending, requested, completed
       const [selectedWorkTypes, setSelectedWorkTypes] = useState([]); // 공종 필터 (멀티셀렉트)
@@ -3797,6 +3799,224 @@ const SETTLEMENT_BADGE_STYLE = {
           }) : ps));
           return { ok: true, patch };
         } catch (e) { console.warn('[persist-derived] failed', e); return { ok: false, error: e.message }; }
+      };
+
+      // ===== 실적 작업대(#2a) — 바뀐 칸만 즉시 저장 =====
+      //   기존 목록 체크박스는 [저장] 때 pt 전체를 set 으로 덮어쓰지만, 작업대는 경로별 update 로
+      //   바뀐 칸과 derived(status·calculatedAmount·excludedReason)를 한 번에 쓴다.
+      //   derived 는 패치가 반영된 pt 로 계산해 이전 state 로 계산되는 문제를 피한다.
+      const canManageSettlement = () => currentUser?.isAdmin || currentUser?.name === '한준엽';
+      const workbenchAssignees = (pt) => (pt?.ptAssignee || '').split(/[\/,+&]/).map(t => t.trim()).filter(Boolean);
+      const setInPath = (obj, path, value) => {
+        const keys = path.split('/');
+        const root = { ...obj };
+        let cur = root;
+        keys.slice(0, -1).forEach(k => { cur[k] = { ...(cur[k] || {}) }; cur = cur[k]; });
+        cur[keys[keys.length - 1]] = value;
+        return root;
+      };
+      // patch: { 'selfPT': true, 'settlement/김성민/requested': true, ... } (pt 기준 상대 경로)
+      const writeWorkbenchPatch = async (pt, patch, derivedFor = []) => {
+        let next = { ...pt };
+        Object.entries(patch).forEach(([path, value]) => { next = setInPath(next, path, value); });
+        const updates = {};
+        Object.entries(patch).forEach(([path, value]) => { updates[`pt/${pt.id}/${path}`] = value; });
+        derivedFor.forEach(a => {
+          const calc = calculateSettlementAmount(next, a);
+          const status = getSettlementStatus(next, a);
+          [['status', status], ['calculatedAmount', calc.amount], ['excludedReason', calc.reason || null]].forEach(([k, v]) => {
+            updates[`pt/${pt.id}/settlement/${a}/${k}`] = v;
+            next = setInPath(next, `settlement/${a}/${k}`, v);
+          });
+        });
+        if (firebaseEnabled && database) await database.ref().update(updates);
+        setPtSchedules(prev => prev.map(ps => ps.id === pt.id ? next : ps));
+        return next;
+      };
+
+      const workbenchToggleSettlementFlag = async (pt, a, flag, checked) => {
+        const nowISO = new Date().toISOString();
+        const by = currentUser?.name || 'admin';
+        const cur = pt.settlement?.[a] || {};
+        const base = `settlement/${a}`;
+        let patch = {};
+        let reasonText = '';
+        if (flag === 'requested') {
+          if (!checked) {
+            const msg = pt.kaptVerified?.status === 'cancelled'
+              ? `🚫 취소공고 — ${a}님의 정산요청을 해제하시겠습니까?\n\n해제 시 정산요청 목록에서 즉시 사라집니다.`
+              : `${a}님의 정산요청을 해제하시겠습니까?\n\n해제 시 정산요청 목록에서 즉시 사라집니다.`;
+            if (!window.confirm(msg)) return;
+            // 저장된 status='requested' 가 남으면 해제가 안 된 것으로 보이므로 함께 비운다
+            patch = { [`${base}/requested`]: false, [`${base}/status`]: null };
+          } else {
+            patch = { [`${base}/requested`]: true, [`${base}/requestedAt`]: nowISO, [`${base}/requestedBy`]: by };
+          }
+        } else if (flag === 'selfSales') {
+          patch = { [`${base}/selfSales`]: checked };
+        } else if (flag === 'settlementExcluded') {
+          if (!canManageSettlement()) { alert('정산예외는 관리자 또는 한준엽만 변경할 수 있습니다.'); return; }
+          if (checked) {
+            const amtCur = (calculateSettlementAmount(pt, a)?.amount || 0).toLocaleString('ko-KR');
+            const input = window.prompt(`🚫 정산예외 처리\n\n현장: ${pt.siteName || '-'}\n담당: ${a}\n현재 예상 정산금: ${amtCur}원\n\n사유를 간단히 입력해주세요 (필수, 운영 이력용):`, '');
+            if (input === null) return;
+            reasonText = (input || '').trim();
+            if (!reasonText) { alert('사유 미입력 — 정산예외 처리 취소'); return; }
+            patch = { [`${base}/settlementExcluded`]: true, [`${base}/settlementExcludedAt`]: nowISO, [`${base}/settlementExcludedBy`]: by, [`${base}/settlementExcludedReason`]: reasonText };
+          } else {
+            if (!window.confirm(`✅ 정산예외 해제\n\n현장: ${pt.siteName || '-'}\n담당: ${a}\n사유: ${cur.settlementExcludedReason || '-'}\n\n해제 시 다시 정산 대상에 포함됩니다. 진행?`)) return;
+            patch = { [`${base}/settlementExcluded`]: false, [`${base}/settlementExcludedAt`]: null, [`${base}/settlementExcludedBy`]: null, [`${base}/settlementExcludedReason`]: null };
+          }
+        } else return;
+        try {
+          await writeWorkbenchPatch(pt, patch, [a]);
+          if (flag === 'requested' && checked) {
+            notifySettlementReviewer({ assignee: a, siteName: pt.siteName, bidNo: pt.bidNo, result: pt.results?.[a] || pt.result, amount: calculateSettlementAmount(pt, a)?.amount || 0, by });
+          }
+          if (flag === 'settlementExcluded') {
+            try { logActivity('settlement_excluded_toggle', { ptId: pt.id, assignee: a, on: checked, reason: reasonText, by }); } catch {}
+          }
+        } catch (e) { alert('저장 실패: ' + e.message); }
+      };
+
+      const workbenchToggleSelfPT = async (pt, checked) => {
+        try { await writeWorkbenchPatch(pt, { selfPT: checked }, workbenchAssignees(pt)); }
+        catch (e) { alert('저장 실패: ' + e.message); }
+      };
+
+      const workbenchOpenKaptVerify = (pt) => {
+        const main = workbenchAssignees(pt)[0] || null;
+        const activeFiles = Object.entries(pt.evidenceFiles || {}).filter(([, f]) => !f?.suppressed);
+        if (activeFiles.length > 0) {
+          const fileList = activeFiles.slice(0, 5).map(([, f]) => `• ${f.filename || '(이름없음)'}`).join('\n');
+          const more = activeFiles.length > 5 ? `\n...외 ${activeFiles.length - 5}건` : '';
+          alert(`✅ 잔디 공고문으로 이미 검증됨\n\n연결된 파일 ${activeFiles.length}개:\n${fileList}${more}`);
+          return;
+        }
+        setKaptVerifyBidInput(pt.bidNo || '');
+        setKaptVerifyModal({ stage: 'candidates-loading', scheduleId: pt.id, manager: main, siteName: pt.siteName, workType: pt.workType, date: pt.date, currentBidNo: pt.bidNo || '', candidates: [] });
+        const openKaptSearch = () => window.open(`https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(pt.siteName || '')}`, '_blank');
+        searchKaptCandidates({ siteName: pt.siteName, ptDate: pt.date, aliasMap: apartmentAliasMap })
+          .then(({ candidates }) => {
+            setKaptVerifyModal(m => m && m.scheduleId === pt.id ? ({ ...m, stage: (candidates && candidates.length > 0) ? 'candidates' : 'input', candidates: candidates || [] }) : m);
+            if (!candidates || candidates.length === 0) openKaptSearch();
+          })
+          .catch(() => {
+            setKaptVerifyModal(m => m && m.scheduleId === pt.id ? ({ ...m, stage: 'input', candidates: [] }) : m);
+            openKaptSearch();
+          });
+      };
+
+      const workbenchKaptCancel = async (pt) => {
+        const reason = window.prompt('K-APT 에서 공고가 "취소" 상태로 확인되었나요?\n\n취소 사유를 입력해주세요 (예: 재공고 예정 / 원자재 상승 / 기타):');
+        if (reason === null) return;
+        const trimmed = (reason || '').trim() || '사유 미입력';
+        const nowISO = new Date().toISOString();
+        try {
+          await writeWorkbenchPatch(pt, {
+            'kaptVerified/status': 'cancelled',
+            'kaptVerified/cancelReason': trimmed,
+            'kaptVerified/cancelledAt': nowISO,
+            'kaptVerified/cancelledBy': currentUser?.name || 'manual',
+          }, workbenchAssignees(pt));
+        } catch (e) { alert('저장 실패: ' + e.message); }
+      };
+
+      // 단건 수동 승인은 기존 정산 검토 패널(잔디 공고문 검색 + 승인/보류/제외)로 연다
+      const workbenchOpenReview = (pt, a) => {
+        openSettlementReviewPanel({ id: pt.id, manager: a, siteName: pt.siteName, date: pt.date, rawData: pt });
+      };
+
+      const workbenchSaveMemo = async (pt, a, text) => {
+        const note = (text || '').trim();
+        if (!note) return '';
+        saveAdminNote(pt.id, a, note);
+        const hook = jandiUserWebhooks?.[a];
+        if (!hook?.url || hook.enabled === false) return '저장됨 · 잔디 미설정';
+        try {
+          await fetch(hook.url, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              body: '📣 크로스체크 확인 요청',
+              connectColor: '#f59e0b',
+              connectInfo: [{
+                title: `${pt.siteName || '단지명 미입력'} — ${a}`,
+                description: [`PT일자: ${pt.date || '-'}`, `결과: ${pt.results?.[a] || pt.result || '-'}`, '', '📝 관리자 메모:', note, '', '→ 시스템에서 확인 후 관련 자료 업로드/회신 부탁드립니다.'].join('\n'),
+              }],
+            }),
+          });
+          return '저장됨 · 잔디 발송';
+        } catch (e) {
+          console.warn('[workbench memo poke] failed', e);
+          return '저장됨 · 잔디 발송 실패';
+        }
+      };
+
+      const workbenchBulkRequest = async (pts) => {
+        const targets = pts.map(pt => ({ pt, a: workbenchAssignees(pt)[0] })).filter(({ pt, a }) => {
+          if (!a || !(pt.results?.[a] || pt.result)) return false;
+          const st = getSettlementStatus(pt, a);
+          return st !== SETTLEMENT_STATUS.EXCLUDED && st !== SETTLEMENT_STATUS.REQUESTED && st !== SETTLEMENT_STATUS.CONFIRMED && st !== SETTLEMENT_STATUS.COMPLETED;
+        });
+        if (!targets.length) { alert('정산요청할 수 있는 건이 없습니다.\n(결과 없음·제외·이미 요청된 건은 빠집니다)'); return; }
+        if (!window.confirm(`${targets.length}건을 정산요청합니다. (주담당 기준)\n진행할까요?`)) return;
+        const nowISO = new Date().toISOString();
+        const by = currentUser?.name || 'admin';
+        let fail = 0;
+        for (const { pt, a } of targets) {
+          try { await writeWorkbenchPatch(pt, { [`settlement/${a}/requested`]: true, [`settlement/${a}/requestedAt`]: nowISO, [`settlement/${a}/requestedBy`]: by }, [a]); }
+          catch (e) { fail += 1; console.warn('[bulk request] failed', pt.id, e); }
+        }
+        if (fail) alert(`${targets.length - fail}건 완료, ${fail}건 실패`);
+      };
+
+      const workbenchBulkManualApprove = async (pts) => {
+        if (!canFinalizeSettlementReview()) { alert('수동 승인은 한준엽 또는 관리자만 가능합니다.'); return; }
+        const targets = pts.map(pt => ({ pt, a: workbenchAssignees(pt)[0] })).filter(({ pt, a }) => a && getSettlementStatus(pt, a) === SETTLEMENT_STATUS.NEEDS_REVIEW);
+        if (!targets.length) { alert('선택한 건 중 검토필요 상태인 건이 없습니다.'); return; }
+        if (!window.confirm(`검토필요 ${targets.length}건을 공고문 확인 없이 수동 승인합니다.\n승인 기록(검토자·시각)이 남습니다. 진행할까요?`)) return;
+        const nowISO = new Date().toISOString();
+        const reviewer = currentUser?.name || 'admin';
+        let fail = 0;
+        for (const { pt, a } of targets) {
+          const base = `settlement/${a}`;
+          const method = pt.kaptVerified?.status === 'verified' ? 'kapt' : 'admin-judgement';
+          try {
+            await writeWorkbenchPatch(pt, {
+              [`${base}/reviewStatus`]: 'approved', [`${base}/reviewNote`]: null, [`${base}/reviewedAt`]: nowISO, [`${base}/reviewedBy`]: reviewer, [`${base}/reviewMethod`]: method,
+              [`${base}/manualVerified`]: true, [`${base}/manualVerifiedAt`]: nowISO, [`${base}/manualVerifiedBy`]: reviewer, [`${base}/reviewBypassedBy`]: reviewer,
+              [`${base}/reviewHistory/${Date.now()}`]: { decision: 'approved', note: '실적 작업대 일괄 승인', at: nowISO, by: reviewer, method },
+            }, [a]);
+          } catch (e) { fail += 1; console.warn('[bulk approve] failed', pt.id, e); }
+        }
+        if (fail) alert(`${targets.length - fail}건 완료, ${fail}건 실패`);
+      };
+
+      const workbenchBulkReverify = async (pts) => {
+        if (!kaptWorkerUrl) { alert('K-APT 검증 Worker 가 설정되지 않았습니다.'); return; }
+        const targets = pts.filter(pt => pt.kaptVerified?.status !== 'verified' && !Object.values(pt.evidenceFiles || {}).some(f => !f?.suppressed));
+        if (!targets.length) { alert('재검증할 건이 없습니다. (이미 검증됨·잔디 공고문 연결 건 제외)'); return; }
+        if (!window.confirm(`${targets.length}건을 K-APT 로 다시 조회합니다. 진행할까요?`)) return;
+        let ok = 0;
+        for (const pt of targets) {
+          const a = workbenchAssignees(pt)[0];
+          try {
+            const r = await verifyKaptForPt({ scheduleId: pt.id, assignee: a, siteName: pt.siteName, workType: pt.workType, bidNo: pt.bidNo, ptDate: pt.date, by: currentUser?.name });
+            if (r && r.status === 'verified') { ok += 1; if (a) autoTransitionIfEligible(pt.id, a, 'auto-kapt-verified'); }
+          } catch (e) { console.warn('[bulk reverify] failed', pt.id, e); }
+        }
+        alert(`K-APT 재검증 완료 — ${targets.length}건 중 ${ok}건 검증됨`);
+      };
+
+      const workbenchConfirmState = (quarterKey, name) => {
+        const c = quarterConfirmations?.[quarterKey]?.[name];
+        if (!c) return '미확인';
+        if (c.finalConfirmed) return '최종확정';
+        if (Object.values(c.reviewRequests || {}).some(r => r?.status === 'open')) return '검증요청';
+        if (c.confirmed) return '1R 확인';
+        return '미확인';
       };
 
       // 전체 PT 대상 일회성 backfill — 관리자 수동 실행용
@@ -9223,6 +9443,73 @@ const SETTLEMENT_BADGE_STYLE = {
                   <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '24px' }}>실적관리는 로그인 후 이용 가능합니다.</p>
                   <button onClick={() => setShowLoginModal(true)} style={{ padding: '14px 32px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', fontSize: '15px', fontWeight: '600', cursor: 'pointer' }}>로그인하기</button>
                 </div>
+              ) : (!isMobile && hasFullDataViewAccess(currentUser) && !useLegacyPerformance) ? (
+                // 실적 작업대(#2a) — 관리자·전체조회 계정 데스크톱 전용. 기존 헤더 위를 덮는 전체 화면.
+                <div style={{ position: 'fixed', inset: 0, zIndex: 500, overflow: 'auto', background: '#f8fafc', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>
+                  {(() => {
+                    const goTo = (view, title) => {
+                      setShowDashboard(view === 'main');
+                      setShowPerformance(false);
+                      setShowMeetingView(view === 'meeting');
+                      setShowSalesView(false);
+                      setShowMyPage(false);
+                      updatePageTitle(title);
+                    };
+                    const canSettle = currentUser?.isAdmin || currentUser?.name === '한준엽';
+                    const canMain = currentUser?.isAdmin || currentUser?.name === '이승우' || currentUser?.name === '황윤선';
+                    const feedbackPending = feedbackList.filter(f => f.status !== 'resolved').length;
+                    const pendingExceptions = listPendingExceptions(ptSchedules).length;
+                    const screenshotPending = (ptSchedules || []).filter(p => p?.kaptVerified?.status === 'pending-admin-review').length;
+                    const qNum = q => `${q.slice(-1)}분기`;
+                    return (
+                      <PerformanceWorkbench
+                        ptSchedules={ptSchedules}
+                        assigneeNames={assigneeList}
+                        currentUser={currentUser}
+                        confirmStateOf={workbenchConfirmState}
+                        nav={[
+                          ...(canMain ? [{ key: 'main', label: '메인', onClick: () => goTo('main', '메인') }] : []),
+                          { key: 'schedule', label: '일정', onClick: () => goTo('schedule', '일정') },
+                          { key: 'perf', label: '실적', active: true, onClick: () => {} },
+                          ...(canSettle ? [{ key: 'settle', label: '정산', onClick: () => setShowMonthlySettlement(true) }] : []),
+                        ]}
+                        adminNav={[
+                          { key: 'meeting', label: '영업회의', onClick: () => goTo('meeting', '영업회의') },
+                          ...(canSettle ? [
+                            { key: 'audit', label: '감사·이슈', badge: feedbackPending + pendingExceptions + screenshotPending || null, items: [
+                              { key: 'feedback', label: '피드백 목록', badge: feedbackPending || null, onClick: () => setShowFeedbackList(true) },
+                              { key: 'exception', label: '예외', badge: pendingExceptions || null, onClick: () => setShowExceptionQueueModal(true) },
+                              { key: 'screenshot', label: '스크린샷 검증 큐', badge: screenshotPending || null, onClick: () => setShowScreenshotReviewQueue(true) },
+                            ] },
+                            { key: 'log', label: '활동 로그', onClick: () => setShowActivityLog(true) },
+                          ] : []),
+                          { key: 'settings', label: '설정', onClick: () => setShowSettings(true) },
+                        ]}
+                        onOpenMyPage={() => { setMyPageUser(currentUser.name); setShowMyPage(true); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); }}
+                        onLogout={handleLogout}
+                        onOpenLegacy={() => setUseLegacyPerformance(true)}
+                        onOpenQuarterSettlement={canSettle ? () => setShowMonthlySettlement(true) : undefined}
+                        exportActions={[
+                          { key: 'excel', label: 'Excel', onClick: q => exportQuarterlyExcel(+q.slice(0, 4), qNum(q), 'all') },
+                          { key: 'excel-noamt', label: 'Excel (금액 제외)', onClick: q => exportQuarterlyExcel(+q.slice(0, 4), qNum(q), 'all', false) },
+                          { key: 'pdf', label: 'PDF', onClick: q => exportToPDF(+q.slice(0, 4), qNum(q)) },
+                          { key: 'ppt', label: 'PPT', onClick: q => exportToPPT(+q.slice(0, 4), qNum(q)) },
+                        ]}
+                        onSetResult={(pt, a, r) => handleResultClick(pt, r, a)}
+                        onToggleSettlementFlag={workbenchToggleSettlementFlag}
+                        onToggleSelfPT={workbenchToggleSelfPT}
+                        onKaptReverify={kaptWorkerUrl ? workbenchOpenKaptVerify : undefined}
+                        onOpenKaptCandidates={kaptWorkerUrl ? workbenchOpenKaptVerify : undefined}
+                        onKaptManualApprove={canFinalizeSettlementReview() ? workbenchOpenReview : undefined}
+                        onKaptCancel={workbenchKaptCancel}
+                        onSaveMemo={currentUser?.isAdmin ? workbenchSaveMemo : undefined}
+                        onBulkRequest={workbenchBulkRequest}
+                        onBulkManualApprove={canFinalizeSettlementReview() ? workbenchBulkManualApprove : undefined}
+                        onBulkReverify={kaptWorkerUrl ? workbenchBulkReverify : undefined}
+                      />
+                    );
+                  })()}
+                </div>
               ) : (
               <>
               {/* 로그인 상태 바 — Soft Cloud 톤 */}
@@ -9231,6 +9518,9 @@ const SETTLEMENT_BADGE_STYLE = {
                   로그인: <strong>{currentUser.name}</strong>님
                 </span>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {useLegacyPerformance && !isMobile && hasFullDataViewAccess(currentUser) && (
+                    <button onClick={() => setUseLegacyPerformance(false)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#0F4C75', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>새 실적 작업대</button>
+                  )}
                   {('Notification' in window) && (/Android/i.test(navigator.userAgent) || window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches) && (
                     <button onClick={() => pushEnabled ? disablePushNotification() : initPushNotification()} style={{ padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: '6px', border: 'none', background: pushEnabled ? '#dcfce7' : '#ffffff', color: pushEnabled ? '#166534' : '#0F4C75', fontSize: isMobile ? '11px' : '12px', fontWeight: '600', cursor: 'pointer' }}>{pushEnabled ? '알림 ON' : '알림 OFF'}</button>
                   )}
