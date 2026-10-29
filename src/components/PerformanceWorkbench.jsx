@@ -57,7 +57,8 @@ const bigResultBtn = (cur, key) => {
 const card = { background: '#fff', border: `1px solid ${C.line}`, borderRadius: 12 };
 const dot = (bg, r = '50%') => ({ width: 7, height: 7, borderRadius: r, background: bg, flex: 'none' });
 
-const GRID = '24px 48px 1fr 84px 52px 76px 70px 78px';
+// 넓은 화면에선 현장 칸만 늘지 않도록 남는 폭을 오른쪽 칸들에도 나눈다
+const GRID = '24px 52px minmax(180px, 2.6fr) minmax(84px, 1fr) minmax(56px, .8fr) minmax(76px, 1fr) minmax(76px, 1fr) minmax(78px, 1fr)';
 const STAFF_GRID = '68px 40px 40px 40px 44px minmax(120px,1fr) 64px 92px 76px';
 
 
@@ -331,9 +332,9 @@ export default function PerformanceWorkbench({
                     <button type="button" onClick={() => setChecked({})} style={{ border: 0, background: 'transparent', color: C.text3, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>선택 해제</button>
                   </div>
                 )}
-                <div style={{ display: 'grid', gridTemplateColumns: GRID, padding: '7px 14px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}`, alignItems: 'center' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: GRID, columnGap: 12, padding: '8px 14px', fontSize: 12, fontWeight: 700, color: C.text3, background: C.muted, borderBottom: `1px solid ${C.line}`, alignItems: 'center' }}>
                   <input type="checkbox" aria-label="표시된 행 전체 선택" checked={rows.length > 0 && rows.every(r => checked[r.id])} onChange={e => setChecked(e.target.checked ? Object.fromEntries(rows.map(r => [r.id, true])) : {})} style={{ margin: 0, width: 14, height: 14 }} />
-                  <span>일자</span><span>현장 · 공종 · 공법</span><span>담당</span><span>결과</span><span>검증</span><span>정산</span><span style={{ textAlign: 'right' }}>금액</span>
+                  <span>일자</span><span>현장 · 공종 · 공법</span><span>담당</span><span style={{ textAlign: 'center' }}>결과</span><span style={{ textAlign: 'center' }}>K-APT 검증</span><span style={{ textAlign: 'center' }}>정산</span><span style={{ textAlign: 'right' }}>금액</span>
                 </div>
                 <div>
                   {rows.map(r => <SiteRow key={r.id} r={r} selected={selected?.id === r.id} checked={!!checked[r.id]} today={today}
@@ -467,7 +468,7 @@ function SiteRow({ r, selected, checked, today, onSelect, onCheck }) {
   const st = r.stl ? STL[r.stl] : null;
   const c = r.has ? RES[r.result] : null;
   return (
-    <div onClick={onSelect} style={{ display: 'grid', gridTemplateColumns: GRID, alignItems: 'center', padding: '9px 14px', borderBottom: `1px solid ${C.line2}`, cursor: 'pointer', background: selected ? C.active : checked ? C.muted : '#fff', boxShadow: selected ? `inset 3px 0 0 ${C.brand}` : 'none' }}>
+    <div onClick={onSelect} style={{ display: 'grid', gridTemplateColumns: GRID, columnGap: 12, alignItems: 'center', padding: '9px 14px', borderBottom: `1px solid ${C.line2}`, cursor: 'pointer', background: selected ? C.active : checked ? C.muted : '#fff', boxShadow: selected ? `inset 3px 0 0 ${C.brand}` : 'none' }}>
       <input type="checkbox" aria-label={`${pt.siteName || ''} 선택`} checked={checked} onClick={e => e.stopPropagation()} onChange={onCheck} style={{ margin: 0, width: 14, height: 14 }} />
       <span style={{ fontSize: 12, color: C.text3 }}>{mmdd(r.date)}</span>
       <div style={{ minWidth: 0, paddingRight: 10 }}>
@@ -475,9 +476,9 @@ function SiteRow({ r, selected, checked, today, onSelect, onCheck }) {
         <div style={{ fontSize: 11.5, color: C.text4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{[pt.workType, methods.length ? methods.join(' · ') : '공법 미입력'].filter(Boolean).join(' · ')}</div>
       </div>
       <span style={{ fontSize: 12.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: 6 }}>{r.main}{r.sups.length ? ` +${r.sups.join(',')}` : ''}</span>
-      <span><span style={r.has ? chip(c[0], c[1]) : chip('#f1f5f9', C.text4)}>{r.has ? r.result : r.isFuture ? '예정' : '미입력'}</span></span>
-      <span>{v ? <span style={chip(v[1], v[2])}>{v[0]}</span> : <span style={{ color: C.strong, fontSize: 12 }}>—</span>}</span>
-      <span>{st ? <span style={chip(st[1], st[2])}>{st[0]}</span> : <span style={chip('transparent', C.text4)}>결과 대기</span>}</span>
+      <span style={{ textAlign: 'center' }}><span style={r.has ? chip(c[0], c[1]) : chip('#f1f5f9', C.text4)}>{r.has ? r.result : r.isFuture ? '예정' : '미입력'}</span></span>
+      <span style={{ textAlign: 'center' }}>{v ? <span style={chip(v[1], v[2])}>{v[0]}</span> : <span style={{ color: C.strong, fontSize: 12 }}>—</span>}</span>
+      <span style={{ textAlign: 'center' }}>{st ? <span style={chip(st[1], st[2])}>{st[0]}</span> : <span style={chip('transparent', C.text4)}>결과 대기</span>}</span>
       <span style={{ textAlign: 'right', fontSize: 12.5, fontWeight: 700 }}>{formatWon(r.amount)}</span>
     </div>
   );

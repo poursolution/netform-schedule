@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import AppSidebar from './AppSidebar.jsx';
 import {
   TYPE_ORDER, typeMeta, assigneesOf, isUnassignedItem, isUnassignedPT, titleOf, subOf, shortTime, matchesSearch, matchesWorkType,
@@ -61,6 +61,8 @@ export default function ScheduleWorkbench({
   const [brief, setBrief] = useState({ status: 'idle', text: '' });
   const listRef = useRef(null);
   const briefRef = useRef(null);
+  const gridRef = useRef(null);
+  const [gridH, setGridH] = useState(0);
 
   const y = month.getFullYear(), m0 = month.getMonth();
   const monthKey = `${y}-${String(m0 + 1).padStart(2, '0')}`;
@@ -80,6 +82,17 @@ export default function ScheduleWorkbench({
 
   const typeChips = [['all', '전체'], ...TYPE_ORDER.filter(t => inMonth.some(s => s.type === t)).map(t => [t, typeMeta(t).label])];
   const cells = monthCells(y, m0);
+  // 달력이 화면 높이를 채우므로 칸이 커지면 일정을 더 보여준다(날짜 줄 36px · 일정 한 줄 24px · "+N건 더" 18px)
+  const rowH = gridH ? gridH / Math.ceil(cells.length / 7) : 104;
+  const fitAll = Math.max(3, Math.floor((rowH - 36) / 24));
+  const fitMore = Math.max(3, Math.floor((rowH - 36 - 18) / 24));
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(([e]) => setGridH(e.contentRect.height));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [view]);
   const dayItems = byDate[selDate] || [];
   const busy = new Set((schedules || []).filter(s => s && s.date === selDate).flatMap(assigneesOf));
   const free = (roster || []).filter(n => !busy.has(n));
@@ -166,7 +179,7 @@ export default function ScheduleWorkbench({
           {view === 'month' ? (
             <>
               {/* ===== #6b 달력 ===== */}
-              <section aria-label="월 달력" style={{ ...card, overflow: 'hidden', minWidth: 0 }}>
+              <section aria-label="월 달력" style={{ ...card, overflow: 'hidden', minWidth: 0, alignSelf: 'stretch', display: 'flex', flexDirection: 'column' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 16px', borderBottom: `1px solid ${C.line2}`, flexWrap: 'wrap' }}>
                   <button type="button" aria-label="이전 달" onClick={() => shiftMonth(-1)} style={{ width: 32, height: 32, border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', fontSize: 15, color: C.text2, cursor: 'pointer', fontFamily: 'inherit' }}>‹</button>
                   <button type="button" aria-label="다음 달" onClick={() => shiftMonth(1)} style={{ width: 32, height: 32, border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', fontSize: 15, color: C.text2, cursor: 'pointer', fontFamily: 'inherit' }}>›</button>
@@ -190,10 +203,11 @@ export default function ScheduleWorkbench({
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', fontSize: 11.5, fontWeight: 600, color: C.text4, textAlign: 'center', borderBottom: `1px solid ${C.line2}` }}>
                   {KDAY.map((d, i) => <span key={d} style={{ padding: '8px 0', color: i === 0 ? '#b91c1c' : i === 6 ? C.brand : C.text4 }}>{d}</span>)}
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 1, background: C.line2, borderBottom: `1px solid ${C.line2}` }}>
+                <div ref={gridRef} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gridAutoRows: 'minmax(104px, 1fr)', flex: 1, gap: 1, background: C.line2, borderBottom: `1px solid ${C.line2}` }}>
                   {cells.map((ds, i) => {
                     if (!ds) return <div key={`b${i}`} style={{ minHeight: 104, background: C.blank }} />;
                     const items = byDate[ds] || [];
+                    const shown = items.length <= fitAll ? items.length : fitMore;
                     const dow = i % 7, isToday = ds === todayStr, isSel = ds === selDate;
                     const hol = holidayName ? holidayName(ds) : null;
                     const red = dow === 0 || !!hol;
@@ -203,7 +217,7 @@ export default function ScheduleWorkbench({
                           <button type="button" aria-label={`${+ds.slice(5, 7)}월 ${+ds.slice(8)}일${hol ? ` ${hol}` : ''} 선택`} aria-pressed={isSel} onClick={e => { e.stopPropagation(); setSelDate(ds); }} style={{ width: 22, height: 22, borderRadius: 11, display: 'grid', placeItems: 'center', border: 0, padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: isToday ? 800 : 600, color: isToday ? '#fff' : red ? '#b91c1c' : dow === 6 ? C.brand : C.text2, background: isToday ? C.brand : 'transparent', flex: 'none' }}>{+ds.slice(8)}</button>
                           {hol && <span style={{ fontSize: 10.5, color: '#b91c1c', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{hol}</span>}
                         </div>
-                        {items.slice(0, 3).map(s => {
+                        {items.slice(0, shown).map(s => {
                           const un = isUn(s);
                           return (
                             <button key={s.id} type="button" onClick={e => { e.stopPropagation(); pickItem(s); }} title={un ? `${titleOf(s)} — 담당 미배정` : titleOf(s)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 5px', borderRadius: 5, background: un ? '#fef2f2' : C.muted, border: un ? '1px dashed #f87171' : '1px solid transparent', fontSize: 11.5, minWidth: 0, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', fontWeight: un ? 700 : 500, color: un ? '#b91c1c' : C.text }}>
@@ -212,7 +226,7 @@ export default function ScheduleWorkbench({
                             </button>
                           );
                         })}
-                        {items.length > 3 && <span style={{ fontSize: 11, color: C.text3, paddingLeft: 5 }}>+{items.length - 3}건 더</span>}
+                        {items.length > shown && <span style={{ fontSize: 11, color: C.text3, paddingLeft: 5 }}>+{items.length - shown}건 더</span>}
                       </div>
                     );
                   })}
