@@ -107,6 +107,8 @@ import MainDashboard from './components/MainDashboard.jsx';
 import StaffHome from './components/StaffHome.jsx';
 import MyPage from './components/MyPage.jsx';
 import ScheduleEditModal from './components/ScheduleEditModal.jsx';
+import SettlementPage from './components/SettlementPage.jsx';
+import { quarterMeta } from './utils/workbench.js';
 import { finalConfirmBlockers } from './utils/staffHome.js';
 import { buildBriefJandiMessage, briefRecipients, unassignedUpcoming } from './utils/morningBrief.js';
 
@@ -320,6 +322,7 @@ const SETTLEMENT_BADGE_STYLE = {
       const [useLegacyMain, setUseLegacyMain] = useState(false); // 메인(#6a) 전환 기간 — 이전 화면 보기
       const [useLegacyStaffHome, setUseLegacyStaffHome] = useState(false); // 담당자 홈(#3a) 전환 기간 — 이전 마이페이지 보기
       const [showProfilePage, setShowProfilePage] = useState(false); // 마이페이지(#9a) — 사이드바 프로필 카드로 연다
+      const [showSettlementPage, setShowSettlementPage] = useState(false); // 분기정산(#8a) — 사이드바 "정산"
       const [perfInit, setPerfInit] = useState({}); // 메인에서 실적 작업대로 넘어갈 때 첫 필터 { filter, who }
       const [scheduleInit, setScheduleInit] = useState({}); // 메인에서 일정으로 넘어갈 때 첫 상태 { view, listFilter, search }
       const [morningBriefConfig, setMorningBriefConfig] = useState({}); // config/morningBrief { autoSend, days }
@@ -6284,6 +6287,7 @@ const SETTLEMENT_BADGE_STYLE = {
           setPerfInit({});
           setScheduleInit({});
           setShowProfilePage(false);
+          setShowSettlementPage(false);
           setShowDashboard(view === 'main');
           setShowPerformance(view === 'perf');
           setShowMeetingView(view === 'meeting');
@@ -6302,7 +6306,7 @@ const SETTLEMENT_BADGE_STYLE = {
             ...(canMain ? [{ key: 'main', label: '메인', active: active === 'main', onClick: () => goTo('main', '메인') }] : []),
             { key: 'schedule', label: '일정', active: active === 'schedule', onClick: () => goTo('schedule', '일정') },
             ...(currentUser?.canAccessPerformance !== false ? [{ key: 'perf', label: '실적', active: active === 'perf', onClick: () => goTo('perf', '실적') }] : []),
-            ...(canSettle ? [{ key: 'settle', label: '정산', onClick: () => setShowMonthlySettlement(true) }] : []),
+            ...(canSettle ? [{ key: 'settle', label: '정산', active: active === 'settle', onClick: openSettlement }] : []),
           ],
           adminNav: [
             { key: 'meeting', label: '영업회의', onClick: () => goTo('meeting', '영업회의') },
@@ -6428,6 +6432,593 @@ const SETTLEMENT_BADGE_STYLE = {
         if (!name || !database) return;
         try { await database.ref(`config/jandi/users/${name}/prefs/${key}`).set(on); }
         catch (e) { alert('저장 실패: ' + e.message); }
+      };
+
+      // 분기정산 열기 — 데스크톱은 전용 화면(#8a), 모바일은 기존 모달
+      const openSettlement = () => {
+        if (isMobile) { setShowMonthlySettlement(true); return; }
+        setShowProfilePage(false);
+        setShowSettlementPage(true);
+        updatePageTitle('분기정산');
+      };
+      // 분기 확인 리마인드 — 고른 담당자 개인 잔디로. 반환: 발송 수 (취소 시 null)
+      const remindQuarterConfirm = async (names) => {
+        const qKey = monthlySettlementMonth;
+        const meta = quarterMeta(qKey);
+        const withHook = (names || []).filter(n => jandiUserWebhooks?.[n]?.url && jandiUserWebhooks[n].enabled !== false);
+        const noHook = (names || []).filter(n => !withHook.includes(n));
+        if (!withHook.length) { alert(`잔디 개인 웹훅이 등록된 담당자가 없어요.${noHook.length ? `\n(미등록: ${noHook.join(', ')})` : ''}`); return null; }
+        if (!window.confirm(`${qKey} 실적 확인 리마인드를 ${withHook.length}명에게 잔디로 보냅니다.\n\n${withHook.join(', ')}${noHook.length ? `\n(웹훅 미등록이라 제외: ${noHook.join(', ')})` : ''}\n\n진행?`)) return null;
+        let sent = 0;
+        for (const name of withHook) {
+          try {
+            await fetch(jandiUserWebhooks[name].url, {
+              method: 'POST', mode: 'no-cors',
+              headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                body: `📋 [${qKey}] 분기 실적 확인 부탁드려요`,
+                connectColor: '#0F4C75',
+                connectInfo: [{ title: `마감 ${meta?.closingText || ''} (${meta?.ddayText || ''})`, description: `${name}님, 시스템 홈의 "분기 정산, 이대로 맞나요?" 카드에서 확인해 주세요.\n다르면 [다른 것 같아요]로 수정 요청을 보내면 됩니다.` }],
+              }),
+            });
+            sent += 1;
+          } catch (e) { console.warn('[quarter remind] failed', name, e); }
+        }
+        try { logActivity('quarter_remind', { quarterKey: qKey, names: withHook, sent }); } catch {}
+        return sent;
+      };
+
+      // ===== 분기정산 공통 컨텍스트 — 기존 분기정산 모달과 분기정산 화면(#8a)이 같이 쓴다 =====
+      //   모달 IIFE 안에 있던 파생값·핸들러를 그대로 옮긴 것 (로직 변경 없음). 렌더 중에 호출한다.
+      const buildQuarterSettlementCtx = () => {
+        // 데이터 로드 — Firebase quarterlySettlements/{quarterKey}
+        const loadData = async () => {
+          const targetKey = monthlySettlementMonth;
+          setMonthlySettlementLoading(true);
+          try {
+            const snap = await database.ref(`quarterlySettlements/${targetKey}`).once('value');
+            setMonthlySettlementData(snap.val() || null);
+          } catch (e) {
+            console.error('[quarterly] load failed', e);
+            setMonthlySettlementData(null);
+          } finally {
+            setMonthlySettlementLoading(false);
+            // 해당 분기는 시도 완료 — 데이터 없어도 재시도 안 하도록 마킹
+            setMonthlySettlementLoadedFor(targetKey);
+          }
+        };
+        // 실시간 계산: ptSchedules state 에서 직접 perAssignee 산출 (worker 캐시 의존 X)
+        //   결과 수정 즉시 모달 갱신 — 사용자: "금액 수정하면 실시간으로 반영"
+        //   같은 룰: pt.date <= 분기 종료일 + requested(or mv) + !completed + !superseded
+        const _liveData = aggregateQuarterSettlement(ptSchedules, monthlySettlementMonth, getQuarterSettlementOptions(monthlySettlementMonth));
+        // 실적 수치는 live 계산을 사용하되 마감·행 상태 같은 운영 메타는 Firebase 값을 유지한다.
+        // 이전에는 live totals가 closed 값을 덮어써 실제 마감 후에도 버튼이 비활성화됐다.
+        const _cachedTotals = monthlySettlementData?.totals || null;
+        const _cachedPerAssignee = monthlySettlementData?.perAssignee || {};
+        const _operationalTotals = _cachedTotals ? {
+          closed: _cachedTotals.closed === true,
+          closedAt: _cachedTotals.closedAt || null,
+          closedBy: _cachedTotals.closedBy || null,
+          closingWarnings: _cachedTotals.closingWarnings || null,
+          reopenedAt: _cachedTotals.reopenedAt || null,
+          reopenedBy: _cachedTotals.reopenedBy || null,
+          generatedAt: _cachedTotals.generatedAt || null,
+          generatedBy: _cachedTotals.generatedBy || null,
+          closingDate: _cachedTotals.closingDate || null,
+          payrollMonth: _cachedTotals.payrollMonth || null,
+          reportedTo: _cachedTotals.reportedTo || null,
+        } : {};
+        const _mergedPerAssignee = _liveData?.perAssignee
+          ? Object.fromEntries(Object.entries(_liveData.perAssignee).map(([assignee, liveRow]) => {
+            const cachedRow = _cachedPerAssignee[assignee] || {};
+            return [assignee, {
+              ...liveRow,
+              status: cachedRow.status || liveRow.status,
+              reportedToPayroll: cachedRow.reportedToPayroll ?? liveRow.reportedToPayroll,
+              reportedAt: cachedRow.reportedAt || liveRow.reportedAt || null,
+            }];
+          }))
+          : null;
+        const data = _liveData ? {
+          ..._liveData,
+          perAssignee: _mergedPerAssignee,
+          totals: { ...(_liveData.totals || {}), ..._operationalTotals },
+          _expandedReview: monthlySettlementData?._expandedReview,
+        } : monthlySettlementData;
+        const perAssignee = data?.perAssignee || {};
+        const totals = data?.totals || null;
+        // 담당자 확인 상태 + reviewRequests 주입 (quarterConfirmations 에서)
+        const confByName = quarterConfirmations[monthlySettlementMonth] || {};
+        const SETTLEMENT_EXCLUDED_NAMES = ['조현식']; // 정산 집계에서 제외할 담당자
+        const rows = Object.values(perAssignee)
+          .filter(a => a.totalCount > 0)
+          .filter(a => !SETTLEMENT_EXCLUDED_NAMES.includes(a.assignee))
+          .filter(a => monthlySettlementStatusFilter === 'all' || a.status === monthlySettlementStatusFilter)
+          .map(a => {
+            const conf = confByName[a.assignee] || {};
+            const reviewArr = Object.entries(conf.reviewRequests || {}).map(([k, v]) => ({ id: k, ...v }));
+            const openCount = reviewArr.filter(r => r.status !== 'resolved').length;
+            return { ...a, _conf: conf, _reviewRequests: reviewArr, _openReviewCount: openCount };
+          })
+          .sort((a, b) => (b.estimatedAmount || 0) - (a.estimatedAmount || 0));
+        // 검토요청 처리 (관리자)
+        const resolveReviewRequest = async (assignee, reqId) => {
+          if (!window.confirm('이 검증/수정 요청을 "처리완료" 로 표시합니다. 진행?')) return;
+          try {
+            await database.ref(`quarterConfirmations/${monthlySettlementMonth}/${assignee}/reviewRequests/${reqId}`).update({
+              status: 'resolved',
+              resolvedAt: new Date().toISOString(),
+              resolvedBy: currentUser?.name || 'admin',
+            });
+            // 담당자 개인 잔디 알림
+            const hook = jandiUserWebhooks?.[assignee];
+            if (hook?.url && hook.enabled !== false) {
+              try {
+                await fetch(hook.url, {
+                  method: 'POST', mode: 'no-cors',
+                  headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    body: `✅ ${monthlySettlementMonth} 검증/수정 요청 처리 완료`,
+                    connectColor: '#16a34a',
+                    connectInfo: [{ title: `${assignee}님 요청 반영됨`, description: '관리자가 요청을 처리했습니다. 마이페이지에서 확인해주세요.' }],
+                  }),
+                });
+              } catch {}
+            }
+          } catch (e) { alert('처리 실패: ' + e.message); }
+        };
+        const toggleReviewExpand = (assignee) => {
+          setMonthlySettlementData(prev => prev ? ({ ...prev, _expandedReview: prev._expandedReview === assignee ? null : assignee }) : prev);
+        };
+        const currentExpanded = data?._expandedReview;
+        const totalOpenReviews = rows.reduce((sum, r) => sum + (r._openReviewCount || 0), 0);
+        const confirmedCount = rows.filter(r => r._conf?.confirmed === true).length;
+        const finalConfirmedCount = rows.filter(r => r._conf?.finalConfirmed === true).length;
+        const finalRequestedCount = rows.filter(r => r._conf?.finalRequestedAt).length;
+
+        // 데이터 검증 레이어 — 리포트 신뢰도 계산
+        //   각 담당자 items 중 검증완료 (calc.amount > 0, reason null, status=verified) 비율
+        //   이슈 리스트: 결과 없음 / 미검증 / 취소공고 / 주담 결정 대기 등
+        const reliability = (() => {
+          let verifiedCount = 0;
+          let totalActive = 0;
+          const issues = {
+            noResult: 0,           // 결과 미입력
+            unverified: 0,         // K-APT 미검증 + 증빙 없음
+            mainPending: 0,        // 주담 결과 대기 (지원자인데 주담 없음)
+            cancelled: 0,          // 취소공고
+            excluded: 0,           // 제외
+            duplicate: 0,          // 중복 PT (구버전)
+          };
+          for (const r of rows) {
+            for (const item of (r.items || [])) {
+              totalActive++;
+              if (!item.result) { issues.noResult++; continue; }
+              if (item.reason === 'cancelled_notice') { issues.cancelled++; continue; }
+              if (['loss','vendor_self_pt','self_sales','draw_support_excluded'].includes(item.reason)) { issues.excluded++; continue; }
+              if (item.result === '감리') { verifiedCount++; continue; }  // 감리는 검증 불필요
+              // 해당 PT 의 verification 상태 확인
+              const pt = ptSchedules.find(p => p.id === item.ptId);
+              if (!pt) continue;
+              const hasEvidence = pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0;
+              const kaptVerified = pt.kaptVerified?.status === 'verified';
+              const manualVerified = pt.settlement?.[r.assignee]?.manualVerified;
+              if (kaptVerified || hasEvidence || manualVerified) verifiedCount++;
+              else issues.unverified++;
+            }
+          }
+          const reliabilityPct = totalActive > 0 ? Math.round(verifiedCount / totalActive * 100) : 100;
+          return { verifiedCount, totalActive, reliabilityPct, issues };
+        })();
+
+        // 최종확정 요청 발송 (2라운드 시작)
+        //  조건: 모든 담당자 자가확인 완료 + open reviewRequest 0건
+        const canRequestFinal = rows.length > 0 && confirmedCount === rows.length && totalOpenReviews === 0;
+        // 분기 마감 상태 (SaaS 운영 가드)
+        const isQuarterClosed = totals?.closed === true;
+        const quarterClosedAt = totals?.closedAt;
+        const quarterClosedBy = totals?.closedBy;
+
+        // 마감 후 김유림 급여 반영용 표준 Excel 다운로드
+        const downloadQuarterClosingExcel = async () => {
+          if (!isQuarterClosed) {
+            alert('분기 마감 후 엑셀을 다운로드할 수 있습니다.');
+            return;
+          }
+          const match = String(monthlySettlementMonth || '').match(/^(\d{4})-Q([1-4])$/);
+          if (!match) {
+            alert('분기 형식이 올바르지 않습니다.');
+            return;
+          }
+          const year = parseInt(match[1], 10);
+          const quarter = parseInt(match[2], 10);
+          const allData = { ptSchedules, briefingSchedules, personalSchedules, seminarSchedules, salesSchedules };
+          try {
+            setMonthlySettlementLoading(true);
+            const report = aggregateQuarterlyReport(
+              allData,
+              year,
+              quarter,
+              getQuarterSettlementOptions(monthlySettlementMonth),
+            );
+            const blob = await generateExcelBlob(report);
+            downloadBlob(blob, `POUR_분기보고서_${year}_${quarter}분기.xlsx`);
+          } catch (e) {
+            alert('마감 엑셀 생성 실패: ' + e.message);
+          } finally {
+            setMonthlySettlementLoading(false);
+          }
+        };
+
+        // 분기 마감/해제 — closed 플래그 + 이력 저장
+        const toggleQuarterClose = async () => {
+          if (isQuarterClosed) {
+            if (!window.confirm(`${monthlySettlementMonth} 분기 마감을 해제합니다.\n\n해제 시 담당자 및 관리자가 다시 수정 가능해집니다. 진행?`)) return;
+            try {
+              const nowISO = new Date().toISOString();
+              await database.ref(`quarterlySettlements/${monthlySettlementMonth}/totals`).update({
+                closed: false, closedAt: null, closedBy: null,
+                reopenedAt: nowISO, reopenedBy: currentUser?.name || 'admin',
+              });
+              logActivity('quarter_reopened', { quarterKey: monthlySettlementMonth });
+              alert('분기 마감 해제 완료');
+              await loadData();
+            } catch (e) { alert('해제 실패: ' + e.message); }
+            return;
+          }
+          // 마감 전 검증
+          const warnings = [];
+          if (rows.length === 0) warnings.push('담당자 0명 — 생성부터 해야 합니다');
+          if (confirmedCount < rows.length) warnings.push(`자가확인 미완: ${rows.length - confirmedCount}명`);
+          if (totalOpenReviews > 0) warnings.push(`처리 안 된 검증요청: ${totalOpenReviews}건`);
+          if (finalConfirmedCount < rows.length) warnings.push(`최종확정 미완: ${rows.length - finalConfirmedCount}명`);
+          const warningMsg = warnings.length > 0
+            ? `⚠ 마감 전 점검 미완:\n  - ${warnings.join('\n  - ')}\n\n마감 시 이후 수정 불가. 그래도 진행?`
+            : `${monthlySettlementMonth} 분기 마감\n\n마감 후 Firebase 데이터 수정은 차단되며 이력만 기록됩니다.\n김유림 발송·급여 반영의 근거 데이터로 고정됩니다.\n\n진행?`;
+          if (!window.confirm(warningMsg)) return;
+          try {
+            const nowISO = new Date().toISOString();
+            await database.ref(`quarterlySettlements/${monthlySettlementMonth}/totals`).update({
+              closed: true,
+              closedAt: nowISO,
+              closedBy: currentUser?.name || 'admin',
+              closingWarnings: warnings,
+            });
+            logActivity('quarter_closed', { quarterKey: monthlySettlementMonth, warnings });
+            // admin 잔디 알림
+            if (jandiUrl) {
+              try {
+                await fetch(jandiUrl, {
+                  method: 'POST', mode: 'no-cors',
+                  headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    body: `🔒 ${monthlySettlementMonth} 분기 마감`,
+                    connectColor: '#7c3aed',
+                    connectInfo: [{
+                      title: `마감 처리: ${currentUser?.name || 'admin'}`,
+                      description: [
+                        `담당자 ${rows.length}명 · 총 ${totals?.totalCount || 0}건 · 예상 ${(totals?.totalEstimated || 0).toLocaleString('ko-KR')}원`,
+                        warnings.length > 0 ? `\n⚠ 미완 항목: ${warnings.join(' · ')}` : '',
+                        '',
+                        '이 시점 이후 Firebase 데이터 변경은 차단됩니다.',
+                      ].filter(Boolean).join('\n'),
+                    }],
+                  }),
+                });
+              } catch {}
+            }
+            alert('🔒 분기 마감 완료');
+            await loadData();
+          } catch (e) { alert('마감 실패: ' + e.message); }
+        };
+
+        // 관리자 일괄 최종확정 토글 (담당자 확인 건너뛰기 — 긴급 발송용)
+        const bulkFinalConfirm = async () => {
+          if (rows.length === 0) return;
+          const notFinal = rows.filter(r => !r._conf?.finalConfirmed);
+          if (notFinal.length === 0) {
+            // 이미 전원 최종확정 — 되돌리기 확인
+            if (!window.confirm(`전원 이미 최종확정 상태입니다.\n\n모든 ${rows.length}명의 최종확정을 해제하시겠습니까? (되돌리기)`)) return;
+            const updates = {};
+            const now = new Date().toISOString();
+            rows.forEach(r => {
+              updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmed`] = false;
+              updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmedAt`] = null;
+              updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalUnconfirmedBy`] = currentUser?.name || 'admin';
+              updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalUnconfirmedAt`] = now;
+            });
+            try {
+              await database.ref().update(updates);
+              alert(`전원 최종확정 해제됨 (${rows.length}명)`);
+            } catch (e) { alert('해제 실패: ' + e.message); }
+            return;
+          }
+          const msg = `⚠ 관리자 직권 일괄 최종확정\n\n담당자 확인 절차를 건너뛰고 ${notFinal.length}명을 관리자가 대신 최종확정 처리합니다.\n\n대상: ${notFinal.map(r => r.assignee).join(', ')}\n\n※ 담당자 개별 [최종 확정] 버튼 대신 사용하는 긴급용.\n   권장 흐름이 아니므로 신중히 진행해주세요.\n\n진행?`;
+          if (!window.confirm(msg)) return;
+          const updates = {};
+          const now = new Date().toISOString();
+          const adminName = currentUser?.name || 'admin';
+          notFinal.forEach(r => {
+            updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmed`] = true;
+            updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmedAt`] = now;
+            updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmedBy`] = `${adminName} (직권)`;
+            updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmMethod`] = 'admin-bulk';
+          });
+          try {
+            await database.ref().update(updates);
+            // admin 채널 알림 (이력 남기기)
+            if (jandiUrl) {
+              try {
+                await fetch(jandiUrl, {
+                  method: 'POST', mode: 'no-cors',
+                  headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    body: `⚡ ${monthlySettlementMonth} 일괄 최종확정 — 관리자 직권`,
+                    connectColor: '#dc2626',
+                    connectInfo: [{
+                      title: `${notFinal.length}명 일괄 최종확정 처리`,
+                      description: [
+                        `처리자: ${adminName}`,
+                        `대상: ${notFinal.map(r => r.assignee).join(', ')}`,
+                        `시각: ${now.slice(0, 16).replace('T', ' ')}`,
+                        '',
+                        '담당자 확인 절차를 건너뛴 긴급 처리입니다.',
+                      ].join('\n'),
+                    }],
+                  }),
+                });
+              } catch {}
+            }
+            alert(`✅ ${notFinal.length}명 일괄 최종확정 처리 완료`);
+          } catch (e) { alert('처리 실패: ' + e.message); }
+        };
+        const requestFinalConfirmation = async () => {
+          if (!canRequestFinal) { alert('모든 담당자 자가확인 완료 + 검증요청 0건 상태여야 합니다.'); return; }
+          if (!window.confirm(`${rows.length}명 담당자에게 최종확정 요청을 발송합니다.\n\n이후 담당자가 "최종 확정" 누르면 김유림 발송 단계로 넘어갑니다. 진행?`)) return;
+          const now = new Date().toISOString();
+          const updates = {};
+          const notifyFailed = [];
+          for (const r of rows) {
+            updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalRequestedAt`] = now;
+            updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalRequestedBy`] = currentUser?.name || 'admin';
+          }
+          try { await database.ref().update(updates); }
+          catch (e) { alert('저장 실패: ' + e.message); return; }
+          // 잔디 발송 (담당자 개인 webhook)
+          for (const r of rows) {
+            const hook = jandiUserWebhooks?.[r.assignee];
+            if (!hook?.url || hook.enabled === false) { notifyFailed.push(r.assignee); continue; }
+            try {
+              await fetch(hook.url, {
+                method: 'POST', mode: 'no-cors',
+                headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  body: `📝 [${monthlySettlementMonth} 최종확정 요청]`,
+                  connectColor: '#2563eb',
+                  connectInfo: [{
+                    title: `${r.assignee}님 — 최종 확정 부탁드립니다`,
+                    description: [
+                      `1차 확인 이후 검증요청 사항이 모두 처리되었습니다.`,
+                      `마이페이지에서 [최종 확정] 버튼 눌러주세요.`,
+                      '',
+                      `최종 확정 후 김유림님에게 분기 보고서가 발송됩니다.`,
+                    ].join('\n'),
+                  }],
+                }),
+              });
+            } catch { notifyFailed.push(r.assignee); }
+          }
+          alert(`✅ ${rows.length}명에게 최종확정 요청 발송 완료${notifyFailed.length ? `\n(잔디 발송 실패 ${notifyFailed.length}명: ${notifyFailed.join(', ')})` : ''}`);
+        };
+        const updateRowStatus = async (assignee, newStatus) => {
+          if (isQuarterClosed) { alert('분기 마감 상태 — 수정 불가. [🔓 마감 해제] 후 재시도.'); return; }
+          // 검증 강제력: needs_review 상태의 담당자는 confirmed 로 승격 불가
+          //   → 미검증 건이 정산 파이프라인에 올라가는 것 차단
+          if (newStatus === 'confirmed') {
+            const row = rows.find(r => r.assignee === assignee);
+            const unreviewed = (row?.items || []).filter(it => {
+              if (it.reason === 'cancelled_notice') return false;
+              if (['loss','vendor_self_pt','self_sales','draw_support_excluded'].includes(it.reason)) return false;
+              if (it.result === '감리') return false;
+              const pt = ptSchedules.find(p => p.id === it.ptId);
+              if (!pt) return false;
+              const hasEvidence = pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0;
+              const kaptVerified = pt.kaptVerified?.status === 'verified';
+              const manualVerified = pt.settlement?.[assignee]?.manualVerified;
+              return !(kaptVerified || hasEvidence || manualVerified);
+            });
+            if (unreviewed.length > 0) {
+              alert(`⚠ 검증 강제 차단\n\n${assignee} 담당 건 중 검증 미완 ${unreviewed.length}건 있음:\n\n${unreviewed.slice(0, 5).map(i => `- ${i.siteName}`).join('\n')}${unreviewed.length > 5 ? `\n... 외 ${unreviewed.length - 5}건` : ''}\n\nK-APT 검증 · 잔디 증빙 · 관리자 수동 승인 중 하나를 먼저 처리해주세요.\n(⚠ 미검증 탭의 [✓ 전체 수동 승인] 일괄 처리 가능)`);
+              return;
+            }
+          }
+          try {
+            await database.ref(`quarterlySettlements/${monthlySettlementMonth}/perAssignee/${assignee}/status`).set(newStatus);
+            setMonthlySettlementData(prev => prev ? ({
+              ...prev,
+              perAssignee: { ...prev.perAssignee, [assignee]: { ...prev.perAssignee[assignee], status: newStatus } },
+            }) : prev);
+
+            // === 정산 완료 cascade — completed 처리 시 그 담당자의 분기 PT 모두 settlement.completed=true 마킹
+            //     → 다음 분기에서 자동 제외 (rule: !completed 조건 통과 못함)
+            //     사용자 룰: "정산완료되면 다음 분기에 안 보여야"
+            if (newStatus === 'completed') {
+              const row = rows.find(r => r.assignee === assignee);
+              if (row?.items?.length) {
+                const nowISO = new Date().toISOString();
+                const updates = {};
+                for (const it of row.items) {
+                  if (!it.ptId) continue;
+                  // 패/제외 PT 는 어차피 정산 대상 아니지만, 일관성 위해 모두 마킹
+                  const base = `pt/${it.ptId}/settlement/${assignee}`;
+                  updates[`${base}/completed`] = true;
+                  updates[`${base}/completedAt`] = nowISO;
+                  updates[`${base}/completedBy`] = currentUser?.name || 'admin';
+                  updates[`${base}/completedQuarter`] = monthlySettlementMonth;
+                  updates[`${base}/status`] = 'completed';
+                }
+                if (Object.keys(updates).length) {
+                  await database.ref().update(updates);
+                  // 로컬 state 도 갱신 (다음 분기 모달이 즉시 반영)
+                  setPtSchedules(prev => prev.map(ps => {
+                    const item = row.items.find(it => it.ptId === ps.id);
+                    if (!item) return ps;
+                    const cur = ps.settlement?.[assignee] || {};
+                    return { ...ps, settlement: { ...(ps.settlement || {}), [assignee]: { ...cur, completed: true, completedAt: nowISO, completedBy: currentUser?.name || 'admin', completedQuarter: monthlySettlementMonth, status: 'completed' } } };
+                  }));
+                }
+              }
+            }
+            // === 되돌리기 — completed → confirmed 시 일괄 해제
+            else if (newStatus === 'confirmed') {
+              const row = rows.find(r => r.assignee === assignee);
+              if (row?.items?.length) {
+                const updates = {};
+                for (const it of row.items) {
+                  if (!it.ptId) continue;
+                  const base = `pt/${it.ptId}/settlement/${assignee}`;
+                  updates[`${base}/completed`] = false;
+                  updates[`${base}/completedAt`] = null;
+                  updates[`${base}/completedBy`] = null;
+                  updates[`${base}/completedQuarter`] = null;
+                  updates[`${base}/status`] = 'confirmed';
+                }
+                if (Object.keys(updates).length) {
+                  try {
+                    await database.ref().update(updates);
+                    setPtSchedules(prev => prev.map(ps => {
+                      const item = row.items.find(it => it.ptId === ps.id);
+                      if (!item) return ps;
+                      const cur = ps.settlement?.[assignee] || {};
+                      const next = { ...cur };
+                      delete next.completed; delete next.completedAt; delete next.completedBy; delete next.completedQuarter;
+                      next.status = 'confirmed';
+                      return { ...ps, settlement: { ...(ps.settlement || {}), [assignee]: next } };
+                    }));
+                  } catch (_) {}
+                }
+              }
+            }
+          } catch (e) { alert('상태 변경 실패: ' + e.message); }
+        };
+        const bulkConfirm = async () => {
+          if (!rows.length) return;
+          const draftRows = rows.filter(r => r.status === 'draft' && r.reviewCount === 0);
+          if (draftRows.length === 0) { alert('확정할 항목 없음 (검토필요 건은 수동 처리 필요).'); return; }
+          if (!confirm(`검토필요 없는 draft ${draftRows.length}건을 일괄 확정하시겠습니까?`)) return;
+          const updates = {};
+          draftRows.forEach(r => { updates[`${r.assignee}/status`] = 'confirmed'; });
+          try {
+            await database.ref(`quarterlySettlements/${monthlySettlementMonth}/perAssignee`).update(updates);
+            await loadData();
+          } catch (e) { alert('일괄 확정 실패: ' + e.message); }
+        };
+        // ─── 일괄 정산완료 처리 — 해당 분기 정산대상 PT 전부 settlement.{a}.completed=true ───
+        //   대상: rows (담당자별 perAssignee) → items 의 PT 중
+        //         이미 completed 아님 + excluded 사유(loss/self/취소공고) 아님 인 것
+        //   동작: pt/{id}/settlement/{a}/{completed,completedAt,completedBy} 일괄 업데이트
+        //   되돌리기: 개별 PT 정산완료 체크박스 해제
+        const bulkCompleteAll = async () => {
+          if (!rows.length) { alert('정산 대상이 없습니다.'); return; }
+          const targets = [];
+          const EXCLUDED = new Set(['loss', 'vendor_self_pt', 'self_sales', 'draw_support_excluded', 'cancelled_notice', 'settlement_excluded']);
+          for (const r of rows) {
+            const items = r.items || [];
+            for (const it of items) {
+              if (it.reason && EXCLUDED.has(it.reason)) continue;
+              const pt = ptSchedules.find(p => p.id === it.ptId);
+              if (!pt) continue;
+              const stl = pt.settlement?.[r.assignee] || {};
+              if (stl.completed === true) continue;
+              targets.push({ ptId: it.ptId, assignee: r.assignee, siteName: it.siteName });
+            }
+          }
+          if (targets.length === 0) {
+            alert('이미 모든 정산 대상이 완료 상태이거나, 처리할 항목이 없습니다.');
+            return;
+          }
+          const byAssigneeCount = targets.reduce((m, t) => { m[t.assignee] = (m[t.assignee] || 0) + 1; return m; }, {});
+          const breakdownLine = Object.entries(byAssigneeCount).sort((a,b) => b[1]-a[1]).map(([n,c]) => `${n} ${c}`).join(' · ');
+          if (!window.confirm(`⚠ ${monthlySettlementMonth} 분기 정산대상 ${targets.length}건을 일괄 정산완료 처리합니다.\n\n  ${breakdownLine}\n\n각 담당자의 settlement.{name}.completed = true 로 설정하고 completedAt/completedBy 기록합니다.\n되돌리려면 개별 PT 카드의 정산완료 체크박스 해제.\n\n진행하시겠습니까?`)) return;
+          setMonthlySettlementLoading(true);
+          try {
+            const nowISO = new Date().toISOString();
+            const by = currentUser?.name || 'admin';
+            const updates = {};
+            targets.forEach(t => {
+              updates[`pt/${t.ptId}/settlement/${t.assignee}/completed`] = true;
+              updates[`pt/${t.ptId}/settlement/${t.assignee}/completedAt`] = nowISO;
+              updates[`pt/${t.ptId}/settlement/${t.assignee}/completedBy`] = by;
+              updates[`pt/${t.ptId}/settlement/${t.assignee}/completedQuarter`] = monthlySettlementMonth;
+              updates[`pt/${t.ptId}/settlement/${t.assignee}/status`] = 'completed';
+            });
+            await database.ref().update(updates);
+            // 로컬 state 즉시 갱신 (UI 빠른 반영)
+            setPtSchedules(prev => prev.map(ps => {
+              const ptTargets = targets.filter(t => t.ptId === ps.id);
+              if (ptTargets.length === 0) return ps;
+              const newSettlement = { ...(ps.settlement || {}) };
+              ptTargets.forEach(t => {
+                newSettlement[t.assignee] = { ...(newSettlement[t.assignee] || {}), completed: true, completedAt: nowISO, completedBy: by, completedQuarter: monthlySettlementMonth, status: 'completed' };
+              });
+              return { ...ps, settlement: newSettlement };
+            }));
+            try { logActivity('bulk_complete_all', { quarterKey: monthlySettlementMonth, count: targets.length, by }); } catch {}
+            alert(`✅ ${targets.length}건 일괄 정산완료 처리 완료.\n\n  ${breakdownLine}`);
+            await loadData();
+          } catch (e) {
+            alert('일괄 정산완료 실패: ' + e.message);
+          } finally {
+            setMonthlySettlementLoading(false);
+          }
+        };
+        const triggerGenerate = async () => {
+          if (!kaptWorkerUrl) { alert('K-APT Worker URL 미설정 — 설정 모달에서 먼저 입력하세요.'); return; }
+          if (!confirm(`Worker 에 ${monthlySettlementMonth} 분기정산 생성을 요청합니다. 진행?`)) return;
+          setMonthlySettlementLoading(true);
+          const callWorker = async (overwrite) => {
+            const resp = await fetch(`${kaptWorkerUrl.replace(/\/$/, '')}/run-quarterly-settlement`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ quarterKey: monthlySettlementMonth, force: true, overwrite }),
+            });
+            return { status: resp.status, data: await resp.json() };
+          };
+          try {
+            let { status, data } = await callWorker(false);
+            // 중복 가드 응답 (HTTP 409) — 덮어쓰기 확인 후 재호출
+            if (status === 409 || data.status === 'exists') {
+              const ex = data.existing || {};
+              const ok = confirm(
+                `⚠ 이미 ${monthlySettlementMonth} 분기정산 데이터가 있습니다.\n\n` +
+                `생성시각: ${(ex.generatedAt || '').slice(0, 19).replace('T', ' ')}\n` +
+                `생성자: ${ex.generatedBy || '-'}\n` +
+                `담당자: ${ex.totalAssignees || 0}명 · ${ex.totalCount || 0}건\n` +
+                `예상: ${(ex.totalEstimated || 0).toLocaleString('ko-KR')}원\n\n` +
+                `덮어쓰시겠습니까? (기존 status 는 초기화됨)`
+              );
+              if (!ok) { setMonthlySettlementLoading(false); return; }
+              ({ status, data } = await callWorker(true));
+            }
+            if (data.status === 'ok') {
+              const un = data.userNotify || {};
+              const userLine = (un.sent || un.skipped || un.failed)
+                ? `\n\n담당자 잔디 알림: 발송 ${un.sent || 0} / 미등록 ${un.skipped || 0}${un.failed ? ` / 실패 ${un.failed}` : ''}`
+                : '';
+              alert(`✅ 생성 완료\n\n담당자 ${data.totals?.totalAssignees}명 · ${data.totals?.totalCount}건\n예상 ${(data.totals?.totalEstimated || 0).toLocaleString('ko-KR')}원${userLine}`);
+              await loadData();
+            } else {
+              alert(`실패: ${data.reason || data.error || 'unknown'}`);
+            }
+          } catch (e) { alert('Worker 호출 실패: ' + e.message); }
+          finally { setMonthlySettlementLoading(false); }
+        };
+        // 최초/월변경 시 로드 — 해당 분기를 아직 시도하지 않았을 때만
+        //   분기 데이터가 없어도 1회만 호출 (이후 null 유지, 무한루프 방지)
+        if (monthlySettlementData === null && !monthlySettlementLoading && monthlySettlementLoadedFor !== monthlySettlementMonth) {
+          setTimeout(loadData, 0);
+        }
+        return { loadData, _liveData, _cachedTotals, _cachedPerAssignee, _operationalTotals, _mergedPerAssignee, data, perAssignee, totals, confByName, SETTLEMENT_EXCLUDED_NAMES, rows, resolveReviewRequest, toggleReviewExpand, currentExpanded, totalOpenReviews, confirmedCount, finalConfirmedCount, finalRequestedCount, reliability, canRequestFinal, isQuarterClosed, quarterClosedAt, quarterClosedBy, downloadQuarterClosingExcel, toggleQuarterClose, bulkFinalConfirm, requestFinalConfirmation, updateRowStatus, bulkConfirm, bulkCompleteAll, triggerGenerate };
       };
 
       // 아침 브리핑(#6c) 수동 발송 — 관리자 채널엔 전체, 담당자 개인 잔디엔 각자 일정만.
@@ -7374,7 +7965,7 @@ const SETTLEMENT_BADGE_STYLE = {
                   onGoReview={() => goPerf({ filter: 'review' })}
                   onGoUnassigned={() => goSchedule({ view: 'list', listFilter: 'unassigned' })}
                   onGoPending={() => { setUseLegacySchedule(true); goSchedule({}); setListFilter('pending'); setViewMode('list'); }}
-                  onGoSettlement={() => (canSettle ? setShowMonthlySettlement(true) : goPerf({}))}
+                  onGoSettlement={() => (canSettle ? openSettlement() : goPerf({}))}
                   onGoTeam={(team) => goPerf({ who: { label: team.name, names: team.members } })}
                   onSearch={(q) => goSchedule({ view: 'list', listFilter: 'all', search: q })}
                   onMeeting={() => goView('meeting', '영업회의')}
@@ -9762,7 +10353,8 @@ const SETTLEMENT_BADGE_STYLE = {
                         {...shellSidebarProps('perf', () => setUseLegacyPerformance(true))}
                         initialFilter={perfInit.filter}
                         initialWho={perfInit.who}
-                        onOpenQuarterSettlement={canSettle ? () => setShowMonthlySettlement(true) : undefined}
+                        initialQuarterKey={perfInit.quarterKey}
+                        onOpenQuarterSettlement={canSettle ? openSettlement : undefined}
                         exportActions={[
                           { key: 'excel', label: 'Excel', onClick: q => exportQuarterlyExcel(+q.slice(0, 4), qNum(q), 'all') },
                           { key: 'excel-noamt', label: 'Excel (금액 제외)', onClick: q => exportQuarterlyExcel(+q.slice(0, 4), qNum(q), 'all', false) },
@@ -12998,6 +13590,51 @@ tr.suppressed td.fname{color:#64748b;}
               />
             </div>
           )}
+          {/* 분기정산(#8a) — 데스크톱, 관리자·한준엽. 수치·동작은 기존 분기정산 모달과 같은 buildQuarterSettlementCtx() */}
+          {showSettlementPage && !isMobile && (currentUser?.isAdmin || currentUser?.name === '한준엽') && (() => {
+            const ctx = buildQuarterSettlementCtx();
+            const qKey = monthlySettlementMonth;
+            const goPerfView = (init) => {
+              setShowSettlementPage(false); setScheduleInit({}); setPerfInit({ quarterKey: qKey, ...init });
+              setShowDashboard(false); setShowPerformance(true); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false);
+              updatePageTitle('실적');
+            };
+            return (
+              <div style={{ position: 'fixed', inset: 0, zIndex: 505, overflow: 'auto', background: '#f8fafc', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>
+                <SettlementPage
+                  ctx={ctx}
+                  month={qKey}
+                  onMonthChange={(v) => { setMonthlySettlementMonth(v); setMonthlySettlementData(null); }}
+                  statusFilter={monthlySettlementStatusFilter}
+                  onStatusFilterChange={setMonthlySettlementStatusFilter}
+                  loading={monthlySettlementLoading}
+                  ptSchedules={ptSchedules}
+                  todayStr={todayStr}
+                  sidebar={shellSidebarProps('settle', null)}
+                  onRemind={remindQuarterConfirm}
+                  onOpenReport={() => { const m = qKey.match(/^(\d{4})-Q([1-4])$/); if (m) { setQuarterReportYear(+m[1]); setQuarterReportQuarter(+m[2]); } setShowQuarterReportModal(true); }}
+                  onGoReview={() => goPerfView({ filter: 'review' })}
+                  onGoAssignee={(a, mode) => goPerfView({ who: a, filter: mode === 'review' ? 'review' : 'all' })}
+                  onGoSupervision={() => { setUseLegacyPerformance(true); goPerfView({}); }}
+                  onKaptCandidates={workbenchOpenKaptVerify}
+                  onManualApprove={workbenchOpenReview}
+                  onKaptCancel={workbenchKaptCancel}
+                  onBackfill={currentUser?.isAdmin ? async () => {
+                    if (!window.confirm('전체 PT의 정산 파생 필드를 재계산해 Firebase에 저장합니다.\n\n기존 값과 다르면 덮어씁니다. 진행하시겠습니까?')) return;
+                    setMonthlySettlementLoading(true);
+                    try {
+                      const r = await backfillAllSettlementDerived();
+                      alert(`✅ 과거 데이터 보정 완료\n\nPT ${r.totalPts}건 · 저장 ${r.written}건 · 스킵 ${r.skipped}건`);
+                      await ctx.loadData();
+                    } catch (e) { alert('실패: ' + e.message); }
+                    finally { setMonthlySettlementLoading(false); }
+                  } : null}
+                  onOpenActivityLog={() => setShowActivityLog(true)}
+                  onOpenLegacy={() => setShowMonthlySettlement(true)}
+                />
+              </div>
+            );
+          })()}
           {/* 마이페이지(#9a) — 데스크톱. 어느 화면에서든 사이드바 프로필 카드로 열고, 메뉴를 누르면 닫힌다. */}
           {showProfilePage && !isMobile && isLoggedIn && currentUser && (
             <div style={{ position: 'fixed', inset: 0, zIndex: 510, overflow: 'auto', background: '#f8fafc', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>
@@ -16706,553 +17343,7 @@ tr.suppressed td.fname{color:#64748b;}
 
           {/* 관리자 분기정산 모달 (P7 — 월정산 → 분기정산 전환) — admin + 한준엽(팀장) */}
           {showMonthlySettlement && (currentUser?.isAdmin || currentUser?.name === '한준엽') && (() => {
-            // 데이터 로드 — Firebase quarterlySettlements/{quarterKey}
-            const loadData = async () => {
-              const targetKey = monthlySettlementMonth;
-              setMonthlySettlementLoading(true);
-              try {
-                const snap = await database.ref(`quarterlySettlements/${targetKey}`).once('value');
-                setMonthlySettlementData(snap.val() || null);
-              } catch (e) {
-                console.error('[quarterly] load failed', e);
-                setMonthlySettlementData(null);
-              } finally {
-                setMonthlySettlementLoading(false);
-                // 해당 분기는 시도 완료 — 데이터 없어도 재시도 안 하도록 마킹
-                setMonthlySettlementLoadedFor(targetKey);
-              }
-            };
-            // 실시간 계산: ptSchedules state 에서 직접 perAssignee 산출 (worker 캐시 의존 X)
-            //   결과 수정 즉시 모달 갱신 — 사용자: "금액 수정하면 실시간으로 반영"
-            //   같은 룰: pt.date <= 분기 종료일 + requested(or mv) + !completed + !superseded
-            const _liveData = aggregateQuarterSettlement(ptSchedules, monthlySettlementMonth, getQuarterSettlementOptions(monthlySettlementMonth));
-            // 실적 수치는 live 계산을 사용하되 마감·행 상태 같은 운영 메타는 Firebase 값을 유지한다.
-            // 이전에는 live totals가 closed 값을 덮어써 실제 마감 후에도 버튼이 비활성화됐다.
-            const _cachedTotals = monthlySettlementData?.totals || null;
-            const _cachedPerAssignee = monthlySettlementData?.perAssignee || {};
-            const _operationalTotals = _cachedTotals ? {
-              closed: _cachedTotals.closed === true,
-              closedAt: _cachedTotals.closedAt || null,
-              closedBy: _cachedTotals.closedBy || null,
-              closingWarnings: _cachedTotals.closingWarnings || null,
-              reopenedAt: _cachedTotals.reopenedAt || null,
-              reopenedBy: _cachedTotals.reopenedBy || null,
-              generatedAt: _cachedTotals.generatedAt || null,
-              generatedBy: _cachedTotals.generatedBy || null,
-              closingDate: _cachedTotals.closingDate || null,
-              payrollMonth: _cachedTotals.payrollMonth || null,
-              reportedTo: _cachedTotals.reportedTo || null,
-            } : {};
-            const _mergedPerAssignee = _liveData?.perAssignee
-              ? Object.fromEntries(Object.entries(_liveData.perAssignee).map(([assignee, liveRow]) => {
-                const cachedRow = _cachedPerAssignee[assignee] || {};
-                return [assignee, {
-                  ...liveRow,
-                  status: cachedRow.status || liveRow.status,
-                  reportedToPayroll: cachedRow.reportedToPayroll ?? liveRow.reportedToPayroll,
-                  reportedAt: cachedRow.reportedAt || liveRow.reportedAt || null,
-                }];
-              }))
-              : null;
-            const data = _liveData ? {
-              ..._liveData,
-              perAssignee: _mergedPerAssignee,
-              totals: { ...(_liveData.totals || {}), ..._operationalTotals },
-              _expandedReview: monthlySettlementData?._expandedReview,
-            } : monthlySettlementData;
-            const perAssignee = data?.perAssignee || {};
-            const totals = data?.totals || null;
-            // 담당자 확인 상태 + reviewRequests 주입 (quarterConfirmations 에서)
-            const confByName = quarterConfirmations[monthlySettlementMonth] || {};
-            const SETTLEMENT_EXCLUDED_NAMES = ['조현식']; // 정산 집계에서 제외할 담당자
-            const rows = Object.values(perAssignee)
-              .filter(a => a.totalCount > 0)
-              .filter(a => !SETTLEMENT_EXCLUDED_NAMES.includes(a.assignee))
-              .filter(a => monthlySettlementStatusFilter === 'all' || a.status === monthlySettlementStatusFilter)
-              .map(a => {
-                const conf = confByName[a.assignee] || {};
-                const reviewArr = Object.entries(conf.reviewRequests || {}).map(([k, v]) => ({ id: k, ...v }));
-                const openCount = reviewArr.filter(r => r.status !== 'resolved').length;
-                return { ...a, _conf: conf, _reviewRequests: reviewArr, _openReviewCount: openCount };
-              })
-              .sort((a, b) => (b.estimatedAmount || 0) - (a.estimatedAmount || 0));
-            // 검토요청 처리 (관리자)
-            const resolveReviewRequest = async (assignee, reqId) => {
-              if (!window.confirm('이 검증/수정 요청을 "처리완료" 로 표시합니다. 진행?')) return;
-              try {
-                await database.ref(`quarterConfirmations/${monthlySettlementMonth}/${assignee}/reviewRequests/${reqId}`).update({
-                  status: 'resolved',
-                  resolvedAt: new Date().toISOString(),
-                  resolvedBy: currentUser?.name || 'admin',
-                });
-                // 담당자 개인 잔디 알림
-                const hook = jandiUserWebhooks?.[assignee];
-                if (hook?.url && hook.enabled !== false) {
-                  try {
-                    await fetch(hook.url, {
-                      method: 'POST', mode: 'no-cors',
-                      headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        body: `✅ ${monthlySettlementMonth} 검증/수정 요청 처리 완료`,
-                        connectColor: '#16a34a',
-                        connectInfo: [{ title: `${assignee}님 요청 반영됨`, description: '관리자가 요청을 처리했습니다. 마이페이지에서 확인해주세요.' }],
-                      }),
-                    });
-                  } catch {}
-                }
-              } catch (e) { alert('처리 실패: ' + e.message); }
-            };
-            const toggleReviewExpand = (assignee) => {
-              setMonthlySettlementData(prev => prev ? ({ ...prev, _expandedReview: prev._expandedReview === assignee ? null : assignee }) : prev);
-            };
-            const currentExpanded = data?._expandedReview;
-            const totalOpenReviews = rows.reduce((sum, r) => sum + (r._openReviewCount || 0), 0);
-            const confirmedCount = rows.filter(r => r._conf?.confirmed === true).length;
-            const finalConfirmedCount = rows.filter(r => r._conf?.finalConfirmed === true).length;
-            const finalRequestedCount = rows.filter(r => r._conf?.finalRequestedAt).length;
-
-            // 데이터 검증 레이어 — 리포트 신뢰도 계산
-            //   각 담당자 items 중 검증완료 (calc.amount > 0, reason null, status=verified) 비율
-            //   이슈 리스트: 결과 없음 / 미검증 / 취소공고 / 주담 결정 대기 등
-            const reliability = (() => {
-              let verifiedCount = 0;
-              let totalActive = 0;
-              const issues = {
-                noResult: 0,           // 결과 미입력
-                unverified: 0,         // K-APT 미검증 + 증빙 없음
-                mainPending: 0,        // 주담 결과 대기 (지원자인데 주담 없음)
-                cancelled: 0,          // 취소공고
-                excluded: 0,           // 제외
-                duplicate: 0,          // 중복 PT (구버전)
-              };
-              for (const r of rows) {
-                for (const item of (r.items || [])) {
-                  totalActive++;
-                  if (!item.result) { issues.noResult++; continue; }
-                  if (item.reason === 'cancelled_notice') { issues.cancelled++; continue; }
-                  if (['loss','vendor_self_pt','self_sales','draw_support_excluded'].includes(item.reason)) { issues.excluded++; continue; }
-                  if (item.result === '감리') { verifiedCount++; continue; }  // 감리는 검증 불필요
-                  // 해당 PT 의 verification 상태 확인
-                  const pt = ptSchedules.find(p => p.id === item.ptId);
-                  if (!pt) continue;
-                  const hasEvidence = pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0;
-                  const kaptVerified = pt.kaptVerified?.status === 'verified';
-                  const manualVerified = pt.settlement?.[r.assignee]?.manualVerified;
-                  if (kaptVerified || hasEvidence || manualVerified) verifiedCount++;
-                  else issues.unverified++;
-                }
-              }
-              const reliabilityPct = totalActive > 0 ? Math.round(verifiedCount / totalActive * 100) : 100;
-              return { verifiedCount, totalActive, reliabilityPct, issues };
-            })();
-
-            // 최종확정 요청 발송 (2라운드 시작)
-            //  조건: 모든 담당자 자가확인 완료 + open reviewRequest 0건
-            const canRequestFinal = rows.length > 0 && confirmedCount === rows.length && totalOpenReviews === 0;
-            // 분기 마감 상태 (SaaS 운영 가드)
-            const isQuarterClosed = totals?.closed === true;
-            const quarterClosedAt = totals?.closedAt;
-            const quarterClosedBy = totals?.closedBy;
-
-            // 마감 후 김유림 급여 반영용 표준 Excel 다운로드
-            const downloadQuarterClosingExcel = async () => {
-              if (!isQuarterClosed) {
-                alert('분기 마감 후 엑셀을 다운로드할 수 있습니다.');
-                return;
-              }
-              const match = String(monthlySettlementMonth || '').match(/^(\d{4})-Q([1-4])$/);
-              if (!match) {
-                alert('분기 형식이 올바르지 않습니다.');
-                return;
-              }
-              const year = parseInt(match[1], 10);
-              const quarter = parseInt(match[2], 10);
-              const allData = { ptSchedules, briefingSchedules, personalSchedules, seminarSchedules, salesSchedules };
-              try {
-                setMonthlySettlementLoading(true);
-                const report = aggregateQuarterlyReport(
-                  allData,
-                  year,
-                  quarter,
-                  getQuarterSettlementOptions(monthlySettlementMonth),
-                );
-                const blob = await generateExcelBlob(report);
-                downloadBlob(blob, `POUR_분기보고서_${year}_${quarter}분기.xlsx`);
-              } catch (e) {
-                alert('마감 엑셀 생성 실패: ' + e.message);
-              } finally {
-                setMonthlySettlementLoading(false);
-              }
-            };
-
-            // 분기 마감/해제 — closed 플래그 + 이력 저장
-            const toggleQuarterClose = async () => {
-              if (isQuarterClosed) {
-                if (!window.confirm(`${monthlySettlementMonth} 분기 마감을 해제합니다.\n\n해제 시 담당자 및 관리자가 다시 수정 가능해집니다. 진행?`)) return;
-                try {
-                  const nowISO = new Date().toISOString();
-                  await database.ref(`quarterlySettlements/${monthlySettlementMonth}/totals`).update({
-                    closed: false, closedAt: null, closedBy: null,
-                    reopenedAt: nowISO, reopenedBy: currentUser?.name || 'admin',
-                  });
-                  logActivity('quarter_reopened', { quarterKey: monthlySettlementMonth });
-                  alert('분기 마감 해제 완료');
-                  await loadData();
-                } catch (e) { alert('해제 실패: ' + e.message); }
-                return;
-              }
-              // 마감 전 검증
-              const warnings = [];
-              if (rows.length === 0) warnings.push('담당자 0명 — 생성부터 해야 합니다');
-              if (confirmedCount < rows.length) warnings.push(`자가확인 미완: ${rows.length - confirmedCount}명`);
-              if (totalOpenReviews > 0) warnings.push(`처리 안 된 검증요청: ${totalOpenReviews}건`);
-              if (finalConfirmedCount < rows.length) warnings.push(`최종확정 미완: ${rows.length - finalConfirmedCount}명`);
-              const warningMsg = warnings.length > 0
-                ? `⚠ 마감 전 점검 미완:\n  - ${warnings.join('\n  - ')}\n\n마감 시 이후 수정 불가. 그래도 진행?`
-                : `${monthlySettlementMonth} 분기 마감\n\n마감 후 Firebase 데이터 수정은 차단되며 이력만 기록됩니다.\n김유림 발송·급여 반영의 근거 데이터로 고정됩니다.\n\n진행?`;
-              if (!window.confirm(warningMsg)) return;
-              try {
-                const nowISO = new Date().toISOString();
-                await database.ref(`quarterlySettlements/${monthlySettlementMonth}/totals`).update({
-                  closed: true,
-                  closedAt: nowISO,
-                  closedBy: currentUser?.name || 'admin',
-                  closingWarnings: warnings,
-                });
-                logActivity('quarter_closed', { quarterKey: monthlySettlementMonth, warnings });
-                // admin 잔디 알림
-                if (jandiUrl) {
-                  try {
-                    await fetch(jandiUrl, {
-                      method: 'POST', mode: 'no-cors',
-                      headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        body: `🔒 ${monthlySettlementMonth} 분기 마감`,
-                        connectColor: '#7c3aed',
-                        connectInfo: [{
-                          title: `마감 처리: ${currentUser?.name || 'admin'}`,
-                          description: [
-                            `담당자 ${rows.length}명 · 총 ${totals?.totalCount || 0}건 · 예상 ${(totals?.totalEstimated || 0).toLocaleString('ko-KR')}원`,
-                            warnings.length > 0 ? `\n⚠ 미완 항목: ${warnings.join(' · ')}` : '',
-                            '',
-                            '이 시점 이후 Firebase 데이터 변경은 차단됩니다.',
-                          ].filter(Boolean).join('\n'),
-                        }],
-                      }),
-                    });
-                  } catch {}
-                }
-                alert('🔒 분기 마감 완료');
-                await loadData();
-              } catch (e) { alert('마감 실패: ' + e.message); }
-            };
-
-            // 관리자 일괄 최종확정 토글 (담당자 확인 건너뛰기 — 긴급 발송용)
-            const bulkFinalConfirm = async () => {
-              if (rows.length === 0) return;
-              const notFinal = rows.filter(r => !r._conf?.finalConfirmed);
-              if (notFinal.length === 0) {
-                // 이미 전원 최종확정 — 되돌리기 확인
-                if (!window.confirm(`전원 이미 최종확정 상태입니다.\n\n모든 ${rows.length}명의 최종확정을 해제하시겠습니까? (되돌리기)`)) return;
-                const updates = {};
-                const now = new Date().toISOString();
-                rows.forEach(r => {
-                  updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmed`] = false;
-                  updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmedAt`] = null;
-                  updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalUnconfirmedBy`] = currentUser?.name || 'admin';
-                  updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalUnconfirmedAt`] = now;
-                });
-                try {
-                  await database.ref().update(updates);
-                  alert(`전원 최종확정 해제됨 (${rows.length}명)`);
-                } catch (e) { alert('해제 실패: ' + e.message); }
-                return;
-              }
-              const msg = `⚠ 관리자 직권 일괄 최종확정\n\n담당자 확인 절차를 건너뛰고 ${notFinal.length}명을 관리자가 대신 최종확정 처리합니다.\n\n대상: ${notFinal.map(r => r.assignee).join(', ')}\n\n※ 담당자 개별 [최종 확정] 버튼 대신 사용하는 긴급용.\n   권장 흐름이 아니므로 신중히 진행해주세요.\n\n진행?`;
-              if (!window.confirm(msg)) return;
-              const updates = {};
-              const now = new Date().toISOString();
-              const adminName = currentUser?.name || 'admin';
-              notFinal.forEach(r => {
-                updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmed`] = true;
-                updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmedAt`] = now;
-                updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmedBy`] = `${adminName} (직권)`;
-                updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalConfirmMethod`] = 'admin-bulk';
-              });
-              try {
-                await database.ref().update(updates);
-                // admin 채널 알림 (이력 남기기)
-                if (jandiUrl) {
-                  try {
-                    await fetch(jandiUrl, {
-                      method: 'POST', mode: 'no-cors',
-                      headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        body: `⚡ ${monthlySettlementMonth} 일괄 최종확정 — 관리자 직권`,
-                        connectColor: '#dc2626',
-                        connectInfo: [{
-                          title: `${notFinal.length}명 일괄 최종확정 처리`,
-                          description: [
-                            `처리자: ${adminName}`,
-                            `대상: ${notFinal.map(r => r.assignee).join(', ')}`,
-                            `시각: ${now.slice(0, 16).replace('T', ' ')}`,
-                            '',
-                            '담당자 확인 절차를 건너뛴 긴급 처리입니다.',
-                          ].join('\n'),
-                        }],
-                      }),
-                    });
-                  } catch {}
-                }
-                alert(`✅ ${notFinal.length}명 일괄 최종확정 처리 완료`);
-              } catch (e) { alert('처리 실패: ' + e.message); }
-            };
-            const requestFinalConfirmation = async () => {
-              if (!canRequestFinal) { alert('모든 담당자 자가확인 완료 + 검증요청 0건 상태여야 합니다.'); return; }
-              if (!window.confirm(`${rows.length}명 담당자에게 최종확정 요청을 발송합니다.\n\n이후 담당자가 "최종 확정" 누르면 김유림 발송 단계로 넘어갑니다. 진행?`)) return;
-              const now = new Date().toISOString();
-              const updates = {};
-              const notifyFailed = [];
-              for (const r of rows) {
-                updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalRequestedAt`] = now;
-                updates[`quarterConfirmations/${monthlySettlementMonth}/${r.assignee}/finalRequestedBy`] = currentUser?.name || 'admin';
-              }
-              try { await database.ref().update(updates); }
-              catch (e) { alert('저장 실패: ' + e.message); return; }
-              // 잔디 발송 (담당자 개인 webhook)
-              for (const r of rows) {
-                const hook = jandiUserWebhooks?.[r.assignee];
-                if (!hook?.url || hook.enabled === false) { notifyFailed.push(r.assignee); continue; }
-                try {
-                  await fetch(hook.url, {
-                    method: 'POST', mode: 'no-cors',
-                    headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      body: `📝 [${monthlySettlementMonth} 최종확정 요청]`,
-                      connectColor: '#2563eb',
-                      connectInfo: [{
-                        title: `${r.assignee}님 — 최종 확정 부탁드립니다`,
-                        description: [
-                          `1차 확인 이후 검증요청 사항이 모두 처리되었습니다.`,
-                          `마이페이지에서 [최종 확정] 버튼 눌러주세요.`,
-                          '',
-                          `최종 확정 후 김유림님에게 분기 보고서가 발송됩니다.`,
-                        ].join('\n'),
-                      }],
-                    }),
-                  });
-                } catch { notifyFailed.push(r.assignee); }
-              }
-              alert(`✅ ${rows.length}명에게 최종확정 요청 발송 완료${notifyFailed.length ? `\n(잔디 발송 실패 ${notifyFailed.length}명: ${notifyFailed.join(', ')})` : ''}`);
-            };
-            const updateRowStatus = async (assignee, newStatus) => {
-              if (isQuarterClosed) { alert('분기 마감 상태 — 수정 불가. [🔓 마감 해제] 후 재시도.'); return; }
-              // 검증 강제력: needs_review 상태의 담당자는 confirmed 로 승격 불가
-              //   → 미검증 건이 정산 파이프라인에 올라가는 것 차단
-              if (newStatus === 'confirmed') {
-                const row = rows.find(r => r.assignee === assignee);
-                const unreviewed = (row?.items || []).filter(it => {
-                  if (it.reason === 'cancelled_notice') return false;
-                  if (['loss','vendor_self_pt','self_sales','draw_support_excluded'].includes(it.reason)) return false;
-                  if (it.result === '감리') return false;
-                  const pt = ptSchedules.find(p => p.id === it.ptId);
-                  if (!pt) return false;
-                  const hasEvidence = pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0;
-                  const kaptVerified = pt.kaptVerified?.status === 'verified';
-                  const manualVerified = pt.settlement?.[assignee]?.manualVerified;
-                  return !(kaptVerified || hasEvidence || manualVerified);
-                });
-                if (unreviewed.length > 0) {
-                  alert(`⚠ 검증 강제 차단\n\n${assignee} 담당 건 중 검증 미완 ${unreviewed.length}건 있음:\n\n${unreviewed.slice(0, 5).map(i => `- ${i.siteName}`).join('\n')}${unreviewed.length > 5 ? `\n... 외 ${unreviewed.length - 5}건` : ''}\n\nK-APT 검증 · 잔디 증빙 · 관리자 수동 승인 중 하나를 먼저 처리해주세요.\n(⚠ 미검증 탭의 [✓ 전체 수동 승인] 일괄 처리 가능)`);
-                  return;
-                }
-              }
-              try {
-                await database.ref(`quarterlySettlements/${monthlySettlementMonth}/perAssignee/${assignee}/status`).set(newStatus);
-                setMonthlySettlementData(prev => prev ? ({
-                  ...prev,
-                  perAssignee: { ...prev.perAssignee, [assignee]: { ...prev.perAssignee[assignee], status: newStatus } },
-                }) : prev);
-
-                // === 정산 완료 cascade — completed 처리 시 그 담당자의 분기 PT 모두 settlement.completed=true 마킹
-                //     → 다음 분기에서 자동 제외 (rule: !completed 조건 통과 못함)
-                //     사용자 룰: "정산완료되면 다음 분기에 안 보여야"
-                if (newStatus === 'completed') {
-                  const row = rows.find(r => r.assignee === assignee);
-                  if (row?.items?.length) {
-                    const nowISO = new Date().toISOString();
-                    const updates = {};
-                    for (const it of row.items) {
-                      if (!it.ptId) continue;
-                      // 패/제외 PT 는 어차피 정산 대상 아니지만, 일관성 위해 모두 마킹
-                      const base = `pt/${it.ptId}/settlement/${assignee}`;
-                      updates[`${base}/completed`] = true;
-                      updates[`${base}/completedAt`] = nowISO;
-                      updates[`${base}/completedBy`] = currentUser?.name || 'admin';
-                      updates[`${base}/completedQuarter`] = monthlySettlementMonth;
-                      updates[`${base}/status`] = 'completed';
-                    }
-                    if (Object.keys(updates).length) {
-                      await database.ref().update(updates);
-                      // 로컬 state 도 갱신 (다음 분기 모달이 즉시 반영)
-                      setPtSchedules(prev => prev.map(ps => {
-                        const item = row.items.find(it => it.ptId === ps.id);
-                        if (!item) return ps;
-                        const cur = ps.settlement?.[assignee] || {};
-                        return { ...ps, settlement: { ...(ps.settlement || {}), [assignee]: { ...cur, completed: true, completedAt: nowISO, completedBy: currentUser?.name || 'admin', completedQuarter: monthlySettlementMonth, status: 'completed' } } };
-                      }));
-                    }
-                  }
-                }
-                // === 되돌리기 — completed → confirmed 시 일괄 해제
-                else if (newStatus === 'confirmed') {
-                  const row = rows.find(r => r.assignee === assignee);
-                  if (row?.items?.length) {
-                    const updates = {};
-                    for (const it of row.items) {
-                      if (!it.ptId) continue;
-                      const base = `pt/${it.ptId}/settlement/${assignee}`;
-                      updates[`${base}/completed`] = false;
-                      updates[`${base}/completedAt`] = null;
-                      updates[`${base}/completedBy`] = null;
-                      updates[`${base}/completedQuarter`] = null;
-                      updates[`${base}/status`] = 'confirmed';
-                    }
-                    if (Object.keys(updates).length) {
-                      try {
-                        await database.ref().update(updates);
-                        setPtSchedules(prev => prev.map(ps => {
-                          const item = row.items.find(it => it.ptId === ps.id);
-                          if (!item) return ps;
-                          const cur = ps.settlement?.[assignee] || {};
-                          const next = { ...cur };
-                          delete next.completed; delete next.completedAt; delete next.completedBy; delete next.completedQuarter;
-                          next.status = 'confirmed';
-                          return { ...ps, settlement: { ...(ps.settlement || {}), [assignee]: next } };
-                        }));
-                      } catch (_) {}
-                    }
-                  }
-                }
-              } catch (e) { alert('상태 변경 실패: ' + e.message); }
-            };
-            const bulkConfirm = async () => {
-              if (!rows.length) return;
-              const draftRows = rows.filter(r => r.status === 'draft' && r.reviewCount === 0);
-              if (draftRows.length === 0) { alert('확정할 항목 없음 (검토필요 건은 수동 처리 필요).'); return; }
-              if (!confirm(`검토필요 없는 draft ${draftRows.length}건을 일괄 확정하시겠습니까?`)) return;
-              const updates = {};
-              draftRows.forEach(r => { updates[`${r.assignee}/status`] = 'confirmed'; });
-              try {
-                await database.ref(`quarterlySettlements/${monthlySettlementMonth}/perAssignee`).update(updates);
-                await loadData();
-              } catch (e) { alert('일괄 확정 실패: ' + e.message); }
-            };
-            // ─── 일괄 정산완료 처리 — 해당 분기 정산대상 PT 전부 settlement.{a}.completed=true ───
-            //   대상: rows (담당자별 perAssignee) → items 의 PT 중
-            //         이미 completed 아님 + excluded 사유(loss/self/취소공고) 아님 인 것
-            //   동작: pt/{id}/settlement/{a}/{completed,completedAt,completedBy} 일괄 업데이트
-            //   되돌리기: 개별 PT 정산완료 체크박스 해제
-            const bulkCompleteAll = async () => {
-              if (!rows.length) { alert('정산 대상이 없습니다.'); return; }
-              const targets = [];
-              const EXCLUDED = new Set(['loss', 'vendor_self_pt', 'self_sales', 'draw_support_excluded', 'cancelled_notice', 'settlement_excluded']);
-              for (const r of rows) {
-                const items = r.items || [];
-                for (const it of items) {
-                  if (it.reason && EXCLUDED.has(it.reason)) continue;
-                  const pt = ptSchedules.find(p => p.id === it.ptId);
-                  if (!pt) continue;
-                  const stl = pt.settlement?.[r.assignee] || {};
-                  if (stl.completed === true) continue;
-                  targets.push({ ptId: it.ptId, assignee: r.assignee, siteName: it.siteName });
-                }
-              }
-              if (targets.length === 0) {
-                alert('이미 모든 정산 대상이 완료 상태이거나, 처리할 항목이 없습니다.');
-                return;
-              }
-              const byAssigneeCount = targets.reduce((m, t) => { m[t.assignee] = (m[t.assignee] || 0) + 1; return m; }, {});
-              const breakdownLine = Object.entries(byAssigneeCount).sort((a,b) => b[1]-a[1]).map(([n,c]) => `${n} ${c}`).join(' · ');
-              if (!window.confirm(`⚠ ${monthlySettlementMonth} 분기 정산대상 ${targets.length}건을 일괄 정산완료 처리합니다.\n\n  ${breakdownLine}\n\n각 담당자의 settlement.{name}.completed = true 로 설정하고 completedAt/completedBy 기록합니다.\n되돌리려면 개별 PT 카드의 정산완료 체크박스 해제.\n\n진행하시겠습니까?`)) return;
-              setMonthlySettlementLoading(true);
-              try {
-                const nowISO = new Date().toISOString();
-                const by = currentUser?.name || 'admin';
-                const updates = {};
-                targets.forEach(t => {
-                  updates[`pt/${t.ptId}/settlement/${t.assignee}/completed`] = true;
-                  updates[`pt/${t.ptId}/settlement/${t.assignee}/completedAt`] = nowISO;
-                  updates[`pt/${t.ptId}/settlement/${t.assignee}/completedBy`] = by;
-                  updates[`pt/${t.ptId}/settlement/${t.assignee}/completedQuarter`] = monthlySettlementMonth;
-                  updates[`pt/${t.ptId}/settlement/${t.assignee}/status`] = 'completed';
-                });
-                await database.ref().update(updates);
-                // 로컬 state 즉시 갱신 (UI 빠른 반영)
-                setPtSchedules(prev => prev.map(ps => {
-                  const ptTargets = targets.filter(t => t.ptId === ps.id);
-                  if (ptTargets.length === 0) return ps;
-                  const newSettlement = { ...(ps.settlement || {}) };
-                  ptTargets.forEach(t => {
-                    newSettlement[t.assignee] = { ...(newSettlement[t.assignee] || {}), completed: true, completedAt: nowISO, completedBy: by, completedQuarter: monthlySettlementMonth, status: 'completed' };
-                  });
-                  return { ...ps, settlement: newSettlement };
-                }));
-                try { logActivity('bulk_complete_all', { quarterKey: monthlySettlementMonth, count: targets.length, by }); } catch {}
-                alert(`✅ ${targets.length}건 일괄 정산완료 처리 완료.\n\n  ${breakdownLine}`);
-                await loadData();
-              } catch (e) {
-                alert('일괄 정산완료 실패: ' + e.message);
-              } finally {
-                setMonthlySettlementLoading(false);
-              }
-            };
-            const triggerGenerate = async () => {
-              if (!kaptWorkerUrl) { alert('K-APT Worker URL 미설정 — 설정 모달에서 먼저 입력하세요.'); return; }
-              if (!confirm(`Worker 에 ${monthlySettlementMonth} 분기정산 생성을 요청합니다. 진행?`)) return;
-              setMonthlySettlementLoading(true);
-              const callWorker = async (overwrite) => {
-                const resp = await fetch(`${kaptWorkerUrl.replace(/\/$/, '')}/run-quarterly-settlement`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ quarterKey: monthlySettlementMonth, force: true, overwrite }),
-                });
-                return { status: resp.status, data: await resp.json() };
-              };
-              try {
-                let { status, data } = await callWorker(false);
-                // 중복 가드 응답 (HTTP 409) — 덮어쓰기 확인 후 재호출
-                if (status === 409 || data.status === 'exists') {
-                  const ex = data.existing || {};
-                  const ok = confirm(
-                    `⚠ 이미 ${monthlySettlementMonth} 분기정산 데이터가 있습니다.\n\n` +
-                    `생성시각: ${(ex.generatedAt || '').slice(0, 19).replace('T', ' ')}\n` +
-                    `생성자: ${ex.generatedBy || '-'}\n` +
-                    `담당자: ${ex.totalAssignees || 0}명 · ${ex.totalCount || 0}건\n` +
-                    `예상: ${(ex.totalEstimated || 0).toLocaleString('ko-KR')}원\n\n` +
-                    `덮어쓰시겠습니까? (기존 status 는 초기화됨)`
-                  );
-                  if (!ok) { setMonthlySettlementLoading(false); return; }
-                  ({ status, data } = await callWorker(true));
-                }
-                if (data.status === 'ok') {
-                  const un = data.userNotify || {};
-                  const userLine = (un.sent || un.skipped || un.failed)
-                    ? `\n\n담당자 잔디 알림: 발송 ${un.sent || 0} / 미등록 ${un.skipped || 0}${un.failed ? ` / 실패 ${un.failed}` : ''}`
-                    : '';
-                  alert(`✅ 생성 완료\n\n담당자 ${data.totals?.totalAssignees}명 · ${data.totals?.totalCount}건\n예상 ${(data.totals?.totalEstimated || 0).toLocaleString('ko-KR')}원${userLine}`);
-                  await loadData();
-                } else {
-                  alert(`실패: ${data.reason || data.error || 'unknown'}`);
-                }
-              } catch (e) { alert('Worker 호출 실패: ' + e.message); }
-              finally { setMonthlySettlementLoading(false); }
-            };
-            // 최초/월변경 시 로드 — 해당 분기를 아직 시도하지 않았을 때만
-            //   분기 데이터가 없어도 1회만 호출 (이후 null 유지, 무한루프 방지)
-            if (monthlySettlementData === null && !monthlySettlementLoading && monthlySettlementLoadedFor !== monthlySettlementMonth) {
-              setTimeout(loadData, 0);
-            }
+            const { loadData, _liveData, _cachedTotals, _cachedPerAssignee, _operationalTotals, _mergedPerAssignee, data, perAssignee, totals, confByName, SETTLEMENT_EXCLUDED_NAMES, rows, resolveReviewRequest, toggleReviewExpand, currentExpanded, totalOpenReviews, confirmedCount, finalConfirmedCount, finalRequestedCount, reliability, canRequestFinal, isQuarterClosed, quarterClosedAt, quarterClosedBy, downloadQuarterClosingExcel, toggleQuarterClose, bulkFinalConfirm, requestFinalConfirmation, updateRowStatus, bulkConfirm, bulkCompleteAll, triggerGenerate } = buildQuarterSettlementCtx();
             const statusBadge = (s) => {
               const m = {
                 draft: { bg: '#f1f5f9', color: '#475569', label: '초안' },
