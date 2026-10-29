@@ -115,6 +115,9 @@ import { feedbackScreen, feedbackDevice } from './utils/feedback.js';
 import LoginScreen from './components/LoginScreen.jsx';
 import ScreenshotReviewQueue from './components/ScreenshotReviewQueue.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
+import MeetingsPage from './components/MeetingsPage.jsx';
+import MeetingDetailModal from './components/MeetingDetailModal.jsx';
+import NewMeetingModal from './components/NewMeetingModal.jsx';
 import ResultRecordModal from './components/ResultRecordModal.jsx';
 import MyPage from './components/MyPage.jsx';
 import ScheduleEditModal from './components/ScheduleEditModal.jsx';
@@ -826,6 +829,8 @@ const SETTLEMENT_BADGE_STYLE = {
       const [showMeetingModal, setShowMeetingModal] = useState(false);
       const [showMeetingDetailModal, setShowMeetingDetailModal] = useState(false);
       const [selectedMeeting, setSelectedMeeting] = useState(null);
+      const [meetingDetailTab, setMeetingDetailTab] = useState('agenda'); // 회의 상세(#13a) 처음 탭
+      const [useLegacyMeetings, setUseLegacyMeetings] = useState(false); // 영업회의(#12d·#13) 전환 기간 — 이전 화면·모달
       const [showMeetingForceCheckModal, setShowMeetingForceCheckModal] = useState(false);
       const [pendingMeetingsForUser, setPendingMeetingsForUser] = useState([]);
       const [newMeeting, setNewMeeting] = useState({ title: '', date: '', time: '', location: '', attendees: [] });
@@ -2376,6 +2381,57 @@ const SETTLEMENT_BADGE_STYLE = {
         } else {
           setMeetingSchedules(prev => [...prev, newMeetingData]);
         }
+        return newMeetingData;
+      };
+
+      // 회의 잔디(#12d·#13) — 참석자 개인 웹훅으로 보낸다. 반환 { sent, noHook: [이름] }
+      const sendMeetingJandi = async (names, payload) => {
+        let sent = 0;
+        const noHook = [];
+        for (const name of names || []) {
+          const hook = jandiUserWebhooks?.[name];
+          if (!hook?.url || hook.enabled === false) { noHook.push(name); continue; }
+          try {
+            await fetch(hook.url, {
+              method: 'POST', mode: 'no-cors',
+              headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            sent += 1;
+          } catch (e) { console.warn('[meeting jandi] failed', name, e); }
+        }
+        return { sent, noHook };
+      };
+      const meetingWhen = m => [m.date, [m.time, m.endTime].filter(Boolean).join('~'), m.location].filter(Boolean).join(' · ');
+      const confirmMeetingSend = (what, names) => window.confirm(`${what}을(를) ${names.length}명에게 잔디로 보냅니다.\n\n${names.join(', ')}\n\n진행할까요?`);
+      const remindMeeting = async (m, names) => {
+        if (!names?.length || !confirmMeetingSend(`"${m.title}" 참석 여부 리마인드`, names)) return;
+        const r = await sendMeetingJandi(names, {
+          body: `🔔 [${m.title}] 참석 여부를 알려주세요`,
+          connectColor: '#0F4C75',
+          connectInfo: [{ title: meetingWhen(m), description: '앱 → 영업회의에서 이 회의를 열고 [참석] / [불참]을 눌러주세요.' }],
+        });
+        alert(`리마인드 ${r.sent}명 발송${r.noHook.length ? `\n잔디 미연결(못 보냄): ${r.noHook.join(', ')}` : ''}`);
+      };
+      const shareMeetingAgenda = async (m) => {
+        const names = m.attendees || [];
+        if (!names.length || !confirmMeetingSend(`"${m.title}" 안건`, names)) return;
+        const r = await sendMeetingJandi(names, {
+          body: `📋 [${m.title}] 안건을 공유해요`,
+          connectColor: '#0F4C75',
+          connectInfo: [{ title: meetingWhen(m), description: String(m.agenda || '').slice(0, 1500) }],
+        });
+        alert(`안건 공유 ${r.sent}명 발송${r.noHook.length ? `\n잔디 미연결(못 보냄): ${r.noHook.join(', ')}` : ''}`);
+      };
+      const shareMeetingMinutes = async (m) => {
+        const names = m.attendees || [];
+        if (!names.length || !confirmMeetingSend(`"${m.title}" 회의록`, names)) return;
+        const r = await sendMeetingJandi(names, {
+          body: `📝 [${m.title}] 회의록이 확정됐어요`,
+          connectColor: '#15803d',
+          connectInfo: [{ title: meetingWhen(m), description: String(m.minutes || '').slice(0, 1500) }],
+        });
+        alert(`회의록 공유 ${r.sent}명 발송${r.noHook.length ? `\n잔디 미연결(못 보냄): ${r.noHook.join(', ')}` : ''}`);
       };
 
       const updateMeetingSchedule = (meeting) => {
@@ -6324,6 +6380,7 @@ const SETTLEMENT_BADGE_STYLE = {
 
       // ===== 새 화면 공통 셸(사이드바) — 실적 작업대·일정 화면 =====
       const showScheduleWorkbench = !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && !useLegacySchedule;
+      const showMeetingsPage = showMeetingView && !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && !useLegacyMeetings;
       const showMainWorkbench = !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && !useLegacyMain;
       const shellSidebarProps = (active, onOpenLegacy) => {
         const goTo = (view, title) => {
@@ -7595,6 +7652,7 @@ const SETTLEMENT_BADGE_STYLE = {
       const handleEditClick = (schedule) => {
         if (schedule.type === 'meeting') {
           // 회의는 회의 상세 모달로
+          setMeetingDetailTab('agenda');
           setSelectedMeeting(schedule);
           setShowMeetingDetailModal(true);
         } else if (schedule.type === 'sales') {
@@ -15069,8 +15127,26 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* 회의관리 */}
-          {showMeetingView && (
+          {/* 영업회의(#12d) — 관리자·전체조회 데스크톱. 기존 헤더 위를 덮는 전체 화면 */}
+          {showMeetingsPage && (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 500, overflow: 'auto', background: '#f8fafc', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>
+              <MeetingsPage
+                meetings={meetingSchedules}
+                todayStr={todayStr}
+                sidebar={shellSidebarProps('meeting', () => setUseLegacyMeetings(true))}
+                onNew={() => setShowMeetingModal(true)}
+                onOpen={(m, tab) => { setMeetingDetailTab(tab || 'agenda'); setSelectedMeeting(m); setShowMeetingDetailModal(true); }}
+                onRemind={remindMeeting}
+              />
+            </div>
+          )}
+          {showMeetingView && !showMeetingsPage && (
             <>
+              {useLegacyMeetings && !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+                  <button onClick={() => setUseLegacyMeetings(false)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#0F4C75', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>새 영업회의 화면</button>
+                </div>
+              )}
               {!isLoggedIn ? (
                 <div style={{ background: 'white', borderRadius: '12px', padding: '60px 40px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', textAlign: 'center' }}>
                                     <h2 style={{ fontSize: '20px', fontWeight: '700', color: '#1e293b', marginBottom: '12px' }}>로그인이 필요합니다</h2>
@@ -17987,7 +18063,28 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* 회의 등록 모달 */}
-          {showMeetingModal && (
+          {/* 새 회의(#13b) — 날짜 고르면 제목·시간·장소·참석자 기본값, 등록 시 잔디 초대(선택) */}
+          {showMeetingModal && !useLegacyMeetings && (
+            <NewMeetingModal
+              people={(() => {
+                const names = [];
+                Object.values(userAccounts).filter(u => (!u.isAdmin || u.name !== '관리자') && u.name !== '게스트').forEach(u => { if (u.name && !names.includes(u.name)) names.push(u.name); });
+                return names;
+              })()}
+              onClose={() => setShowMeetingModal(false)}
+              onCreate={async (data, invite) => {
+                const created = addMeetingSchedule(data);
+                if (!invite || !created.attendees.length) return { invited: 0, noHook: [] };
+                const r = await sendMeetingJandi(created.attendees, {
+                  body: `📅 회의 초대 — ${created.title}`,
+                  connectColor: '#0F4C75',
+                  connectInfo: [{ title: meetingWhen(created), description: '참석 여부를 알려주세요 · 앱 → 영업회의에서 이 회의를 열고 [참석] / [불참]을 눌러주세요.' }],
+                });
+                return { invited: r.sent, noHook: r.noHook };
+              }}
+            />
+          )}
+          {showMeetingModal && useLegacyMeetings && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001, padding: '20px' }} onClick={() => setShowMeetingModal(false)}>
               <div style={{ background: 'white', borderRadius: '16px', width: '500px', maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
                 <div style={{ background: '#4b5563', padding: '20px 24px', borderRadius: '16px 16px 0 0', color: 'white' }}>
@@ -18103,8 +18200,32 @@ tr.suppressed td.fname{color:#64748b;}
             </div>
           )}
 
-          {/* 회의 상세 모달 */}
-          {showMeetingDetailModal && selectedMeeting && (
+          {/* 회의 상세(#13a) — 안건 / 참석 응답 / 회의록 3탭 */}
+          {showMeetingDetailModal && selectedMeeting && !useLegacyMeetings && (() => {
+            const closeDetail = () => { setShowMeetingDetailModal(false); setSelectedMeeting(null); };
+            const live = meetingSchedules.find(m => m.id === selectedMeeting.id) || selectedMeeting;
+            return (
+              <MeetingDetailModal
+                key={selectedMeeting.id}
+                meeting={live}
+                todayStr={todayStr}
+                me={currentUser?.name}
+                initialTab={meetingDetailTab}
+                onSave={(updated) => { updateMeetingSchedule(updated); setSelectedMeeting(updated); }}
+                onRespond={(name, status, reason) => {
+                  updateMeetingResponse(live.id, name, status, reason);
+                  setSelectedMeeting({ ...live, responses: { ...(live.responses || {}), [name]: { status, reason } } });
+                }}
+                onRemind={remindMeeting}
+                onShareAgenda={shareMeetingAgenda}
+                onShareMinutes={shareMeetingMinutes}
+                onDelete={() => { deleteMeetingSchedule(live.id); closeDetail(); }}
+                onClose={closeDetail}
+              />
+            );
+          })()}
+          {/* 회의 상세 모달 (이전 화면) */}
+          {showMeetingDetailModal && selectedMeeting && useLegacyMeetings && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001, padding: '20px' }} onClick={() => { setShowMeetingDetailModal(false); setSelectedMeeting(null); }}>
               <div style={{ background: 'white', borderRadius: '16px', width: '600px', maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
                 {/* 헤더 */}
