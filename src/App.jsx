@@ -36,7 +36,7 @@ import {
 } from './utils/exceptions.js';
 import { sendJandiNotification } from './utils/jandi.js';
 import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculateSettlementAmount, EXCLUSION_REASONS, shouldAutoTransitionToTarget, buildAutoTransitionPatch, AUTO_TRANSITION_START } from './utils/settlement.js';
-import { aggregateQuarterSettlement, isQuarterSettlementTarget } from './utils/quarterlySettlementCore.js';
+import { aggregateQuarterSettlement, isQuarterSettlementTarget, settlementRowsOf, quarterSettlementSummary, SETTLEMENT_EXCLUDED_NAMES } from './utils/quarterlySettlementCore.js';
 import { buildVerificationOnResultClick, VERIFICATION_STATUS } from './utils/verification.js';
 import { hasFullDataViewAccess } from './utils/accessControl.js';
 
@@ -6664,10 +6664,7 @@ const SETTLEMENT_BADGE_STYLE = {
         const totals = data?.totals || null;
         // 담당자 확인 상태 + reviewRequests 주입 (quarterConfirmations 에서)
         const confByName = quarterConfirmations[monthlySettlementMonth] || {};
-        const SETTLEMENT_EXCLUDED_NAMES = ['조현식']; // 정산 집계에서 제외할 담당자
-        const rows = Object.values(perAssignee)
-          .filter(a => a.totalCount > 0)
-          .filter(a => !SETTLEMENT_EXCLUDED_NAMES.includes(a.assignee))
+        const rows = settlementRowsOf(perAssignee) // 대상 0건·정산 제외 담당자(조현식) 제외 — 메인 카드와 같은 기준
           .filter(a => monthlySettlementStatusFilter === 'all' || a.status === monthlySettlementStatusFilter)
           .map(a => {
             const conf = confByName[a.assignee] || {};
@@ -8120,6 +8117,12 @@ const SETTLEMENT_BADGE_STYLE = {
                   ]}
                   confirmStateOf={workbenchConfirmState}
                   assigneeNames={assigneeList}
+                  // 분기정산 카드 — 분기정산 화면(buildQuarterSettlementCtx)과 같은 분기·같은 계산
+                  settlementQuarterKey={monthlySettlementMonth}
+                  settlementSummary={(() => {
+                    const d = aggregateQuarterSettlement(ptSchedules, monthlySettlementMonth, getQuarterSettlementOptions(monthlySettlementMonth));
+                    return quarterSettlementSummary(d?.perAssignee, quarterConfirmations[monthlySettlementMonth] || {});
+                  })()}
                   sidebar={shellSidebarProps('main', () => setUseLegacyMain(true))}
                   onGoReview={() => goPerf({ filter: 'review' })}
                   onGoUnassigned={() => goSchedule({ view: 'list', listFilter: 'unassigned' })}

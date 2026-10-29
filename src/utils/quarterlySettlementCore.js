@@ -143,3 +143,25 @@ export function aggregateQuarterSettlement(ptSchedules, quarterKey, opts = {}) {
 
   return { perAssignee, totals };
 }
+
+// 분기정산 화면과 메인 카드가 같은 숫자를 쓰도록 — 대상 0건·제외 담당자를 뺀 행 기준 요약
+export const SETTLEMENT_EXCLUDED_NAMES = ['조현식'];
+
+export function settlementRowsOf(perAssignee) {
+  return Object.values(perAssignee || {})
+    .filter(a => a.totalCount > 0)
+    .filter(a => !SETTLEMENT_EXCLUDED_NAMES.includes(a.assignee));
+}
+
+export function quarterSettlementSummary(perAssignee, confByName = {}) {
+  const rows = settlementRowsOf(perAssignee);
+  const sum = k => rows.reduce((s, r) => s + (r[k] || 0), 0);
+  return {
+    assignees: rows.length,
+    targetCount: sum('totalCount'),
+    amount: sum('estimatedAmount'),
+    reviewTotal: sum('reviewCount'),
+    confirmedCount: rows.filter(r => confByName[r.assignee]?.confirmed === true).length,
+    finalConfirmedCount: rows.filter(r => confByName[r.assignee]?.finalConfirmed === true).length,
+  };
+}
