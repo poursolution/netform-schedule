@@ -69,6 +69,16 @@ export default function ScheduleWorkbench({
   const gridRef = useRef(null);
   const [gridH, setGridH] = useState(0);
   const [pop, setPop] = useState(null); // { date, rect } — #14a 날짜 팝오버
+  // 리스트 필터 줄 높이 — 그 아래에 표 헤더를 고정
+  const listBarRef = useRef(null);
+  const [listBarH, setListBarH] = useState(55);
+  useEffect(() => {
+    const el = listBarRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => setListBarH(el.offsetHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [view]);
 
   const y = month.getFullYear(), m0 = month.getMonth();
   const monthKey = `${y}-${String(m0 + 1).padStart(2, '0')}`;
@@ -254,7 +264,7 @@ export default function ScheduleWorkbench({
               </section>
 
               {/* ===== 선택일 패널 ===== */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, position: 'sticky', top: 76 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, position: 'sticky', top: 80 }}>
                 <section aria-label="선택한 날짜 일정" style={{ ...card, overflow: 'hidden' }}>
                   <div style={{ display: 'flex', alignItems: 'center', padding: '14px 16px', borderBottom: `1px solid ${C.line2}` }}>
                     <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>{selD.getMonth() + 1}월 {selD.getDate()}일 ({KDAY[selD.getDay()]})</h2>
@@ -323,8 +333,9 @@ export default function ScheduleWorkbench({
           ) : (
             <>
               {/* ===== #6c 리스트 ===== */}
-              <section aria-label="PT 일정 리스트" style={{ ...card, overflow: 'hidden', minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 16px', borderBottom: `1px solid ${C.line2}`, flexWrap: 'wrap' }}>
+              {/* 필터 줄·표 헤더는 헤더(64px) 아래 고정 — 카드 overflow:hidden 이면 sticky 가 잘려 뺀다 */}
+              <section aria-label="PT 일정 리스트" style={{ ...card, minWidth: 0 }}>
+                <div ref={listBarRef} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 16px', borderBottom: `1px solid ${C.line2}`, flexWrap: 'wrap', position: 'sticky', top: 64, zIndex: 6, background: '#fff', borderRadius: '12px 12px 0 0' }}>
                   {[['upcoming', '앞으로'], ['planned', '배정 완료'], ['unassigned', '미배정', true], ['past', '지난'], ['all', '전체']].map(([k, l, warn]) => (
                     <button key={k} type="button" aria-pressed={listFilter === k} onClick={() => setListFilter(k)} style={listChip(listFilter === k, warn)}>{l} {ptBase.filter(s => LIST_FILTERS[k](s, todayStr)).length}</button>
                   ))}
@@ -351,10 +362,10 @@ export default function ScheduleWorkbench({
                     <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>{LIST_TITLES[listFilter]} <span style={{ color: C.text4, fontWeight: 500 }}>{listRows.length}건</span></h2>
                     <span style={{ marginLeft: 8, fontSize: 12, color: C.text4 }}>{todayStr} 기준 · {listFilter === 'past' || listFilter === 'all' ? '최신순' : '날짜순'}</span>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: LIST_GRID, columnGap: 14, padding: '6px 16px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}` }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: LIST_GRID, columnGap: 14, padding: '6px 16px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}`, position: 'sticky', top: 64 + listBarH, zIndex: 5, background: '#fff' }}>
                     <span>일시</span><span>현장 (참여인원){listMode === 'detail' ? ' · 주소' : ''}</span><span>요청사</span><span>공종</span><span>경쟁</span><span style={{ textAlign: 'right' }}>담당</span>
                   </div>
-                  {listRows.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: C.text4, fontSize: 13 }}>해당하는 일정이 없습니다</div>}
+                  {listRows.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: C.text4, fontSize: 13 }}>해당하는 일정이 없습니다 · 위 필터나 연도·월을 바꿔보세요</div>}
                   {listRows.map(s => {
                     const names = assigneesOf(s);
                     const un = !s.ptAssignee;
@@ -379,7 +390,7 @@ export default function ScheduleWorkbench({
               </section>
 
               {/* ===== 아침 브리핑 ===== */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, position: 'sticky', top: 76 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, position: 'sticky', top: 80 }}>
                 <section aria-label="아침 브리핑" style={{ ...card, overflow: 'hidden' }}>
                   <div style={{ padding: '14px 16px', borderBottom: `1px solid ${C.line2}` }}>
                     <div style={{ display: 'flex', alignItems: 'baseline' }}>
