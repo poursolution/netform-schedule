@@ -106,6 +106,7 @@ import ScheduleWorkbench from './components/ScheduleWorkbench.jsx';
 import MainDashboard from './components/MainDashboard.jsx';
 import StaffHome from './components/StaffHome.jsx';
 import MyPage from './components/MyPage.jsx';
+import ScheduleEditModal from './components/ScheduleEditModal.jsx';
 import { finalConfirmBlockers } from './utils/staffHome.js';
 import { buildBriefJandiMessage, briefRecipients, unassignedUpcoming } from './utils/morningBrief.js';
 
@@ -15315,7 +15316,23 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* 수정 모달 */}
-          {showEditModal && editingSchedule && (
+          {/* 일정 수정(#7a) — 데스크톱. 모바일은 아래 기존 모달 */}
+          {showEditModal && editingSchedule && !isMobile && (
+            <ScheduleEditModal
+              schedule={editingSchedule}
+              onChange={setEditingSchedule}
+              onSave={handleSaveEdit}
+              onDelete={handleDelete}
+              onClose={() => setShowEditModal(false)}
+              onUpload={(e) => handleFileUpload(e, true)}
+              onBriefingImage={() => { setBriefingExportData(editingSchedule); setShowBriefingExport(true); }}
+              assigneeList={assigneeList}
+              briefingAssigneeList={briefingAssigneeList}
+              checkAgreement={checkPourAgreement}
+              judgeResult={judgeResult}
+            />
+          )}
+          {showEditModal && editingSchedule && isMobile && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 1000, padding: '20px 0', overflowY: 'auto' }} onClick={() => setShowEditModal(false)}>
               <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '500px', maxWidth: '90%', margin: 'auto' }} onClick={e => e.stopPropagation()}>
                 
