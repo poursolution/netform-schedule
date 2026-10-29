@@ -71,8 +71,8 @@ export default function MyPage({
     <div style={{ display: 'flex', minHeight: '100vh', background: C.muted, color: C.text, fontVariantNumeric: 'tabular-nums' }}>
       <AppSidebar {...sidebarProps} />
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, height: 60, padding: '0 24px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
-          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 800, letterSpacing: '-.02em' }}>마이페이지</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, height: 64, padding: '0 28px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, letterSpacing: '-.02em' }}>마이페이지</h1>
           <div style={{ flex: 1 }} />
           <button type="button" onClick={onLogout} style={{ ...btn('secondary'), color: '#b91c1c', fontWeight: 600 }}>로그아웃</button>
         </div>

@@ -221,8 +221,8 @@ export default function PerformanceWorkbench({
 
       {/* ===== 메인 ===== */}
       <main style={{ flex: 1, minWidth: 0, background: C.muted, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, height: 60, padding: '0 24px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
-          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 800, letterSpacing: '-.02em', whiteSpace: 'nowrap' }}>실적</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, height: 64, padding: '0 28px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, letterSpacing: '-.02em', whiteSpace: 'nowrap' }}>실적</h1>
           <label style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }} htmlFor="wb-quarter">분기</label>
           <select id="wb-quarter" value={quarterKey} onChange={e => { setQuarterKey(e.target.value); setChecked({}); }} style={{ height: 32, padding: '0 10px', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', flex: 'none' }}>
             {quarterOptions().map(q => <option key={q} value={q}>{q.replace('-', ' ')}</option>)}

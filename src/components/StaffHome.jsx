@@ -114,7 +114,7 @@ export default function StaffHome({
     <div style={{ display: 'flex', minHeight: '100vh', background: C.muted, color: C.text, fontVariantNumeric: 'tabular-nums' }}>
       <AppSidebar {...sidebar} footer={sidebarFooter} nav={(sidebar.nav || []).map(n => n.key === 'home' ? { ...n, badge: pendingCount || null } : n)} />
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, height: 60, padding: '0 24px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, height: 64, padding: '0 28px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
           <h1 style={{ margin: 0, fontSize: 16, fontWeight: 700, whiteSpace: 'nowrap' }}>안녕하세요, {me}님</h1>
           <span style={{ fontSize: 12.5, color: C.text4, whiteSpace: 'nowrap' }}>{today.getMonth() + 1}월 {today.getDate()}일 {KDAY[today.getDay()]}요일</span>
           {memberOptions && onChangeMe && (
