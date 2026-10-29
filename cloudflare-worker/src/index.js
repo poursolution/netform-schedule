@@ -1,3 +1,6 @@
+// 분기 확인 리마인드 대상 분기 — 앱과 같은 모듈 (wrangler 번들러가 함께 묶는다)
+import { reminderQuarterKey } from '../../src/utils/reminderQuarter.js';
+
 // K-APT 자동 검증 Cloudflare Worker (V5)
 //
 // v5 변경 (VPS 프록시):
@@ -769,11 +772,7 @@ Rules:
         const result = await runQuarterlySettlementIfLastMonday(env);
         console.log('[cron] quarterly settlement result', result);
       } catch (e) { console.error('[cron] quarterly settlement failed', e); }
-      // 월요일 09시는 리마인드도 같이 발송
-      try {
-        const rr = await sendQuarterlyConfirmationReminders(env);
-        console.log('[cron] reminder result', rr);
-      } catch (e) { console.error('[cron] reminder failed', e); }
+      // 리마인드는 "0 0,8 * * *"(매일 09/17)이 이미 보낸다 — 여기서도 보내면 월요일 09시에 두 번 나갔음
       // 영업회의 알림도 (월요일 09시 = 해당주 알림 — 화/수/목 트리거는 0,8 cron이 처리)
       try {
         const sm = await sendSalesMeetingReminders(env);
@@ -2880,7 +2879,11 @@ async function sendQuarterlyConfirmationReminders(env, opts = {}) {
     return { status: 'error', reason: 'firebase_not_configured' };
   }
   const now = new Date();
-  const quarterKey = opts.quarterKey || getCurrentQuarterKeyKST(now);
+  // 대상 분기: 확인 기간(분기 마지막 달 ~ 다음 달 30일)에 있는 분기만 — 이번 분기를 무조건 쓰면 분기 첫날부터 리마인드가 나감
+  const quarterKey = opts.quarterKey || reminderQuarterKey(now);
+  if (!quarterKey) {
+    return { status: 'skipped', reason: 'no_quarter_in_confirmation_window', now: now.toISOString() };
+  }
   const deadline = getQuarterDeadlineDate(quarterKey);
   if (!opts.force && deadline && now > deadline) {
     return { status: 'skipped', reason: 'past_deadline', quarterKey, deadline: deadline.toISOString() };
