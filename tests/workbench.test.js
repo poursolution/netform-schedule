@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildRow, FILTERS, kpis, settlementTargets, staffStats, quarterMeta, quarterPts, sortByPriority, sortByDate, matchesWho, isPtOver,
+  settlementStep, nextReviewId,
 } from '../src/utils/workbench.js';
 
 const TODAY = '2026-10-28';
@@ -117,4 +118,19 @@ test('date sort keeps upcoming PTs below finished ones', () => {
     { date: '2026-10-27', time: '14:00', isFuture: false },
   ]);
   assert.deepEqual(rows.map(r => r.date), ['2026-10-28', '2026-10-27', '2026-10-30', '2026-12-23']);
+});
+
+test('정산 단계 — 결과 없음 0 · 검토필요 1 · 미정산 2 · 정산요청 3', () => {
+  const step = id => settlementStep(buildRow(pts.find(p => p.id === id), TODAY));
+  assert.equal(step('e'), 0);
+  assert.equal(step('a'), 1);
+  assert.equal(step('b'), 3);
+});
+
+test('다음 검토 건 — 다음 검토필요 행, 끝이면 처음, 혼자면 null', () => {
+  const rows = [{ id: 'x', isReview: true }, { id: 'y' }, { id: 'z', isReview: true }];
+  assert.equal(nextReviewId(rows, 'x'), 'z');
+  assert.equal(nextReviewId(rows, 'z'), 'x');
+  assert.equal(nextReviewId(rows, 'y'), 'x');
+  assert.equal(nextReviewId([{ id: 'x', isReview: true }], 'x'), null);
 });

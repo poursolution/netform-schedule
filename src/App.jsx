@@ -107,6 +107,7 @@ import MainDashboard from './components/MainDashboard.jsx';
 import StaffHome from './components/StaffHome.jsx';
 import MobileStaffHome from './components/MobileStaffHome.jsx';
 import MobileSchedule from './components/MobileSchedule.jsx';
+import MobilePerformance from './components/MobilePerformance.jsx';
 import ResultRecordModal from './components/ResultRecordModal.jsx';
 import MyPage from './components/MyPage.jsx';
 import ScheduleEditModal from './components/ScheduleEditModal.jsx';
@@ -330,6 +331,7 @@ const SETTLEMENT_BADGE_STYLE = {
       const [showSettlementPage, setShowSettlementPage] = useState(false); // 분기정산(#8a) — 사이드바 "정산"
       const [useLegacyResultModal, setUseLegacyResultModal] = useState(false); // 결과 기록 모달(#10a) 전환 기간 — 이전 사유 입력 창
       const [useLegacyMobileSchedule, setUseLegacyMobileSchedule] = useState(false); // 모바일 일정(#5b) 전환 기간 — 이전 화면
+      const [useLegacyMobilePerformance, setUseLegacyMobilePerformance] = useState(false); // 모바일 관리자 실적(#5c) 전환 기간 — 이전 화면
       const [perfInit, setPerfInit] = useState({}); // 메인에서 실적 작업대로 넘어갈 때 첫 필터 { filter, who }
       const [scheduleInit, setScheduleInit] = useState({}); // 메인에서 일정으로 넘어갈 때 첫 상태 { view, listFilter, search }
       const [morningBriefConfig, setMorningBriefConfig] = useState({}); // config/morningBrief { autoSend, days }
@@ -6350,15 +6352,18 @@ const SETTLEMENT_BADGE_STYLE = {
       // ===== 일정 모바일(#5b) — 모바일 "일정" 화면을 덮는 전체 화면 =====
       const showMobileSchedule = isMobile && isLoggedIn && !!currentUser && !useLegacyMobileSchedule
         && !showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage;
-      const mobileScheduleTabs = () => {
+      // ===== 관리자 실적 모바일(#5c) =====
+      const showMobilePerformance = showPerformance && isMobile && isLoggedIn && !!currentUser && hasFullDataViewAccess(currentUser) && !useLegacyMobilePerformance;
+      // 새 모바일 화면(#5b·#5c) 하단 탭 — active: 'schedule' | 'perf'
+      const mobileScheduleTabs = (active = 'schedule') => {
         const reset = () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); };
         const add = { key: 'add', primary: true, label: '일정추가', onClick: () => { setAddTypeModalDate(null); setShowAddTypeModal(true); } };
-        const schedule = { key: 'schedule', label: '일정', icon: 'calendar', active: true, onClick: () => {} };
+        const schedule = { key: 'schedule', label: '일정', icon: 'calendar', active: active === 'schedule', onClick: () => { reset(); updatePageTitle('일정'); } };
         if (hasFullDataViewAccess(currentUser)) {
           return [
             { key: 'main', label: '메인', icon: 'home', onClick: () => { reset(); setShowDashboard(true); updatePageTitle('메인'); } },
             schedule, add,
-            { key: 'perf', label: '실적', icon: 'chart', onClick: () => { reset(); setShowPerformance(true); setSettlementFilter('all'); updatePageTitle('실적'); } },
+            { key: 'perf', label: '실적', icon: 'chart', active: active === 'perf', onClick: () => { reset(); setShowPerformance(true); setSettlementFilter('all'); updatePageTitle('실적'); } },
             { key: 'settle', label: '정산', icon: 'won', onClick: openSettlement },
           ];
         }
@@ -10418,6 +10423,11 @@ const SETTLEMENT_BADGE_STYLE = {
                 </div>
               ) : (
               <>
+              {useLegacyMobilePerformance && isMobile && hasFullDataViewAccess(currentUser) && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+                  <button onClick={() => setUseLegacyMobilePerformance(false)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#0F4C75', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>새 실적 화면</button>
+                </div>
+              )}
               {/* 로그인 상태 바 — Soft Cloud 톤 */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', padding: isMobile ? '10px 12px' : '12px 16px', background: '#BBE1FA', borderRadius: '8px', flexWrap: 'wrap', gap: '8px' }}>
                 <span style={{ fontSize: isMobile ? '12px' : '13px', color: '#0F4C75' }}>
@@ -13741,6 +13751,22 @@ tr.suppressed td.fname{color:#64748b;}
               tabs={mobileScheduleTabs()}
               onOpen={handleEditClick}
               onLegacy={() => setUseLegacyMobileSchedule(true)}
+              topInset={showInstallBanner ? INSTALL_BANNER_H : 0}
+            />
+          )}
+          {/* 관리자 실적 모바일(#5c) — 기존 모바일 실적 화면 위를 덮는 전체 화면(하단 탭 포함) */}
+          {showMobilePerformance && (
+            <MobilePerformance
+              ptSchedules={ptSchedules}
+              assigneeNames={assigneeList}
+              tabs={mobileScheduleTabs('perf')}
+              onOpenQuarterSettlement={(currentUser?.isAdmin || currentUser?.name === '한준엽') ? openSettlement : undefined}
+              onSetResult={(pt, a, r) => handleResultClick(pt, r, a)}
+              onToggleSettlementFlag={workbenchToggleSettlementFlag}
+              onOpenKaptCandidates={kaptWorkerUrl ? workbenchOpenKaptVerify : undefined}
+              onKaptManualApprove={canFinalizeSettlementReview() ? workbenchOpenReview : undefined}
+              onKaptCancel={workbenchKaptCancel}
+              onLegacy={() => setUseLegacyMobilePerformance(true)}
               topInset={showInstallBanner ? INSTALL_BANNER_H : 0}
             />
           )}
@@ -19564,7 +19590,7 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* Bottom Navigation — 모바일 앱 느낌 (상단 nav 유지, 추가 접근 경로) */}
-          {isMobile && isLoggedIn && !showMobileStaffHome && !showMobileSchedule && (() => {
+          {isMobile && isLoggedIn && !showMobileStaffHome && !showMobileSchedule && !showMobilePerformance && (() => {
             const navItems = [
               { key: 'home', label: '홈', icon: 'home', active: showDashboard, onClick: () => { setShowDashboard(true); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); } },
               { key: 'perf', label: '실적', icon: 'performance', active: showPerformance, onClick: () => { setShowDashboard(false); setShowPerformance(true); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); setSettlementFilter('all'); } },
