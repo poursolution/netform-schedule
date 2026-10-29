@@ -332,6 +332,8 @@ const SETTLEMENT_BADGE_STYLE = {
       const [useLegacyResultModal, setUseLegacyResultModal] = useState(false); // 결과 기록 모달(#10a) 전환 기간 — 이전 사유 입력 창
       const [useLegacyMobileSchedule, setUseLegacyMobileSchedule] = useState(false); // 모바일 일정(#5b) 전환 기간 — 이전 화면
       const [useLegacyMobilePerformance, setUseLegacyMobilePerformance] = useState(false); // 모바일 관리자 실적(#5c) 전환 기간 — 이전 화면
+      const [useLegacyMobileScheduleSheet, setUseLegacyMobileScheduleSheet] = useState(false); // 모바일 일정 추가·수정 시트(#7b) 전환 기간 — 이전 입력 화면
+      const showMobileScheduleSheet = isMobile && !useLegacyMobileScheduleSheet;
       const [perfInit, setPerfInit] = useState({}); // 메인에서 실적 작업대로 넘어갈 때 첫 필터 { filter, who }
       const [scheduleInit, setScheduleInit] = useState({}); // 메인에서 일정으로 넘어갈 때 첫 상태 { view, listFilter, search }
       const [morningBriefConfig, setMorningBriefConfig] = useState({}); // config/morningBrief { autoSend, days }
@@ -15795,7 +15797,25 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* 등록 모달 */}
-          {showModal && (
+          {/* 일정 추가(#7b) — 모바일 전체화면 시트. 종류는 시트 안 칩으로 바꾸고, 저장은 기존 handleAddSchedule */}
+          {showModal && showMobileScheduleSheet && (
+            <ScheduleEditModal
+              mode="add"
+              mobile
+              schedule={{ ...newSchedule, type: modalType }}
+              onChange={({ type, ...rest }) => { if (type !== modalType) setModalType(type); setNewSchedule(rest); }}
+              onSave={handleAddSchedule}
+              onClose={() => setShowModal(false)}
+              onUpload={(e) => handleFileUpload(e, false)}
+              onLegacy={() => setUseLegacyMobileScheduleSheet(true)}
+              topInset={showInstallBanner ? INSTALL_BANNER_H : 0}
+              assigneeList={assigneeList}
+              briefingAssigneeList={briefingAssigneeList}
+              checkAgreement={checkPourAgreement}
+              judgeResult={judgeResult}
+            />
+          )}
+          {showModal && !showMobileScheduleSheet && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowModal(false)}>
               <div style={{ background: 'white', borderRadius: '12px', padding: '16px', width: '480px', maxWidth: '90%' }} onClick={e => e.stopPropagation()}>
                 <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', flexWrap: 'wrap' }}>
@@ -16056,9 +16076,12 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* 수정 모달 */}
-          {/* 일정 수정(#7a) — 데스크톱. 모바일은 아래 기존 모달 */}
-          {showEditModal && editingSchedule && !isMobile && (
+          {/* 일정 수정(#7a) — 데스크톱 모달 · 모바일(#7b) 전체화면 시트. "이전 입력 화면"을 고르면 아래 기존 모바일 모달 */}
+          {showEditModal && editingSchedule && (!isMobile || showMobileScheduleSheet) && (
             <ScheduleEditModal
+              mobile={isMobile}
+              onLegacy={isMobile ? () => setUseLegacyMobileScheduleSheet(true) : undefined}
+              topInset={isMobile && showInstallBanner ? INSTALL_BANNER_H : 0}
               schedule={editingSchedule}
               onChange={setEditingSchedule}
               onSave={handleSaveEdit}
@@ -16072,7 +16095,7 @@ tr.suppressed td.fname{color:#64748b;}
               judgeResult={judgeResult}
             />
           )}
-          {showEditModal && editingSchedule && isMobile && (
+          {showEditModal && editingSchedule && isMobile && !showMobileScheduleSheet && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 1000, padding: '20px 0', overflowY: 'auto' }} onClick={() => setShowEditModal(false)}>
               <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '500px', maxWidth: '90%', margin: 'auto' }} onClick={e => e.stopPropagation()}>
                 
@@ -19590,7 +19613,8 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* Bottom Navigation — 모바일 앱 느낌 (상단 nav 유지, 추가 접근 경로) */}
-          {isMobile && isLoggedIn && !showMobileStaffHome && !showMobileSchedule && !showMobilePerformance && (() => {
+          {isMobile && isLoggedIn && !showMobileStaffHome && !showMobileSchedule && !showMobilePerformance
+            && !(showMobileScheduleSheet && (showModal || (showEditModal && editingSchedule))) && (() => {
             const navItems = [
               { key: 'home', label: '홈', icon: 'home', active: showDashboard, onClick: () => { setShowDashboard(true); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); } },
               { key: 'perf', label: '실적', icon: 'performance', active: showPerformance, onClick: () => { setShowDashboard(false); setShowPerformance(true); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); setSettlementFilter('all'); } },
