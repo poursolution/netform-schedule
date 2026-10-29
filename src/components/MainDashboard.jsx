@@ -17,7 +17,9 @@ const COMPANIES = ['전체', '석민이앤씨', 'POUR솔루션', '아파트스�
 const TEAM_GRID = '200px repeat(4, minmax(0, 1fr)) minmax(0, 1fr) minmax(0, 1fr) repeat(5, minmax(0, 0.8fr))';
 const srOnly = { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' };
 const card = { background: '#fff', border: `1px solid ${C.line}`, borderRadius: 12 };
-const big = { fontSize: 30, fontWeight: 800, letterSpacing: '-.03em', marginTop: 4, lineHeight: 1.1 };
+const big = { fontSize: 34, fontWeight: 800, letterSpacing: '-.03em', marginTop: 6, lineHeight: 1.1 };
+// 흐름 칸은 카드 높이가 늘면 내용이 가운데로 — 위로 몰려 보이지 않게
+const flowCell = { padding: '24px 22px', display: 'flex', flexDirection: 'column', justifyContent: 'center' };
 const unit = { fontSize: 14, fontWeight: 600, color: C.text3, marginLeft: 3 };
 const label = { fontSize: 12, fontWeight: 600, color: C.text3 };
 
@@ -68,8 +70,8 @@ export default function MainDashboard({
   const expPct = n => `${expDen ? Math.round(n / expDen * 100) : 0}%`;
   const yLabel = year === 'all' ? '전체' : `${year}년`;
 
-  const queueBtn = warn => ({ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10, padding: '18px 18px', minWidth: 0, background: warn ? '#fffbeb' : '#fff', border: `1px solid ${warn ? '#fde68a' : C.line}`, borderRadius: 12, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', color: C.text });
-  const queueNum = n => <span style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-.02em', lineHeight: 1.1, color: C.ink }}>{n.toLocaleString('ko-KR')}<span style={{ fontSize: 13, fontWeight: 600, marginLeft: 2, color: C.text3 }}>건</span></span>;
+  const queueBtn = warn => ({ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, padding: '18px 18px', minWidth: 0, background: warn ? '#fffbeb' : '#fff', border: `1px solid ${warn ? '#fde68a' : C.line}`, borderRadius: 12, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', color: C.text });
+  const queueNum = n => <span style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-.02em', lineHeight: 1.1, color: C.ink }}>{n.toLocaleString('ko-KR')}<span style={{ fontSize: 13, fontWeight: 600, marginLeft: 2, color: C.text3 }}>건</span></span>;
   const dot = bg => <span style={{ width: 7, height: 7, borderRadius: '50%', background: bg, flex: 'none' }} />;
   const right = { textAlign: 'right' };
   const wl = s => (
@@ -114,15 +116,15 @@ export default function MainDashboard({
         {/* 화면 높이를 채운다 — 남는 높이는 팀별 현황이 받아 위로 몰리지 않게 */}
         <div style={{ padding: '18px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14, flex: 1, minHeight: 0 }}>
           {/* 블록 1 — 흐름 */}
-          <section aria-label={`${yLabel} 흐름`} style={{ ...card, overflow: 'hidden' }}>
+          <section aria-label={`${yLabel} 흐름`} style={{ ...card, overflow: 'hidden', flex: '1.1 1 auto', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', padding: '12px 18px', borderBottom: `1px solid ${C.line2}` }}>
               <h2 style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>{yLabel} 흐름</h2>
               <span style={{ marginLeft: 8, fontSize: 12, color: C.text4 }}>영업 → PT → 계약 → 매출</span>
               <div style={{ flex: 1 }} />
               <span style={{ fontSize: 12, color: C.text3 }}>수의계약 {f.contract.count}건 · {eok(f.contract.revenue)} 별도 집계</span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 56px minmax(0, 1.3fr) 56px minmax(0, 1fr) 56px minmax(0, 1.2fr)', alignItems: 'stretch' }}>
-              <div style={{ padding: '24px 22px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 56px minmax(0, 1.3fr) 56px minmax(0, 1fr) 56px minmax(0, 1.2fr)', alignItems: 'stretch', flex: 1 }}>
+              <div style={flowCell}>
                 <div style={label}>영업 (파이프라인)</div>
                 <div style={big}>{f.sales.total}<span style={unit}>건</span></div>
                 <div style={{ display: 'flex', gap: 14, fontSize: 12.5, color: C.text3, marginTop: 10, flexWrap: 'wrap' }}>
@@ -131,7 +133,7 @@ export default function MainDashboard({
                 </div>
               </div>
               <Arrow text={`PT ${f.ptRate}%`} />
-              <div style={{ padding: '24px 22px' }}>
+              <div style={flowCell}>
                 <div style={{ display: 'flex', alignItems: 'baseline' }}>
                   <div style={label}>PT</div>
                   <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: C.brand }}>승률 {pt.rate}%</span>
@@ -151,7 +153,7 @@ export default function MainDashboard({
                 </div>
               </div>
               <Arrow text={`계약 ${f.contractRate}%`} />
-              <div style={{ padding: '24px 22px' }}>
+              <div style={flowCell}>
                 <div style={label}>계약 확정</div>
                 <div style={{ ...big, color: '#15803d' }}>{f.contract.count}<span style={unit}>건</span></div>
                 <div style={{ display: 'flex', gap: 14, fontSize: 12.5, color: C.text3, marginTop: 10, flexWrap: 'wrap' }}>
@@ -160,7 +162,7 @@ export default function MainDashboard({
                 </div>
               </div>
               <Arrow />
-              <div style={{ padding: '24px 22px', background: C.brand, color: '#fff' }}>
+              <div style={{ ...flowCell, background: C.brand, color: '#fff' }}>
                 <div style={{ fontSize: 12, fontWeight: 600, opacity: .8 }}>예상매출 합계</div>
                 <div style={big}>{(f.expected.total / 100000000).toFixed(1)}<span style={{ fontSize: 14, fontWeight: 600, opacity: .8, marginLeft: 3 }}>억</span></div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr) auto', gap: '3px 8px', fontSize: 12, marginTop: 10, alignItems: 'center' }}>
@@ -177,7 +179,7 @@ export default function MainDashboard({
           </section>
 
           {/* 블록 2 — 처리할 것 */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12, flex: '0.6 1 auto' }}>
             <button type="button" onClick={onGoReview} style={queueBtn(reviewCount > 0)}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: '#b45309', whiteSpace: 'nowrap' }}>{dot('#d97706')}검토필요 · K-APT 미매칭 · Q{reviewQ}</span>
               <span style={{ display: 'flex', alignItems: 'baseline', width: '100%' }}>{queueNum(reviewCount)}<span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: C.brand }}>실적에서 처리 →</span></span>
@@ -190,7 +192,7 @@ export default function MainDashboard({
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: C.text3, whiteSpace: 'nowrap' }}>{dot(C.strong)}미확정 일정</span>
               <span style={{ display: 'flex', alignItems: 'baseline', width: '100%', gap: 6 }}>{queueNum(totals.pending)}<span style={{ marginLeft: 'auto', fontSize: 12, color: C.text4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>총 {totals.all.toLocaleString('ko-KR')} · 확정 {totals.confirmed.toLocaleString('ko-KR')}</span></span>
             </button>
-            <button type="button" onClick={onGoSettlement} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10, padding: '18px 18px', background: C.brand, border: 0, borderRadius: 12, color: '#fff', minWidth: 0, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+            <button type="button" onClick={onGoSettlement} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, padding: '18px 18px', background: C.brand, border: 0, borderRadius: 12, color: '#fff', minWidth: 0, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
               <span style={{ fontSize: 12, fontWeight: 600, opacity: .75, whiteSpace: 'nowrap' }}>Q{qMeta?.quarter} 분기정산 · 마감 {qMeta?.ddayText}</span>
               <span style={{ display: 'flex', alignItems: 'baseline', width: '100%' }}>
                 <span style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-.02em', lineHeight: 1.1, whiteSpace: 'nowrap' }}>{qAmount.toLocaleString('ko-KR')}<span style={{ fontSize: 13, fontWeight: 600, marginLeft: 2, opacity: .8 }}>원</span></span>
@@ -209,7 +211,7 @@ export default function MainDashboard({
           )}
 
           {/* 블록 3 — 팀별 현황 */}
-          <section aria-label="팀별 현황" style={{ ...card, overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <section aria-label="팀별 현황" style={{ ...card, overflow: 'hidden', flex: '1.6 1 auto', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 18px', borderBottom: `1px solid ${C.line2}`, flexWrap: 'wrap' }}>
               <h2 style={{ margin: '0 8px 0 0', fontWeight: 700, fontSize: 14 }}>팀별 현황</h2>
               {COMPANIES.map(c => (
@@ -229,7 +231,7 @@ export default function MainDashboard({
                   {['건수', '매출', '진행률', '승/패', '건수', '매출', '건수', '승', '무', '패', '승률'].map((h, i) => <span key={i} style={{ textAlign: 'right', padding: '6px 0' }}>{h}</span>)}
                 </div>
                 {team.rows.map(r => (
-                  <button key={r.name} type="button" onClick={() => onGoTeam && onGoTeam(r)} style={{ display: 'grid', gridTemplateColumns: TEAM_GRID, alignItems: 'center', width: '100%', flex: 1, minHeight: 56, maxHeight: 120, padding: '11px 18px', border: 0, borderBottom: `1px solid ${C.line3}`, background: '#fff', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', color: C.text }}>
+                  <button key={r.name} type="button" onClick={() => onGoTeam && onGoTeam(r)} style={{ display: 'grid', gridTemplateColumns: TEAM_GRID, alignItems: 'center', width: '100%', flex: 1, minHeight: 56, maxHeight: 96, padding: '11px 18px', border: 0, borderBottom: `1px solid ${C.line3}`, background: '#fff', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', color: C.text }}>
                     <span>
                       <span style={{ display: 'block', fontWeight: 700 }}>{r.name}</span>
                       <span style={{ display: 'block', fontSize: 11.5, color: C.text4 }}>{r.members.join(' · ')}</span>
