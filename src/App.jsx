@@ -104,6 +104,8 @@ import * as theme from './utils/theme.js';
 import PerformanceWorkbench from './components/PerformanceWorkbench.jsx';
 import ScheduleWorkbench from './components/ScheduleWorkbench.jsx';
 import MainDashboard from './components/MainDashboard.jsx';
+import StaffHome from './components/StaffHome.jsx';
+import { finalConfirmBlockers } from './utils/staffHome.js';
 import { buildBriefJandiMessage, briefRecipients, unassignedUpcoming } from './utils/morningBrief.js';
 
 // 정산 상태 6단계 배지 스타일 (#4 — 실적 카드용)
@@ -314,6 +316,7 @@ const SETTLEMENT_BADGE_STYLE = {
       const [useLegacyPerformance, setUseLegacyPerformance] = useState(false); // 실적 작업대 전환 기간 — 이전 화면 보기
       const [useLegacySchedule, setUseLegacySchedule] = useState(false); // 일정 화면(#6b·#6c) 전환 기간 — 이전 화면 보기
       const [useLegacyMain, setUseLegacyMain] = useState(false); // 메인(#6a) 전환 기간 — 이전 화면 보기
+      const [useLegacyStaffHome, setUseLegacyStaffHome] = useState(false); // 담당자 홈(#3a) 전환 기간 — 이전 마이페이지 보기
       const [perfInit, setPerfInit] = useState({}); // 메인에서 실적 작업대로 넘어갈 때 첫 필터 { filter, who }
       const [scheduleInit, setScheduleInit] = useState({}); // 메인에서 일정으로 넘어갈 때 첫 상태 { view, listFilter, search }
       const [morningBriefConfig, setMorningBriefConfig] = useState({}); // config/morningBrief { autoSend, days }
@@ -6312,6 +6315,88 @@ const SETTLEMENT_BADGE_STYLE = {
           onLogout: handleLogout,
           onOpenLegacy,
         };
+      };
+
+      // ===== 담당자 홈(#3a) — 마이페이지 대신 여는 데스크톱 화면 =====
+      //   일반 담당자: 본인. 전체조회 계정: 이전 마이페이지에서 담당자를 고르면 그 담당자 홈.
+      const STAFF_HOME_MEMBERS = ['이승우', '황윤선', '한준엽', '조재연', '정정훈', '김성민', '이필선', '조현식', '한인규'];
+      const staffHomeMe = !isLoggedIn || !currentUser ? null
+        : !hasFullDataViewAccess(currentUser) ? currentUser.name
+        : (STAFF_HOME_MEMBERS.includes(myPageUser) ? myPageUser : null);
+      const showStaffHome = showMyPage && !isMobile && !!staffHomeMe && !useLegacyStaffHome;
+      const staffSidebarProps = () => {
+        const base = shellSidebarProps('home', () => setUseLegacyStaffHome(true));
+        const full = hasFullDataViewAccess(currentUser);
+        const go = (view, title) => { setShowMyPage(false); setShowDashboard(false); setShowPerformance(view === 'perf'); setShowMeetingView(false); setShowSalesView(false); updatePageTitle(title); };
+        return {
+          ...base,
+          nav: [
+            { key: 'home', label: '홈', active: true, onClick: () => {} },
+            { key: 'schedule', label: '내 일정', onClick: () => go('schedule', '일정') },
+            ...(currentUser?.canAccessPerformance !== false ? [{ key: 'perf', label: '내 실적', onClick: () => go('perf', '실적') }] : []),
+            { key: 'settle', label: '내 정산', onClick: () => setUseLegacyStaffHome(true) },
+          ],
+          adminNav: full ? base.adminNav : [],
+        };
+      };
+      const staffNotifyAdmin = async (body, color, title, description) => {
+        if (!jandiUrl) return;
+        try {
+          await fetch(jandiUrl, {
+            method: 'POST', mode: 'no-cors',
+            headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ body, connectColor: color, connectInfo: [{ title, description }] }),
+          });
+        } catch {}
+      };
+      // 분기 확인 — 기존 마이페이지와 같은 quarterConfirmations/{분기}/{담당자} 를 쓴다 (OPERATIONS.md §8 Phase 2·4)
+      const staffConfirmQuarter = async (qKey, who) => {
+        if (!window.confirm(`${qKey} 실적을 "확인완료" 처리합니다.\n\n이후 수정이 필요하면 관리자에게 요청해야 합니다. 진행?`)) return;
+        try {
+          await database.ref(`quarterConfirmations/${qKey}/${who}`).update({ confirmed: true, confirmedAt: new Date().toISOString(), confirmedBy: currentUser?.name || who });
+          await staffNotifyAdmin(`✅ ${qKey} 실적 확인 완료 — ${who}`, '#16a34a', '담당자 자가 확인 완료', `${who}님이 ${qKey} 실적을 확인 완료 처리했습니다.`);
+        } catch (e) { alert('저장 실패: ' + e.message); }
+      };
+      const staffUndoConfirmQuarter = async (qKey, who) => {
+        if (!window.confirm(`${qKey} 확인완료를 되돌릴까요?\n\n다시 "확인 대기" 상태가 됩니다.`)) return;
+        try {
+          await database.ref(`quarterConfirmations/${qKey}/${who}`).update({ confirmed: false, confirmedAt: null, confirmedBy: null });
+          await staffNotifyAdmin(`↩ ${qKey} 실적 확인 취소 — ${who}`, '#64748b', '담당자 확인 되돌림', `${who}님이 ${qKey} 확인완료를 되돌렸습니다.`);
+        } catch (e) { alert('저장 실패: ' + e.message); }
+      };
+      const staffRequestFix = async (qKey, who, text) => {
+        try {
+          await database.ref(`quarterConfirmations/${qKey}/${who}/reviewRequests`).push().set({ text, requestedAt: new Date().toISOString(), requestedBy: currentUser?.name || who, status: 'open' });
+          await staffNotifyAdmin(`⚠ ${qKey} 검증/수정 요청 — ${who}`, '#d97706', `${who}님의 요청`, text);
+          return true;
+        } catch (e) { alert('저장 실패: ' + e.message); return false; }
+      };
+      const staffFinalConfirm = async (qKey, who) => {
+        const { unverified, waitingSupport } = finalConfirmBlockers(ptSchedules, who);
+        const blocking = [];
+        if (unverified.length) blocking.push(`미검증 ${unverified.length}건`);
+        if (waitingSupport.length) blocking.push(`지원자 판정 대기 ${waitingSupport.length}건`);
+        if (blocking.length) { alert(`⚠ 최종 확정 차단\n\n먼저 해결해야 할 건:\n  - ${blocking.join('\n  - ')}`); return; }
+        if (!window.confirm(`${qKey} 실적을 "최종 확정" 처리합니다.\n\n이후 김유림님에게 분기 보고서가 발송됩니다. 진행?`)) return;
+        try {
+          await database.ref(`quarterConfirmations/${qKey}/${who}`).update({ finalConfirmed: true, finalConfirmedAt: new Date().toISOString(), finalConfirmedBy: currentUser?.name || who });
+          await staffNotifyAdmin(`✅ ${qKey} 최종 확정 — ${who}`, '#7c3aed', '담당자 2라운드 최종 확정', `${who}님이 ${qKey} 실적을 최종 확정 처리했습니다.`);
+        } catch (e) { alert('저장 실패: ' + e.message); }
+      };
+      // "공고 없었어요" — 관리자 확인 요청만 남긴다 (정산 상태는 관리자가 검토 패널에서 결정)
+      const staffNoNotice = async (pt, who) => {
+        if (!window.confirm(`${pt.siteName || '이 현장'}\n\n입찰 공고 없이 진행된 PT로 관리자에게 알릴까요?\n관리자가 확인하면 정산이 진행돼요.`)) return;
+        const nowISO = new Date().toISOString();
+        try {
+          await writeWorkbenchPatch(pt, { [`settlement/${who}/noNoticeClaimAt`]: nowISO, [`settlement/${who}/noNoticeClaimBy`]: currentUser?.name || who });
+          try {
+            await sendJandiNotification({
+              body: `📭 공고 없음 확인 요청 — ${who}`,
+              connectColor: '#d97706',
+              connectInfo: [{ title: `${pt.siteName || '단지명 미입력'} (${pt.date || '-'})`, description: `${who}님: 입찰 공고 없이 진행된 PT라고 알려왔습니다.\n결과: ${pt.results?.[who] || pt.result || '-'}\n\n→ 실적 작업대 검토필요에서 수동 승인/제외 판단 부탁드립니다.` }],
+            });
+          } catch {}
+        } catch (e) { alert('저장 실패: ' + e.message); }
       };
 
       // 아침 브리핑(#6c) 수동 발송 — 관리자 채널엔 전체, 담당자 개인 잔디엔 각자 일정만.
@@ -12853,6 +12938,39 @@ tr.suppressed td.fname{color:#64748b;}
               </>
               )}
             </>
+          )}
+
+          {/* 담당자 홈(#3a) — 데스크톱. 기존 마이페이지 위를 덮는 전체 화면. */}
+          {showStaffHome && (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 500, overflow: 'auto', background: '#f8fafc', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>
+              <StaffHome
+                me={staffHomeMe}
+                ptSchedules={ptSchedules}
+                todayStr={todayStr}
+                quarterConfirmations={quarterConfirmations}
+                teamNames={['한준엽', '조재연', '정정훈', '김성민', '이필선', '조현식', '한인규']}
+                sidebar={staffSidebarProps()}
+                memberOptions={hasFullDataViewAccess(currentUser) ? STAFF_HOME_MEMBERS : null}
+                onChangeMe={hasFullDataViewAccess(currentUser) ? setMyPageUser : null}
+                jandiOn={!!(jandiUserWebhooks?.[staffHomeMe]?.url && jandiUserWebhooks[staffHomeMe].enabled !== false)}
+                onJandiSettings={currentUser?.isAdmin ? () => setShowSettings(true) : null}
+                onSetResult={handleResultClick}
+                onUploadNotice={workbenchOpenKaptVerify}
+                onNoNotice={(pt) => staffNoNotice(pt, staffHomeMe)}
+                onOpenPt={handleEditClick}
+                onAdd={() => { setAddTypeModalDate(null); setShowAddTypeModal(true); }}
+                onAllHistory={currentUser?.canAccessPerformance !== false ? () => { setShowMyPage(false); setShowPerformance(true); updatePageTitle('실적'); } : null}
+                onConfirm={(q) => staffConfirmQuarter(q, staffHomeMe)}
+                onUndoConfirm={(q) => staffUndoConfirmQuarter(q, staffHomeMe)}
+                onRequestFix={(q, text) => staffRequestFix(q, staffHomeMe, text)}
+                onFinalConfirm={(q) => staffFinalConfirm(q, staffHomeMe)}
+              />
+            </div>
+          )}
+          {showMyPage && !showStaffHome && useLegacyStaffHome && !isMobile && staffHomeMe && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+              <button onClick={() => setUseLegacyStaffHome(false)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#0F4C75', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>새 담당자 홈</button>
+            </div>
           )}
 
           {/* 마이페이지 */}
