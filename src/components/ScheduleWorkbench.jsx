@@ -237,7 +237,7 @@ export default function ScheduleWorkbench({
                     return (
                       <div key={ds} data-date={ds} title={items.length ? undefined : '눌러서 일정 추가'} onClick={e => { setSelDate(ds); if (!items.length) openAdd(ds, e.currentTarget); }} style={{ minHeight: 104, padding: '6px 6px 4px', display: 'flex', flexDirection: 'column', gap: 3, cursor: 'pointer', background: isSel ? C.active : '#fff', boxShadow: isPop ? `inset 0 0 0 2px ${C.brand}` : isSel ? `inset 0 0 0 1.5px ${C.brand}` : 'none', minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2, minWidth: 0 }}>
-                          <button type="button" aria-label={`${+ds.slice(5, 7)}월 ${+ds.slice(8)}일${hol ? ` ${hol}` : ''} 선택`} aria-pressed={isSel} onClick={e => { e.stopPropagation(); setSelDate(ds); }} style={{ width: 22, height: 22, borderRadius: 11, display: 'grid', placeItems: 'center', border: 0, padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: isToday ? 800 : 600, color: isToday ? '#fff' : red ? '#b91c1c' : dow === 6 ? C.brand : C.text2, background: isToday ? C.brand : 'transparent', flex: 'none' }}>{+ds.slice(8)}</button>
+                          <button type="button" aria-label={`${+ds.slice(5, 7)}월 ${+ds.slice(8)}일${hol ? ` ${hol}` : ''} 선택`} aria-pressed={isSel} onClick={e => { e.stopPropagation(); setSelDate(ds); if (!items.length) openAdd(ds, e.currentTarget.closest('[data-date]')); }} style={{ width: 22, height: 22, borderRadius: 11, display: 'grid', placeItems: 'center', border: 0, padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: isToday ? 800 : 600, color: isToday ? '#fff' : red ? '#b91c1c' : dow === 6 ? C.brand : C.text2, background: isToday ? C.brand : 'transparent', flex: 'none' }}>{+ds.slice(8)}</button>
                           {hol && <span style={{ fontSize: 10.5, color: '#b91c1c', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{hol}</span>}
                         </div>
                         {items.slice(0, shown).map(s => {
@@ -249,7 +249,7 @@ export default function ScheduleWorkbench({
                             </button>
                           );
                         })}
-                        {items.length > shown && <span style={{ fontSize: 11, color: C.text3, paddingLeft: 5 }}>+{items.length - shown}건 더</span>}
+                        {items.length > shown && <button type="button" onClick={e => { e.stopPropagation(); setSelDate(ds); }} style={{ alignSelf: 'flex-start', padding: '0 5px', border: 0, background: 'none', fontSize: 11, color: C.text3, cursor: 'pointer', fontFamily: 'inherit' }}>+{items.length - shown}건 더</button>}
                       </div>
                     );
                   })}

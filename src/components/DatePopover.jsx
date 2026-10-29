@@ -45,6 +45,13 @@ export default function DatePopover({ date, anchor, people = [], me, onPickKind,
     setPos({ left, top, side: right ? 'right' : 'left', arrow: Math.max(14, Math.min(anchor.top - top + 16, h - 26)) });
   }, [anchor, kind, saved]);
 
+  // 열리면 첫 종류(PT)에 포커스, 닫히면 열었던 달력 칸으로 복귀 — 키보드만으로 고를 수 있게
+  useEffect(() => {
+    const opener = document.activeElement;
+    ref.current?.querySelector('button:not([aria-label="닫기"])')?.focus({ preventScroll: true });
+    return () => { if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus({ preventScroll: true }); };
+  }, []);
+
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
     const onDown = e => { if (ref.current && !ref.current.contains(e.target)) onClose(); };

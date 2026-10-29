@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import MethodChips from './MethodChips.jsx';
 import { dateTitle } from './DatePopover.jsx';
 
@@ -48,6 +48,29 @@ export default function ScheduleEditModal({
   const set = patch => onChange({ ...s, ...patch });
   const [customName, setCustomName] = useState('');
 
+  // README 기본 동작 규칙 — Esc로 닫기, 바뀐 내용 있으면 "저장하지 않고 닫을까요?",
+  // 열리면 첫 입력에 포커스, 닫히면 열었던 버튼으로 포커스 복귀
+  const dialogRef = useRef(null);
+  const initial = useRef(JSON.stringify(schedule));
+  const latest = useRef({ s: schedule, onClose });
+  latest.current = { s: schedule, onClose };
+  const requestClose = () => {
+    const dirty = JSON.stringify(latest.current.s) !== initial.current;
+    if (dirty && !window.confirm('저장하지 않고 닫을까요?\n\n입력한 내용은 사라집니다.')) return;
+    latest.current.onClose();
+  };
+  useEffect(() => {
+    const opener = document.activeElement;
+    const first = dialogRef.current?.querySelector('input:not([type="hidden"]):not([disabled]), select, textarea');
+    if (first && !mobile) first.focus({ preventScroll: true }); // 모바일은 키보드가 바로 올라오지 않게
+    const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); requestClose(); } };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus({ preventScroll: true });
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const isPtLike = s.type === 'pt' || s.type === 'asq';
   const hasSite = isPtLike || s.type === 'briefing';
   const isTitled = s.type === 'personal' || s.type === 'vacation' || s.type === 'seminar';
@@ -86,10 +109,10 @@ export default function ScheduleEditModal({
     : null;
 
   return (
-    <div role="presentation" onClick={mobile ? undefined : onClose} style={mobile
+    <div role="presentation" onClick={mobile ? undefined : requestClose} style={mobile
       ? { position: 'fixed', top: topInset, left: 0, right: 0, bottom: 0, zIndex: 1000, background: '#fff', fontFamily: font }
       : { position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,76,117,.4)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 40, overflowY: 'auto', fontFamily: font }}>
-      <div role="dialog" aria-modal="true" aria-labelledby="sem-title" onClick={e => e.stopPropagation()}
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="sem-title" onClick={e => e.stopPropagation()}
         style={mobile
           ? { position: 'absolute', inset: 0, background: '#fff', display: 'flex', flexDirection: 'column', color: C.ink }
           : { width: 600, maxWidth: 'calc(100% - 32px)', background: '#fff', borderRadius: 16, boxShadow: '0 24px 64px rgba(15,23,42,.28)', display: 'flex', flexDirection: 'column', maxHeight: 'min(820px, calc(100vh - 60px))', marginBottom: 20, color: C.ink }}>
@@ -97,7 +120,7 @@ export default function ScheduleEditModal({
         {mobile ? (
           <div style={{ flex: 'none', padding: 'calc(env(safe-area-inset-top) + 6px) 12px 10px', borderBottom: `1px solid ${C.line2}` }}>
             <div style={{ display: 'flex', alignItems: 'center' }}>
-              <button type="button" onClick={onClose} style={{ ...textBtn, color: C.text2 }}>취소</button>
+              <button type="button" onClick={requestClose} style={{ ...textBtn, color: C.text2 }}>취소</button>
               <h2 id="sem-title" style={{ flex: 1, margin: 0, textAlign: 'center', fontSize: 17, fontWeight: 800 }}>{title}</h2>
               <button type="button" disabled={!canSave} onClick={onSave} style={{ ...textBtn, color: canSave ? C.brand : C.strong, fontWeight: 800 }}>저장</button>
             </div>
@@ -110,7 +133,7 @@ export default function ScheduleEditModal({
               {isAdd && s.date && dateFixed && <span style={{ marginLeft: 10, fontSize: 13, color: C.text3 }}>{dateTitle(s.date)}</span>}
               <div style={{ flex: 1 }} />
               {briefingImageBtn}
-              <button type="button" aria-label="닫기" onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: 0, background: 'transparent', fontSize: 18, color: C.text3, cursor: 'pointer' }}>✕</button>
+              <button type="button" aria-label="닫기" onClick={requestClose} style={{ width: 32, height: 32, borderRadius: 8, border: 0, background: 'transparent', fontSize: 18, color: C.text3, cursor: 'pointer' }}>✕</button>
             </div>
             {kindChips}
           </div>
@@ -265,7 +288,7 @@ export default function ScheduleEditModal({
               : <span style={{ fontSize: 12, color: C.text4 }}>저장하면 일정·실적에 바로 반영돼요</span>}
             {onLegacy && <button type="button" onClick={onLegacy} style={{ padding: 0, border: 0, background: 'none', color: C.text4, fontSize: 12, textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>이전 입력 화면</button>}
             <div style={{ flex: 1 }} />
-            <button type="button" onClick={onClose} style={{ height: 40, padding: '0 16px', borderRadius: 8, border: `1px solid ${C.line}`, background: '#fff', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit', color: C.ink }}>취소</button>
+            <button type="button" onClick={requestClose} style={{ height: 40, padding: '0 16px', borderRadius: 8, border: `1px solid ${C.line}`, background: '#fff', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit', color: C.ink }}>취소</button>
             <button type="button" disabled={!canSave} title={canSave ? undefined : `필수: ${missing.join(' · ')}`} onClick={onSave} style={{ height: 40, padding: '0 20px', borderRadius: 8, border: 0, background: canSave ? C.brand : C.strong, color: '#fff', fontSize: 13.5, fontWeight: 700, cursor: canSave ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>{isAdd ? '등록' : '저장'}</button>
           </div>
         )}
