@@ -97,20 +97,20 @@ export default function MainDashboard({
     <div style={{ display: 'flex', minHeight: '100vh', background: C.muted, color: C.text, fontVariantNumeric: 'tabular-nums' }}>
       <AppSidebar {...sidebar} />
       <main style={{ flex: 1, minWidth: 0, background: C.muted, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, height: 60, padding: '0 24px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
-          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 800, letterSpacing: '-.02em', whiteSpace: 'nowrap' }}>메인</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, height: 72, padding: '0 28px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: '-.02em', whiteSpace: 'nowrap' }}>메인</h1>
           <label htmlFor="md-year" style={srOnly}>연도</label>
-          <select id="md-year" value={year} onChange={e => onYearChange(e.target.value)} style={{ height: 32, padding: '0 10px', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', flex: 'none' }}>
+          <select id="md-year" value={year} onChange={e => onYearChange(e.target.value)} style={{ height: 38, padding: '0 12px', border: `1px solid ${C.line}`, borderRadius: 9, background: '#fff', fontSize: 14.5, fontWeight: 700, fontFamily: 'inherit', flex: 'none' }}>
             {(years || []).map(y => <option key={y} value={y}>{y === 'all' ? '전체' : `${y}년`}</option>)}
           </select>
-          <span style={{ fontSize: 12, color: C.text4, whiteSpace: 'nowrap' }}>{today.getMonth() + 1}월 {today.getDate()}일 {KDAY[today.getDay()]}요일 · 파이프라인 데이터 기준 (Relate.so)</span>
+          <span style={{ fontSize: 13.5, color: C.text3, whiteSpace: 'nowrap' }}>{today.getMonth() + 1}월 {today.getDate()}일 {KDAY[today.getDay()]}요일 · 파이프라인 데이터 기준 (Relate.so)</span>
           <div style={{ flex: 1 }} />
           <form role="search" onSubmit={e => { e.preventDefault(); if (search.trim() && onSearch) onSearch(search.trim()); }}>
             <label htmlFor="md-search" style={srOnly}>현장·담당자 검색 (일정에서 찾기)</label>
-            <input id="md-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="현장·담당자 검색 → 일정" style={{ height: 34, width: 220, minWidth: 0, padding: '0 12px', border: `1px solid ${C.line}`, borderRadius: 8, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }} />
+            <input id="md-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="현장·담당자 검색 → 일정" style={{ height: 40, width: 300, minWidth: 0, padding: '0 14px', border: `1px solid ${C.line}`, borderRadius: 9, fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box' }} />
           </form>
-          {onMeeting && <button type="button" onClick={onMeeting} style={{ height: 34, padding: '0 12px', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', fontSize: 13, color: C.text, cursor: 'pointer', fontFamily: 'inherit' }}>영업회의</button>}
-          {onAdd && <button type="button" onClick={onAdd} style={{ height: 34, padding: '0 14px', border: 0, borderRadius: 8, background: C.brand, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>+ 일정 추가</button>}
+          {onMeeting && <button type="button" onClick={onMeeting} style={{ height: 40, padding: '0 16px', border: `1px solid ${C.line}`, borderRadius: 9, background: '#fff', fontSize: 14, fontWeight: 600, color: C.text, cursor: 'pointer', fontFamily: 'inherit' }}>영업회의</button>}
+          {onAdd && <button type="button" onClick={onAdd} style={{ height: 40, padding: '0 18px', border: 0, borderRadius: 9, background: C.brand, color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>+ 일정 추가</button>}
         </div>
 
         {/* 화면 높이를 채운다 — 남는 높이는 팀별 현황이 받아 위로 몰리지 않게 */}
