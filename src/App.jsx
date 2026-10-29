@@ -114,6 +114,7 @@ import FeedbackSend from './components/FeedbackSend.jsx';
 import { feedbackScreen, feedbackDevice } from './utils/feedback.js';
 import LoginScreen from './components/LoginScreen.jsx';
 import ScreenshotReviewQueue from './components/ScreenshotReviewQueue.jsx';
+import SettingsModal from './components/SettingsModal.jsx';
 import ResultRecordModal from './components/ResultRecordModal.jsx';
 import MyPage from './components/MyPage.jsx';
 import ScheduleEditModal from './components/ScheduleEditModal.jsx';
@@ -922,6 +923,9 @@ const SETTLEMENT_BADGE_STYLE = {
       const [importStatus, setImportStatus] = useState(null);
       const [importMode, setImportMode] = useState('merge'); // 'replace', 'merge', 'addNew'
       const [sheetTab, setSheetTab] = useState('import'); // 'import', 'export'
+      const [importPreview, setImportPreview] = useState(null); // 설정(#12c) 가져오기 미리보기 결과
+      const [useLegacySettings, setUseLegacySettings] = useState(false); // 설정(#12c) 전환 기간 — 이전 설정 화면(데이터 초기화·복원 포함)
+      useEffect(() => { if (!showSettings) setUseLegacySettings(false); }, [showSettings]); // 닫으면 다음엔 새 설정으로
       
       // CSV 내보내기 함수
       const handleExportCSV = (type) => {
@@ -1044,11 +1048,14 @@ const SETTLEMENT_BADGE_STYLE = {
       };
       
       // 구글시트에서 데이터 가져오기
-      const handleImportFromSheet = async () => {
+      // opts.dryRun — 설정(#12c) "미리보기만": 시트를 읽고 건수만 계산, 저장하지 않음
+      const handleImportFromSheet = async (opts = {}) => {
         if (!sheetUrl) return;
-        
+        const dryRun = opts && opts.dryRun === true;
+
         setIsImporting(true);
-        setImportStatus({ type: 'loading', message: '데이터를 가져오는 중...' });
+        setImportPreview(null);
+        setImportStatus({ type: 'loading', message: dryRun ? '시트를 읽는 중...' : '데이터를 가져오는 중...' });
         
         try {
           // 여러 CORS 프록시 시도
@@ -1161,7 +1168,8 @@ const SETTLEMENT_BADGE_STYLE = {
           let addedCount = 0;
           let updatedCount = 0;
           let skippedCount = 0;
-          
+          let unchangedCount = 0;
+
           // 중복 판단 키 생성 함수
           const getKey = (s) => `${s.siteName}_${s.date || s.expectedMonth || s.dateNote}`.toLowerCase().replace(/\s/g, '');
           
@@ -1180,6 +1188,9 @@ const SETTLEMENT_BADGE_STYLE = {
                 // 기존 항목 업데이트 (결과 유지)
                 const existing = existingMap.get(key);
                 existingMap.set(key, { ...newItem, id: existing.id, result: existing.result });
+                // 미리보기용: 시트 값이 기존과 같으면 "변경 없음"
+                const fields = ['siteName', 'address', 'time', 'participants', 'workType', 'mainCategory', 'requester', 'competitor', 'status', 'ptAssignee', 'dateType', 'date', 'expectedMonth'];
+                if (fields.every(f => String(existing[f] || '') === String(newItem[f] || ''))) unchangedCount++;
                 updatedCount++;
               } else {
                 // 새 항목 추가
@@ -1199,6 +1210,24 @@ const SETTLEMENT_BADGE_STYLE = {
             skippedCount = imported.length - newItems.length;
           }
           
+          if (dryRun) {
+            const todayKeyStr = new Date().toISOString().slice(0, 10);
+            setImportPreview({
+              mode: importMode,
+              rows: data.length,
+              valid: imported.length,
+              added: addedCount,
+              updated: updatedCount - unchangedCount,
+              unchanged: unchangedCount + skippedCount,
+              unassigned: imported.filter(s => !s.ptAssignee && s.date && s.date >= todayKeyStr).length,
+              removed: importMode === 'replace' ? Math.max(0, ptSchedules.length - imported.length) : 0,
+              at: new Date().toISOString(),
+            });
+            setImportStatus(null);
+            setIsImporting(false);
+            return;
+          }
+
           // ID 기반 중복 제거
           const seenIds660 = [];
           finalData = finalData.filter(item => {
@@ -15210,7 +15239,46 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* 시트 설정 모달 */}
-          {showSettings && (
+          {/* 설정(#12c) — 좌측 탭. 위험 기능(데이터 초기화·복원)은 아래 이전 설정 화면에만 */}
+          {showSettings && !useLegacySettings && (
+            <SettingsModal
+              tab={sheetTab}
+              onTab={setSheetTab}
+              isAdmin={!!currentUser?.isAdmin}
+              canManageAccounts={!!(currentUser?.isAdmin && currentUser?.canManagePasswords)}
+              ptCount={ptSchedules.length}
+              importer={{
+                url: sheetUrl, onUrl: setSheetUrl,
+                mode: importMode, onMode: setImportMode,
+                status: importStatus, preview: importPreview, busy: isImporting,
+                onPreview: () => handleImportFromSheet({ dryRun: true }),
+                onImport: () => {
+                  if (importMode === 'replace' && !window.confirm(`전체 교체: 기존 PT 일정 ${ptSchedules.length}건을 시트 데이터로 바꿉니다.\n\n되돌릴 수 없어요. 진행할까요?`)) return;
+                  handleImportFromSheet();
+                },
+              }}
+              hiworks={{ busy: hiworksSyncLoading, lastSync: hiworksLastSync, vacations: hiworksVacations, onSync: () => syncHiworksVacations() }}
+              exporter={{ counts: { pt: ptSchedules.length, briefing: briefingSchedules.length, personal: personalSchedules.length }, onExport: handleExportCSV }}
+              accounts={{
+                list: userAccounts, webhooks: jandiUserWebhooks,
+                newId: newAccountId, onNewId: setNewAccountId,
+                newPw: newAccountPw, onNewPw: setNewAccountPw,
+                newName: newAccountName, onNewName: setNewAccountName,
+                onAdd: handleAddAccount, onResetPw: handleResetAccountPassword, onDelete: handleDeleteAccount,
+                scopeOf: a => (hasFullDataViewAccess(a) ? '전체 조회' : '본인 데이터'),
+              }}
+              automation={{
+                briefAuto: !!morningBriefConfig.autoSend,
+                briefDays: Math.min(7, Math.max(1, +morningBriefConfig.days || 2)),
+                onToggleBriefAuto: currentUser?.isAdmin ? toggleMorningBriefAuto : undefined,
+                onOpenJandi: () => { setShowSettings(false); setShowJandiModal(true); },
+                onOpenKapt: () => { setShowSettings(false); setShowKaptModal(true); },
+              }}
+              onLegacy={currentUser?.isAdmin ? () => setUseLegacySettings(true) : undefined}
+              onClose={() => setShowSettings(false)}
+            />
+          )}
+          {showSettings && useLegacySettings && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowSettings(false)}>
               <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '600px', maxWidth: '90%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
                 <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>설정</h2>
