@@ -186,7 +186,9 @@ export default function SettlementPage({
           )}
 
           {/* 담당자별 표 */}
-          <section aria-label="담당자별" style={{ ...card, overflow: 'hidden' }}>
+          {/* 제목·선택 바·표 헤더는 헤더(64px) 아래 고정 — sticky 가 잘리지 않게 카드 overflow 는 풀어 둔다 */}
+          <section aria-label="담당자별" style={card}>
+            <div style={{ position: 'sticky', top: 64, zIndex: 5, background: '#fff', borderRadius: '12px 12px 0 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 18px', borderBottom: `1px solid ${C.line2}` }}>
               <h2 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>담당자별</h2>
               <span style={{ fontSize: 12, color: C.text4 }}>행 클릭 → PT별 내역 · 체크 → 일괄 처리</span>
@@ -208,6 +210,7 @@ export default function SettlementPage({
             <div style={{ display: 'grid', gridTemplateColumns: ROW_GRID, gap: 8, padding: '7px 18px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}`, alignItems: 'center' }}>
               <input type="checkbox" aria-label="전체 선택" checked={n > 0 && checkedNames.length === n} onChange={e => setChk(e.target.checked ? Object.fromEntries(rows.map(r => [r.assignee, true])) : {})} />
               <span>담당자</span><span style={{ textAlign: 'right' }}>건수</span><span>승 / 무 / 지원</span><span style={{ textAlign: 'right' }}>예상금액</span><span>검토</span><span>1R 확인</span><span>최종확정</span><span />
+            </div>
             </div>
             {rows.map(r => {
               const a = r.assignee;

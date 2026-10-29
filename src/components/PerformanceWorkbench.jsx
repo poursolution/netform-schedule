@@ -116,6 +116,16 @@ export default function PerformanceWorkbench({
   const [memoSaved, setMemoSaved] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
   const searchRef = useRef(null);
+  // 탭·필터·표 헤더 고정 블록 — 헤더(64px) 밑에 붙었을 때만 그림자
+  const stickSentinel = useRef(null);
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    const el = stickSentinel.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return undefined;
+    const io = new IntersectionObserver(([e]) => setStuck(!e.isIntersecting && e.boundingClientRect.top < 65), { rootMargin: '-65px 0px 0px 0px', threshold: 0 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
 
   const meta = useMemo(() => quarterMeta(quarterKey), [quarterKey]);
   const qPts = useMemo(() => quarterPts(ptSchedules || [], quarterKey), [ptSchedules, quarterKey]);
@@ -290,7 +300,10 @@ export default function PerformanceWorkbench({
 
         {/* 본문 2열 */}
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 380px', gap: 16, padding: '16px 24px 24px', flex: 1, minHeight: 0, alignItems: 'start' }}>
-          <section style={{ ...card, overflow: 'hidden', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          {/* 카드에 overflow:hidden 을 주면 sticky 가 잘린다 — 모서리는 sticky 블록·마지막 줄이 맡는다 */}
+          <section style={{ ...card, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <div ref={stickSentinel} aria-hidden="true" style={{ height: 0 }} />
+            <div style={{ position: 'sticky', top: 64, zIndex: 5, background: '#fff', borderRadius: '12px 12px 0 0', boxShadow: stuck ? '0 4px 12px rgba(15,23,42,.06)' : 'none', borderBottom: stuck ? `1px solid ${C.line}` : 0 }}>
             <div role="tablist" aria-label="실적 보기" style={{ display: 'flex', alignItems: 'center', gap: 18, padding: '0 16px', borderBottom: `1px solid ${C.line}` }}>
               <button type="button" role="tab" aria-selected={tab === 'sites'} onClick={() => setTab('sites')} style={tabBtn('sites')}>현장 목록</button>
               <button type="button" role="tab" aria-selected={tab === 'staff'} onClick={() => setTab('staff')} style={tabBtn('staff')}>담당자 비교</button>
@@ -340,6 +353,17 @@ export default function PerformanceWorkbench({
                   <input type="checkbox" aria-label="표시된 행 전체 선택" checked={rows.length > 0 && rows.every(r => checked[r.id])} onChange={e => setChecked(e.target.checked ? Object.fromEntries(rows.map(r => [r.id, true])) : {})} style={{ margin: 0, width: 14, height: 14 }} />
                   <span>일자</span><span>현장 · 공종 · 공법</span><span>담당</span><span style={{ textAlign: 'center' }}>결과</span><span style={{ textAlign: 'center' }}>K-APT 검증</span><span style={{ textAlign: 'center' }}>정산</span><span style={{ textAlign: 'right' }}>금액</span>
                 </div>
+              </>
+            )}
+            {tab === 'staff' && (
+              <div style={{ display: 'grid', gridTemplateColumns: STAFF_GRID, columnGap: 8, padding: '8px 16px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}`, whiteSpace: 'nowrap' }}>
+                <span>담당자</span><span style={{ textAlign: 'right' }}>승</span><span style={{ textAlign: 'right' }}>무</span><span style={{ textAlign: 'right' }}>패</span><span style={{ textAlign: 'right' }}>진행</span><span>승률 · 승/무/패 비율</span><span style={{ textAlign: 'right' }}>검토필요</span><span style={{ textAlign: 'right' }}>{qLabel} 정산예상</span><span style={{ textAlign: 'right' }}>확인</span>
+              </div>
+            )}
+            </div>
+
+            {tab === 'sites' && (
+              <>
                 <div>
                   {rows.map(r => <SiteRow key={r.id} r={r} selected={selected?.id === r.id} checked={!!checked[r.id]} today={today}
                     onSelect={() => setSelectedId(r.id)}
@@ -359,9 +383,6 @@ export default function PerformanceWorkbench({
 
             {tab === 'staff' && (
               <>
-                <div style={{ display: 'grid', gridTemplateColumns: STAFF_GRID, columnGap: 8, padding: '8px 16px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}`, whiteSpace: 'nowrap' }}>
-                  <span>담당자</span><span style={{ textAlign: 'right' }}>승</span><span style={{ textAlign: 'right' }}>무</span><span style={{ textAlign: 'right' }}>패</span><span style={{ textAlign: 'right' }}>진행</span><span>승률 · 승/무/패 비율</span><span style={{ textAlign: 'right' }}>검토필요</span><span style={{ textAlign: 'right' }}>{qLabel} 정산예상</span><span style={{ textAlign: 'right' }}>확인</span>
-                </div>
                 {staff.map(s => {
                   const bar = (n, bg) => ({ width: s.dec ? `${n / s.dec * 100}%` : 0, background: bg });
                   const cs = confirmOf(s.name), tone = confirmTone(cs);
@@ -538,7 +559,7 @@ function DetailPanel({ row, memo, setMemo, memoSaved, canMemo, onSaveMemo, onNex
   );
 
   return (
-    <aside aria-label="선택한 현장 상세" style={{ ...card, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden', position: 'sticky', top: 76, maxHeight: 'calc(100vh - 92px)' }}>
+    <aside aria-label="선택한 현장 상세" style={{ ...card, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden', position: 'sticky', top: 80, maxHeight: 'calc(100vh - 96px)' }}>
       <div style={{ padding: '16px 18px 12px', borderBottom: `1px solid ${C.line2}` }}>
         <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
           {v && <span style={chip(v[1], v[2])}>{v[0]}</span>}
