@@ -72,6 +72,8 @@ export default function PerformanceWorkbench({
   assigneeNames,
   currentUser,
   initialQuarterKey,
+  initialFilter,        // 메인 처리 카드에서 넘어올 때 ('review' 등)
+  initialWho,           // 담당자 이름 또는 { label, names } (팀)
   confirmStateOf,       // (quarterKey, name) => '미확인' | '1R 확인' | '검증요청' | '최종확정'
   nav,                  // [{ key, label, active, badge, onClick }]
   adminNav,             // [{ key, label, badge, onClick }]
@@ -102,8 +104,8 @@ export default function PerformanceWorkbench({
   // 기본은 이번 분기 — 오늘 PT가 바로 보이게. 지난 분기 마감 작업은 분기정산 화면에서 그 분기로 넘어온다
   const [quarterKey, setQuarterKey] = useState(initialQuarterKey || getQuarterKey());
   const [tab, setTab] = useState('sites');
-  const [filter, setFilter] = useState('all');
-  const [who, setWho] = useState('전체');
+  const [filter, setFilter] = useState(initialFilter || 'all');
+  const [who, setWho] = useState(initialWho || '전체');
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState(null);
   const [checked, setChecked] = useState({});
@@ -294,6 +296,9 @@ export default function PerformanceWorkbench({
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderBottom: `1px solid ${C.line2}`, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 11.5, color: C.text4, marginRight: 2 }}>담당</span>
+                  {typeof who === 'object' && (
+                    <button type="button" aria-pressed="true" onClick={() => setWho('전체')} style={whoChip(true)}>{who.label} ✕</button>
+                  )}
                   {['전체', ...(assigneeNames || [])].map(n => (
                     <button key={n} type="button" aria-pressed={who === n} onClick={() => setWho(n)} style={whoChip(who === n)}>{n === '전체' ? `전체 · ${(assigneeNames || []).length}명` : n}</button>
                   ))}

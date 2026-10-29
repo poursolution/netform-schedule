@@ -121,8 +121,11 @@ export const FILTERS = {
   requested: r => r.isRequested,
 };
 
+// who: '전체' | 담당자 이름 | { label, names } (메인 팀별 현황에서 팀 단위로 넘어올 때)
 export function matchesWho(row, who) {
-  return !who || who === '전체' || row.main === who || row.sups.includes(who);
+  if (!who || who === '전체') return true;
+  if (typeof who === 'object') return (who.names || []).some(n => row.main === n || row.sups.includes(n));
+  return row.main === who || row.sups.includes(who);
 }
 
 export function matchesSearch(row, q) {
@@ -192,6 +195,16 @@ export function staffStats(pts, names) {
     const dec = w + d + l;
     return { name, w, d, l, p, dec, total: dec + p, rate: w + l ? Math.round(w / (w + l) * 100) : 0, review, est };
   }).sort((a, b) => b.rate - a.rate || b.total - a.total);
+}
+
+// 지난 분기 마감(다음 달 30일) 전이면 지난 분기를 먼저 — 마감 처리할 분기가 우선
+export function defaultQuarterKey(now = new Date()) {
+  const y = now.getFullYear();
+  const q = Math.ceil((now.getMonth() + 1) / 3);
+  const prev = q === 1 ? `${y - 1}-Q4` : `${y}-Q${q - 1}`;
+  const closing = getQuarterClosingDate(prev);
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return closing && closing >= start ? prev : `${y}-Q${q}`;
 }
 
 export function quarterPts(pts, quarterKey) {
