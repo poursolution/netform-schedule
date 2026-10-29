@@ -131,7 +131,7 @@ export default function MainDashboard({
   const yLabel = year === 'all' ? '전체' : `${year}년`;
 
   const queueBtn = (bg, border) => ({ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, padding: '14px 16px', minWidth: 0, background: bg, border: `1px solid ${border}`, borderRadius: 12, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', color: C.text });
-  const queueNum = (n, color = C.ink) => <span style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-.02em', lineHeight: 1.1, color }}>{n.toLocaleString('ko-KR')}<span style={{ fontSize: 13, fontWeight: 600, marginLeft: 3, color: C.text3 }}>건</span></span>;
+  const queueNum = (n, color = C.ink) => <span style={{ whiteSpace: 'nowrap', flex: 'none', fontSize: 24, fontWeight: 800, letterSpacing: '-.02em', lineHeight: 1.1, color }}>{n.toLocaleString('ko-KR')}<span style={{ fontSize: 13, fontWeight: 600, marginLeft: 3, color: C.text3 }}>건</span></span>;
   const dot = bg => <span style={{ width: 7, height: 7, borderRadius: '50%', background: bg, flex: 'none' }} />;
   const qTitle = color => ({ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color, whiteSpace: 'nowrap' });
   const go = { marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: C.brand, whiteSpace: 'nowrap' };

@@ -287,7 +287,13 @@ export default function SettlementPage({
                 </React.Fragment>
               );
             })}
-            {n === 0 && <div style={{ padding: 28, textAlign: 'center', fontSize: 13, color: C.text4 }}>{loading ? '불러오는 중…' : '이 분기 정산 대상이 없어요'}</div>}
+            {/* 빈 상태 — 왜 비었는지 + 다음 행동 (README 기본 동작 규칙) */}
+            {n === 0 && <div style={{ padding: 28, textAlign: 'center', fontSize: 13, color: C.text3 }}>
+              {loading ? '불러오는 중…'
+                : statusFilter && statusFilter !== 'all'
+                  ? <>이 상태의 담당자가 없어요 · <button type="button" onClick={() => onStatusFilterChange && onStatusFilterChange('all')} style={{ ...link, color: C.brand }}>전체 보기</button></>
+                  : '이 분기 정산 대상이 없어요 · 실적에서 승·무·지원 결과를 입력하면 여기에 모여요'}
+            </div>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 18px', fontSize: 12, color: C.text4, flexWrap: 'wrap' }}>
               <span>합계 {targetCount}건 · {amount.toLocaleString('ko-KR')}원</span>
               <div style={{ flex: 1 }} />

@@ -20,7 +20,7 @@ const RES = { 승: ['#dcfce7', '#15803d'], 무: ['#fef3c7', '#b45309'], 패: ['#
 const KDAY = ['일', '월', '화', '수', '목', '금', '토'];
 const srOnly = { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' };
 const card = { background: '#fff', border: `1px solid ${C.line}`, borderRadius: 12 };
-const tag = type => { const m = typeMeta(type); return { display: 'inline-block', padding: '1px 5px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: m.bg, color: m.fg, flex: 'none' }; };
+const tag = type => { const m = typeMeta(type); return { display: 'inline-block', padding: '1px 5px', borderRadius: 4, fontSize: 11, fontWeight: 700, background: m.bg, color: m.fg, flex: 'none' }; };
 const pill = (bg, fg, extra = {}) => ({ display: 'inline-block', padding: '2px 7px', borderRadius: 999, background: bg, color: fg, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', ...extra });
 const selectStyle = { height: 34, padding: '0 10px', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', fontSize: 13, fontFamily: 'inherit' };
 const primary = (h = 34) => ({ height: h, padding: '0 14px', border: 0, borderRadius: 8, background: C.brand, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' });
