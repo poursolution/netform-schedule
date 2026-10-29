@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import AppSidebar from './AppSidebar.jsx';
 import { filterPipeline, filterPtByYear, flow, teamRows, eok } from '../utils/mainDashboard.js';
-import { buildRow, FILTERS, quarterPts, quarterMeta, defaultQuarterKey, ptsBeforeQuarter, isCarryover } from '../utils/workbench.js';
+import { quarterMeta, defaultQuarterKey, reviewQueueCounts } from '../utils/workbench.js';
 import { unassignedUpcoming } from '../utils/morningBrief.js';
 import { isUnassignedPT, titleOf, shortTime } from '../utils/scheduleView.js';
 import { getQuarterKey } from '../utils/settlement.js';
@@ -43,7 +43,7 @@ function useWide() {
 
 const addDays = (ds, n) => { const d = new Date(`${ds}T00:00:00`); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 // "오늘 08:52 / 어제 17:10 / 10/26 15:00"
-function whenText(iso, todayStr) {
+export function whenText(iso, todayStr) {
   const d = new Date(iso || '');
   if (Number.isNaN(d.getTime())) return '';
   const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -52,7 +52,7 @@ function whenText(iso, todayStr) {
   if (ds === addDays(todayStr, -1)) return `어제 ${hm}`;
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
-function activityText(log) {
+export function activityText(log) {
   const site = log.siteName ? `${log.siteName}${log.assignee ? ` / ${log.assignee}` : ''}` : (log.quarterKey || '');
   switch (log.event) {
     case 'result_input': return `${site} 결과 ${log.result || ''} 입력`;
@@ -107,11 +107,7 @@ export default function MainDashboard({
   // 분기정산 카드는 마감 처리할 분기(지난 분기 마감 전이면 지난 분기)
   const stlKey = settlementQuarterKey || defaultQuarterKey(today);
   // 검토필요 — 실적 목록과 같은 범위(이번 분기 + 이전 분기 미확인). 범위는 카드 이름표에 적는다.
-  const review = useMemo(() => {
-    const cur = quarterPts(ptSchedules || [], qKey).map(pt => buildRow(pt, todayStr)).filter(FILTERS.review).length;
-    const carry = ptsBeforeQuarter(ptSchedules || [], qKey).map(pt => buildRow(pt, todayStr)).filter(r => isCarryover(r) && FILTERS.review(r)).length;
-    return { cur, carry, total: cur + carry };
-  }, [ptSchedules, qKey, todayStr]);
+  const review = useMemo(() => reviewQueueCounts(ptSchedules, qKey, todayStr), [ptSchedules, qKey, todayStr]);
   const unassignedCount = useMemo(() => unassignedUpcoming(schedules, todayStr).length, [schedules, todayStr]);
   const reviewQ = quarterMeta(qKey, today)?.quarter;
   const qMeta = quarterMeta(stlKey, today);

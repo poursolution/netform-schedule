@@ -106,6 +106,7 @@ import ScheduleWorkbench from './components/ScheduleWorkbench.jsx';
 import MainDashboard from './components/MainDashboard.jsx';
 import ShellBehaviors from './components/ShellBehaviors.jsx';
 import MobileTabBar from './components/MobileTabBar.jsx';
+import MobileMain from './components/MobileMain.jsx';
 import StaffHome from './components/StaffHome.jsx';
 import MobileStaffHome from './components/MobileStaffHome.jsx';
 import MobileSchedule from './components/MobileSchedule.jsx';
@@ -6450,6 +6451,8 @@ const SETTLEMENT_BADGE_STYLE = {
         && !showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage;
       // ===== 관리자 실적 모바일(#5c) =====
       const showMobilePerformance = showPerformance && isMobile && isLoggedIn && !!currentUser && hasFullDataViewAccess(currentUser) && !useLegacyMobilePerformance;
+      // ===== 메인 모바일 — 관리자·전체조회 계정. 이전 화면은 useLegacyMain 공유 =====
+      const showMobileMain = showDashboard && isMobile && isLoggedIn && !!currentUser && hasFullDataViewAccess(currentUser) && !useLegacyMain;
       // 새 모바일 화면(#5b·#5c) 하단 탭 — active: 'schedule' | 'perf'
       const mobileScheduleTabs = (active = 'schedule') => {
         const reset = () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); };
@@ -6459,7 +6462,7 @@ const SETTLEMENT_BADGE_STYLE = {
           return [
             { key: 'main', label: '메인', icon: 'home', active: active === 'main', onClick: () => { reset(); setShowDashboard(true); updatePageTitle('메인'); } },
             schedule, add,
-            { key: 'perf', label: '실적', icon: 'chart', active: active === 'perf', onClick: () => { reset(); setShowPerformance(true); setSettlementFilter('all'); updatePageTitle('실적'); } },
+            { key: 'perf', label: '실적', icon: 'chart', active: active === 'perf', onClick: () => { reset(); setPerfInit({}); setShowPerformance(true); setSettlementFilter('all'); updatePageTitle('실적'); } },
             { key: 'settle', label: '정산', icon: 'won', onClick: openSettlement },
           ];
         }
@@ -8149,7 +8152,7 @@ const SETTLEMENT_BADGE_STYLE = {
               </div>
             );
           })()}
-          {showDashboard && !showMainWorkbench && useLegacyMain && !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && (
+          {showDashboard && !showMainWorkbench && useLegacyMain && isLoggedIn && hasFullDataViewAccess(currentUser) && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
               <button onClick={() => setUseLegacyMain(false)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#0F4C75', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>새 메인 화면</button>
             </div>
@@ -13894,9 +13897,38 @@ tr.suppressed td.fname{color:#64748b;}
               topInset={showInstallBanner ? INSTALL_BANNER_H : 0}
             />
           )}
+          {/* 메인 모바일 — 기존 모바일 메인 위를 덮는 전체 화면(하단 탭 포함). 숫자는 데스크톱 메인과 같은 계산 */}
+          {showMobileMain && (() => {
+            const xs = listPendingExceptions(ptSchedules);
+            const stlData = aggregateQuarterSettlement(ptSchedules, monthlySettlementMonth, getQuarterSettlementOptions(monthlySettlementMonth));
+            const reset = () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); };
+            return (
+              <MobileMain
+                me={currentUser?.name}
+                ptSchedules={ptSchedules}
+                schedules={allSchedules}
+                todayStr={todayStr}
+                settlementQuarterKey={monthlySettlementMonth}
+                settlementSummary={quarterSettlementSummary(stlData?.perAssignee, quarterConfirmations[monthlySettlementMonth] || {})}
+                exceptionCount={xs.length}
+                activity={activityLog}
+                tabs={mobileScheduleTabs('main')}
+                onGoReview={() => { reset(); setPerfInit({ filter: 'review' }); setShowPerformance(true); setSettlementFilter('all'); updatePageTitle('실적'); }}
+                onGoUnassigned={() => { reset(); updatePageTitle('일정'); }}
+                onGoSettlement={(currentUser?.isAdmin || currentUser?.name === '한준엽') ? openSettlement : undefined}
+                onGoExceptions={currentUser?.isAdmin ? () => setShowExceptionQueueModal(true) : undefined}
+                onOpenPt={handleEditClick}
+                onMyPage={() => { reset(); setMyPageUser(currentUser?.name || null); setShowMyPage(true); }}
+                onLogout={handleLogout}
+                onLegacy={() => setUseLegacyMain(true)}
+                topInset={showInstallBanner ? INSTALL_BANNER_H : 0}
+              />
+            );
+          })()}
           {/* 관리자 실적 모바일(#5c) — 기존 모바일 실적 화면 위를 덮는 전체 화면(하단 탭 포함) */}
           {showMobilePerformance && (
             <MobilePerformance
+              initialFilter={perfInit?.filter}
               ptSchedules={ptSchedules}
               assigneeNames={assigneeList}
               tabs={mobileScheduleTabs('perf')}
@@ -19849,8 +19881,8 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* 하단 탭 — 기존 화면에서도 새 모바일 화면(일정·실적)과 같은 탭(mobileScheduleTabs)·같은 순서 */}
-          {isMobile && isLoggedIn && !showMobileStaffHome && !showMobileSchedule && !showMobilePerformance
-            && !(showMobileScheduleSheet && (showModal || (showEditModal && editingSchedule))) && (() => {
+          {isMobile && isLoggedIn && !showMobileStaffHome && !showMobileSchedule && !showMobilePerformance && !showMobileMain
+            &&!(showMobileScheduleSheet && (showModal || (showEditModal && editingSchedule))) && (() => {
             const full = hasFullDataViewAccess(currentUser);
             const active = showDashboard ? (full ? 'main' : 'home')
               : showPerformance ? 'perf'
