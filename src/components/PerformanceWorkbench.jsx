@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildRow, FILTERS, matchesWho, matchesSearch, sortByPriority, sortByDate, kpis,
   settlementTargets, staffStats, quarterPts, quarterMeta, formatWon, mmdd, todayKey,
-  settlementStep, SETTLEMENT_STEPS, kaptCandidateText,
+  settlementStep, SETTLEMENT_STEPS, kaptCandidateText, ptsBeforeQuarter, isCarryover, quarterLabelOf,
 } from '../utils/workbench.js';
 import AppSidebar from './AppSidebar.jsx';
 import { calculateSettlementAmount, deriveAssigneeResult, getQuarterKey } from '../utils/settlement.js';
@@ -121,7 +121,11 @@ export default function PerformanceWorkbench({
   const qPts = useMemo(() => quarterPts(ptSchedules || [], quarterKey), [ptSchedules, quarterKey]);
   const minuteKey = `${today} ${now.getHours()}:${now.getMinutes()}`;
   const allRows = useMemo(() => qPts.map(pt => buildRow(pt, today, now)), [qPts, minuteKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  const searched = useMemo(() => allRows.filter(r => matchesSearch(r, search)), [allRows, search]);
+  // 지난 분기에서 결과 미입력·검토필요로 남은 건도 목록·처리 대기에 함께 (분기 KPI·정산 집계에는 넣지 않음)
+  const carryRows = useMemo(() => ptsBeforeQuarter(ptSchedules || [], quarterKey)
+    .map(pt => ({ ...buildRow(pt, today, now), carry: true })).filter(isCarryover), [ptSchedules, quarterKey, minuteKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const listRows = useMemo(() => [...allRows, ...carryRows], [allRows, carryRows]);
+  const searched = useMemo(() => listRows.filter(r => matchesSearch(r, search)), [listRows, search]);
   const byWho = useMemo(() => searched.filter(r => matchesWho(r, who)), [searched, who]);
   const [sortMode, setSortMode] = useState('date');
   const rows = useMemo(() => (sortMode === 'priority' ? sortByPriority : sortByDate)(byWho.filter(FILTERS[filter] || FILTERS.all)), [byWho, filter, sortMode]);
@@ -129,14 +133,14 @@ export default function PerformanceWorkbench({
   const targets = useMemo(() => settlementTargets(qPts), [qPts]);
   const staff = useMemo(() => staffStats(qPts, assigneeNames || []), [qPts, assigneeNames]);
   const queueCount = {
-    review: allRows.filter(FILTERS.review).length,
-    pending: allRows.filter(FILTERS.pending).length,
+    review: listRows.filter(FILTERS.review).length,
+    pending: listRows.filter(FILTERS.pending).length,
     requested: allRows.filter(FILTERS.requested).length,
   };
   const confirmOf = name => (confirmStateOf ? confirmStateOf(quarterKey, name) : '미확인');
   const finalCount = (assigneeNames || []).filter(n => confirmOf(n) === '최종확정').length;
 
-  const selected = allRows.find(r => r.id === selectedId) || rows[0] || null;
+  const selected = listRows.find(r => r.id === selectedId) || rows[0] || null;
 
   useEffect(() => { setMemo(selected?.pt?.resultReasons?.[selected?.main]?.adminNote || ''); setMemoSaved(''); }, [selected?.id]);
 
@@ -168,7 +172,7 @@ export default function PerformanceWorkbench({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const checkedRows = allRows.filter(r => checked[r.id]);
+  const checkedRows = listRows.filter(r => checked[r.id]);
   const nChecked = checkedRows.length;
   const goQueue = f => { setTab('sites'); setFilter(f); };
   const nextReview = () => {
@@ -186,7 +190,7 @@ export default function PerformanceWorkbench({
   const confirmTone = s => s === '최종확정' ? ['#dcfce7', '#15803d'] : s === '1R 확인' ? ['#dbeafe', C.brand] : s === '검증요청' ? ['#fef3c7', '#b45309'] : ['#f1f5f9', C.text3];
 
   const filterCount = key => byWho.filter(FILTERS[key]).length;
-  const filterDefs = [['all', '전체'], ['win', '승'], ['draw', '무'], ['loss', '패'], ['sup', '지원 포함'], ['pending', '미입력']];
+  const filterDefs = [['all', '전체'], ['win', '승'], ['draw', '무'], ['loss', '패'], ['sup', '지원 포함'], ['pending', '미입력'], ...(carryRows.length ? [['carry', '이전 분기 미확인']] : [])];
 
   const qLabel = meta ? `Q${meta.quarter}` : '';
   const ddayRed = meta && meta.dday !== null && meta.dday <= 7;
@@ -292,7 +296,7 @@ export default function PerformanceWorkbench({
               <button type="button" role="tab" aria-selected={tab === 'staff'} onClick={() => setTab('staff')} style={tabBtn('staff')}>담당자 비교</button>
               <button type="button" role="tab" aria-selected={tab === 'stl'} onClick={() => setTab('stl')} style={tabBtn('stl')}>정산 현황</button>
               <div style={{ flex: 1 }} />
-              <span style={{ fontSize: 12, color: C.text4 }}>표시 {rows.length}건 · 전체 {allRows.length}건</span>
+              <span style={{ fontSize: 12, color: C.text4 }}>표시 {rows.length}건 · {qLabel} {allRows.length}건{carryRows.length ? ` + 이전 분기 미확인 ${carryRows.length}건` : ''}</span>
             </div>
 
             {tab === 'sites' && (
@@ -470,7 +474,10 @@ function SiteRow({ r, selected, checked, today, onSelect, onCheck }) {
   return (
     <div onClick={onSelect} style={{ display: 'grid', gridTemplateColumns: GRID, columnGap: 12, alignItems: 'center', padding: '9px 14px', borderBottom: `1px solid ${C.line2}`, cursor: 'pointer', background: selected ? C.active : checked ? C.muted : '#fff', boxShadow: selected ? `inset 3px 0 0 ${C.brand}` : 'none' }}>
       <input type="checkbox" aria-label={`${pt.siteName || ''} 선택`} checked={checked} onClick={e => e.stopPropagation()} onChange={onCheck} style={{ margin: 0, width: 14, height: 14 }} />
-      <span style={{ fontSize: 12, color: C.text3 }}>{mmdd(r.date)}</span>
+      <span style={{ fontSize: 12, color: C.text3 }}>
+        {mmdd(r.date)}
+        {r.carry && <span title="지난 분기 PT — 아직 확인이 안 끝남" style={{ display: 'block', width: 'fit-content', marginTop: 2, padding: '0 4px', borderRadius: 4, background: '#fef3c7', color: '#b45309', fontSize: 10, fontWeight: 700 }}>{quarterLabelOf(r.date)}</span>}
+      </span>
       <div style={{ minWidth: 0, paddingRight: 10 }}>
         <button type="button" onClick={onSelect} style={{ display: 'block', maxWidth: '100%', padding: 0, border: 0, background: 'transparent', fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer', color: C.text, fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pt.siteName || '(현장명 없음)'}</button>
         <div style={{ fontSize: 11.5, color: C.text4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{[pt.workType, methods.length ? methods.join(' · ') : '공법 미입력'].filter(Boolean).join(' · ')}</div>

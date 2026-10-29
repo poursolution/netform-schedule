@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildRow, FILTERS, kpis, settlementTargets, staffStats, quarterMeta, quarterPts, sortByPriority, sortByDate, matchesWho, isPtOver,
-  settlementStep, nextReviewId,
+  settlementStep, nextReviewId, ptsBeforeQuarter, isCarryover, quarterLabelOf,
 } from '../src/utils/workbench.js';
 
 const TODAY = '2026-10-28';
@@ -48,6 +48,20 @@ test('win rate excludes draws', () => {
 test('quarter filter follows the PT date', () => {
   assert.equal(quarterPts(pts, '2026-Q4').length, 6);
   assert.equal(quarterPts(pts, '2026-Q3').length, 1);
+});
+
+test('carryover keeps earlier-quarter PTs that still lack a result or need review', () => {
+  const earlier = [
+    ...pts,
+    { id: 'h', date: '2026-08-14', ptAssignee: '이필선' },                                        // 미입력 → 이월
+    { id: 'i', date: '2026-06-03', ptAssignee: '조재연', results: { 조재연: '승' }, kaptVerified: { status: 'needs_review' } }, // 검토필요 → 이월
+  ];
+  const before = ptsBeforeQuarter(earlier, '2026-Q4');
+  assert.deepEqual(before.map(p => p.id), ['g', 'h', 'i']);
+  const carry = before.map(p => buildRow(p, TODAY)).filter(isCarryover);
+  assert.deepEqual(carry.map(r => r.id), ['h', 'i']); // g는 승·검증 끝 → 제외
+  assert.equal(ptsBeforeQuarter(earlier, 'all').length, 0);
+  assert.equal(quarterLabelOf('2026-08-14'), '26Q3');
 });
 
 test('settlement targets count every participant and skip excluded ones', () => {

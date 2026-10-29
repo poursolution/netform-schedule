@@ -143,6 +143,7 @@ export const FILTERS = {
   pending: r => r.isPending,
   review: r => r.isReview,
   requested: r => r.isRequested,
+  carry: r => !!r.carry,
 };
 
 // who: '전체' | 담당자 이름 | { label, names } (메인 팀별 현황에서 팀 단위로 넘어올 때)
@@ -234,4 +235,20 @@ export function defaultQuarterKey(now = new Date()) {
 export function quarterPts(pts, quarterKey) {
   if (!quarterKey || quarterKey === 'all') return pts;
   return pts.filter(pt => ptBelongsToQuarter(pt.date, quarterKey));
+}
+
+// 선택 분기보다 앞선 PT — 이 중 아직 확인이 안 끝난 건(이월)만 목록에 함께 띄운다
+export function ptsBeforeQuarter(pts, quarterKey) {
+  const p = parseQuarterKey(quarterKey);
+  if (!p) return [];
+  const start = `${p.year}-${String(p.startMonth).padStart(2, '0')}`;
+  return pts.filter(pt => pt && pt.date && String(pt.date).slice(0, 7) < start);
+}
+
+// 이월: 결과 미입력(끝난 PT) 또는 정산 검토필요
+export const isCarryover = row => !!row && (row.isPending || row.isReview);
+
+export function quarterLabelOf(date) {
+  const m = String(date || '').match(/^(\d{4})-(\d{2})/);
+  return m ? `${m[1].slice(2)}Q${Math.ceil(+m[2] / 3)}` : '';
 }
