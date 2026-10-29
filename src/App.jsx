@@ -113,6 +113,7 @@ import FeedbackInbox from './components/FeedbackInbox.jsx';
 import FeedbackSend from './components/FeedbackSend.jsx';
 import { feedbackScreen, feedbackDevice } from './utils/feedback.js';
 import LoginScreen from './components/LoginScreen.jsx';
+import ScreenshotReviewQueue from './components/ScreenshotReviewQueue.jsx';
 import ResultRecordModal from './components/ResultRecordModal.jsx';
 import MyPage from './components/MyPage.jsx';
 import ScheduleEditModal from './components/ScheduleEditModal.jsx';
@@ -16729,98 +16730,64 @@ tr.suppressed td.fname{color:#64748b;}
             </div>
           )}
 
-          {/* 📸 스크린샷 검증 대기 큐 (admin) — pending-admin-review 상태 PT 들 승인/거부 */}
-          {showScreenshotReviewQueue && currentUser?.isAdmin && (() => {
-            const pending = (ptSchedules || [])
-              .filter(p => p?.kaptVerified?.status === 'pending-admin-review')
-              .sort((a, b) => (a.kaptVerified?.requestedAt || '').localeCompare(b.kaptVerified?.requestedAt || ''));
-            return (
-              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
-                onClick={(e) => { if (e.target === e.currentTarget) setShowScreenshotReviewQueue(false); }}>
-                <div style={{ background: 'white', borderRadius: 12, padding: 20, width: 720, maxWidth: '95%', maxHeight: '90vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                    <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', letterSpacing: '0.05em' }}>관리자 큐</div>
-                      <h2 style={{ fontSize: 18, fontWeight: 700, margin: '4px 0 0', color: '#1e293b' }}>📸 스크린샷 검증 대기 ({pending.length}건)</h2>
-                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>담당자가 올린 K-APT 스크린샷을 직접 확인 후 승인/거부</div>
-                    </div>
-                    <button onClick={() => setShowScreenshotReviewQueue(false)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#94a3b8' }}>×</button>
-                  </div>
-                  {pending.length === 0 && (
-                    <div style={{ padding: 32, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>대기 중인 검토 요청 없음</div>
-                  )}
-                  {pending.map(p => {
-                    const kv = p.kaptVerified || {};
-                    return (
-                      <div key={p.id} style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 14, marginBottom: 12, background: '#f8fafc' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{p.siteName}</div>
-                            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{p.date} · 담당: {p.ptAssignee} · 요청자: <b>{kv.requestedBy}</b> · {kv.requestedAt?.slice(0, 16).replace('T', ' ')}</div>
-                          </div>
-                        </div>
-                        <div style={{ fontSize: 11, color: '#1e293b', padding: 8, background: 'white', borderRadius: 6, marginBottom: 10, lineHeight: 1.6 }}>
-                          • AI 추출: <b>{kv.aiExtractedSite || '(실패)'}</b> · 유사도 <b>{kv.aiSimilarity}</b><br/>
-                          • AI 검출 공법: {(kv.aiOurMethodFound || []).join(', ') || '(없음)'}
-                        </div>
-                        {kv.screenshotUrl && (
-                          <div style={{ marginBottom: 10 }}>
-                            <a href={kv.screenshotUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', fontSize: 11, color: '#2563eb', marginBottom: 6 }}>🖼 스크린샷 새창 열기</a>
-                            <img src={kv.screenshotUrl} alt="검증 스크린샷" style={{ maxWidth: '100%', maxHeight: 320, borderRadius: 6, border: '1px solid #cbd5e1', display: 'block' }} />
-                          </div>
-                        )}
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <button
-                            onClick={async () => {
-                              const meName = currentUser?.name;
-                              if (meName === p.ptAssignee) {
-                                if (!window.confirm('본인 PT 입니다. 정말 본인이 직접 승인하시겠습니까? (감사 추적에 기록됨)')) return;
-                              }
-                              try {
-                                await database.ref(`pt/${p.id}/kaptVerified`).update({
-                                  status: 'verified',
-                                  method: 'screenshot-admin-approved',
-                                  reviewedAt: new Date().toISOString(),
-                                  reviewedBy: meName,
-                                  selfApprovedFlag: meName === p.ptAssignee,
-                                });
-                                setPtSchedules(prev => prev.map(ps => ps.id === p.id ? ({
-                                  ...ps,
-                                  kaptVerified: { ...kv, status: 'verified', method: 'screenshot-admin-approved' },
-                                }) : ps));
-                                autoTransitionIfEligible(p.id, p.ptAssignee, 'auto-kapt-verified');
-                              } catch (e) { alert('실패: ' + e.message); }
-                            }}
-                            style={{ flex: 1, padding: 9, borderRadius: 6, border: 'none', background: '#16a34a', color: 'white', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
-                          >✓ 승인 — verified 처리</button>
-                          <button
-                            onClick={async () => {
-                              const note = window.prompt('거부 사유 (담당자에게 전달됨):');
-                              if (note === null) return;
-                              try {
-                                await database.ref(`pt/${p.id}/kaptVerified`).update({
-                                  status: 'rejected',
-                                  method: 'screenshot-admin-rejected',
-                                  reviewedAt: new Date().toISOString(),
-                                  reviewedBy: currentUser?.name,
-                                  rejectionNote: note || '사유 미입력',
-                                });
-                                setPtSchedules(prev => prev.map(ps => ps.id === p.id ? ({
-                                  ...ps,
-                                  kaptVerified: { ...kv, status: 'rejected', method: 'screenshot-admin-rejected', rejectionNote: note },
-                                }) : ps));
-                              } catch (e) { alert('실패: ' + e.message); }
-                            }}
-                            style={{ flex: 1, padding: 9, borderRadius: 6, border: '1px solid #fca5a5', background: 'white', color: '#b91c1c', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
-                          >✗ 거부 — 사유 첨부</button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
+          {/* 스크린샷 검증 큐(#12b, admin) — pending-admin-review 상태 PT. 좌 목록 / 우 스크린샷 + 자동 매칭 결과 */}
+          {showScreenshotReviewQueue && currentUser?.isAdmin && (
+            <ScreenshotReviewQueue
+              items={(ptSchedules || [])
+                .filter(p => p?.kaptVerified?.status === 'pending-admin-review')
+                .sort((a, b) => (a.kaptVerified?.requestedAt || '').localeCompare(b.kaptVerified?.requestedAt || ''))}
+              onClose={() => setShowScreenshotReviewQueue(false)}
+              onApprove={async (p) => {
+                const kv = p.kaptVerified || {};
+                const meName = currentUser?.name;
+                if (meName === p.ptAssignee && !window.confirm('본인 PT 입니다. 정말 본인이 직접 승인하시겠습니까? (감사 추적에 기록됨)')) return false;
+                try {
+                  await database.ref(`pt/${p.id}/kaptVerified`).update({
+                    status: 'verified',
+                    method: 'screenshot-admin-approved',
+                    reviewedAt: new Date().toISOString(),
+                    reviewedBy: meName,
+                    selfApprovedFlag: meName === p.ptAssignee,
+                  });
+                  setPtSchedules(prev => prev.map(ps => ps.id === p.id ? ({ ...ps, kaptVerified: { ...kv, status: 'verified', method: 'screenshot-admin-approved' } }) : ps));
+                  autoTransitionIfEligible(p.id, p.ptAssignee, 'auto-kapt-verified');
+                  return true;
+                } catch (e) { alert('실패: ' + e.message); return false; }
+              }}
+              onReject={async (p, note) => {
+                const kv = p.kaptVerified || {};
+                try {
+                  await database.ref(`pt/${p.id}/kaptVerified`).update({
+                    status: 'rejected',
+                    method: 'screenshot-admin-rejected',
+                    reviewedAt: new Date().toISOString(),
+                    reviewedBy: currentUser?.name,
+                    rejectionNote: note || '사유 미입력',
+                  });
+                  setPtSchedules(prev => prev.map(ps => ps.id === p.id ? ({ ...ps, kaptVerified: { ...kv, status: 'rejected', method: 'screenshot-admin-rejected', rejectionNote: note } }) : ps));
+                } catch (e) { alert('실패: ' + e.message); return false; }
+                // 담당자(요청자) 잔디 DM — 재업로드 요청
+                const who = kv.requestedBy || String(p.ptAssignee || '').split(/[\/,+&]/)[0].trim();
+                const hook = jandiUserWebhooks?.[who]?.enabled !== false ? jandiUserWebhooks?.[who]?.url : null;
+                if (hook) {
+                  try {
+                    await fetch(hook, {
+                      method: 'POST', mode: 'no-cors',
+                      headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        body: '📷 공고 스크린샷을 다시 올려주세요',
+                        connectColor: '#b91c1c',
+                        connectInfo: [{ title: `${p.siteName} · PT ${p.date || ''}`, description: `${note}\n\n시스템 홈의 "공고문 확인 필요" 카드에서 다시 올릴 수 있어요.\n— ${currentUser?.name || '관리자'}` }],
+                      }),
+                    });
+                  } catch {}
+                } else {
+                  alert(`${who || '담당자'}님은 잔디 개인 웹훅이 없어 거부 사유를 DM으로 못 보냈어요. 직접 알려주세요.`);
+                }
+                return true;
+              }}
+            />
+          )}
 
           {/* K-APT 수동 검증 모달 — 사용자가 직접 K-APT 에서 공고 찾아 공고번호 붙여넣기 */}
           {kaptVerifyModal && (() => {
