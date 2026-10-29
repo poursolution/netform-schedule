@@ -95,6 +95,30 @@ export function listPendingExceptions(ptSchedules) {
   return pending;
 }
 
+// 예외 승인 큐(#11a) — 신청 후 지난 날수
+export function exceptionWaitDays(requestedAt, now = new Date()) {
+  if (!requestedAt) return 0;
+  const d = new Date(requestedAt);
+  if (isNaN(d)) return 0;
+  const a = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const b = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.max(0, Math.round((b - a) / 86400000));
+}
+
+export const exceptionKey = item => `${item.scheduleId}_${item.assignee}`;
+
+// #11a 처리 요약 — decisions: { key: 'ok'|'no' }, deltaOf(item) → 승인 시 정산 증가액
+export function exceptionSummary(items, decisions, deltaOf = () => 0) {
+  const ok = items.filter(it => decisions[exceptionKey(it)] === 'ok');
+  const no = items.filter(it => decisions[exceptionKey(it)] === 'no');
+  return {
+    pending: items.length - ok.length - no.length,
+    ok: ok.length,
+    no: no.length,
+    amount: ok.reduce((sum, it) => sum + (deltaOf(it) || 0), 0),
+  };
+}
+
 // 잔디 메시지 빌더 (admin 알림 — 신규 신청 발생)
 export function buildExceptionRequestMessage({ assignee, siteName, type, reason, by }) {
   const typeMeta = EXCEPTION_TYPES[type] || { label: type };
