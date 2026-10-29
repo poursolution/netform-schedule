@@ -8124,9 +8124,13 @@ const SETTLEMENT_BADGE_STYLE = {
                   onGoPending={() => { setUseLegacySchedule(true); goSchedule({}); setListFilter('pending'); setViewMode('list'); }}
                   onGoSettlement={() => (canSettle ? openSettlement() : goPerf({}))}
                   onGoTeam={(team) => goPerf({ who: { label: team.name, names: team.members } })}
+                  onGoMember={(name) => goPerf({ who: name })}
                   onSearch={(q) => goSchedule({ view: 'list', listFilter: 'all', search: q })}
-                  onMeeting={() => goView('meeting', '영업회의')}
                   onAdd={() => { setAddTypeModalDate(null); setShowAddTypeModal(true); }}
+                  onOpenPt={handleEditClick}
+                  onGoSchedule={() => goSchedule({})}
+                  activity={activityLog}
+                  onGoActivity={currentUser?.isAdmin ? () => setShowActivityLog(true) : undefined}
                   {...(() => {
                     const xs = listPendingExceptions(ptSchedules);
                     return {

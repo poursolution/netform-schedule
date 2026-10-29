@@ -112,8 +112,8 @@ export default function SettlementPage({
       <AppSidebar {...sidebar} />
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         {/* 헤더 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: 60, padding: '0 24px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
-          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 800, letterSpacing: '-.02em', whiteSpace: 'nowrap' }}>분기정산</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: 64, padding: '0 28px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, letterSpacing: '-.02em', whiteSpace: 'nowrap' }}>분기정산</h1>
           <select aria-label="분기" value={month} onChange={e => onMonthChange(e.target.value)} style={{ height: 32, padding: '0 10px', border: `1px solid ${C.line}`, borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: 'inherit', background: '#fff' }}>
             {[...new Set([month, ...quarterOptions(today)])].map(q => <option key={q} value={q}>{q}</option>)}
           </select>

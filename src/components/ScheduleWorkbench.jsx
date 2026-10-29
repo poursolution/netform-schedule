@@ -165,8 +165,8 @@ export default function ScheduleWorkbench({
       <AppSidebar {...sidebar} />
       <main style={{ flex: 1, minWidth: 0, background: C.muted, display: 'flex', flexDirection: 'column' }}>
         {/* 헤더 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, height: 60, padding: '0 24px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
-          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 800, letterSpacing: '-.02em', whiteSpace: 'nowrap' }}>일정</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, height: 64, padding: '0 28px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, letterSpacing: '-.02em', whiteSpace: 'nowrap' }}>일정</h1>
           <div role="group" aria-label="보기" style={{ display: 'flex', border: `1px solid ${C.line}`, borderRadius: 8, overflow: 'hidden' }}>
             <button type="button" aria-pressed={view === 'month'} onClick={() => setView('month')} style={seg(view === 'month', true)}>월</button>
             <button type="button" aria-pressed={view === 'list'} onClick={() => setView('list')} style={seg(view === 'list')}>리스트</button>

@@ -42,8 +42,8 @@ export default function MeetingsPage({ meetings, todayStr, sidebar, onNew, onOpe
     <div style={{ display: 'flex', minHeight: '100vh', background: C.muted, color: C.ink, fontVariantNumeric: 'tabular-nums' }}>
       <AppSidebar {...sidebar} />
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: 60, padding: '0 24px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
-          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 800, letterSpacing: '-.02em' }}>영업회의</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: 64, padding: '0 28px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, letterSpacing: '-.02em' }}>영업회의</h1>
           <span style={{ fontSize: 12.5, color: C.text3 }}>매월 첫 금요일 09:00 · 본사 2층</span>
           <div style={{ flex: 1 }} />
           <button type="button" onClick={onNew} style={btn('primary')}>+ 새 회의</button>
