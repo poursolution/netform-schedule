@@ -7,7 +7,7 @@ const C = {
   text: '#1e293b', text2: '#475569', text3: '#64748b', text4: '#94a3b8',
 };
 
-export default function AppSidebar({ nav, adminNav, currentUser, onOpenMyPage, onLogout, onOpenLegacy, footer }) {
+export default function AppSidebar({ nav, adminNav, currentUser, onOpenMyPage, onLogout, onOpenLegacy, footer, profileActive }) {
   const [openAdminItem, setOpenAdminItem] = useState(null);
   return (
     <aside style={{ width: 208, boxSizing: 'border-box', flex: 'none', background: '#fff', borderRight: `1px solid ${C.line}`, color: C.text2, display: 'flex', flexDirection: 'column', padding: '18px 12px', position: 'sticky', top: 0, height: '100vh' }}>
@@ -45,8 +45,8 @@ export default function AppSidebar({ nav, adminNav, currentUser, onOpenMyPage, o
       )}
       <div style={{ flex: 1 }} />
       {footer}
-      <button type="button" onClick={onOpenMyPage} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 10, borderRadius: 10, border: `1px solid ${C.line}`, background: '#fff', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
-        <span style={{ width: 30, height: 30, borderRadius: '50%', background: C.accent, color: C.brand, fontSize: 12, fontWeight: 700, display: 'grid', placeItems: 'center', flex: 'none' }}>{(currentUser?.name || '?').slice(0, 1)}</span>
+      <button type="button" onClick={onOpenMyPage} aria-current={profileActive ? 'page' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 10, borderRadius: 10, border: `1px solid ${profileActive ? C.accent : C.line}`, background: profileActive ? C.active : '#fff', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+        <span style={{ width: 30, height: 30, borderRadius: '50%', background: profileActive ? C.brand : C.accent, color: profileActive ? '#fff' : C.brand, fontSize: 12, fontWeight: 700, display: 'grid', placeItems: 'center', flex: 'none' }}>{(currentUser?.name || '?').slice(0, 1)}</span>
         <span style={{ minWidth: 0 }}>
           <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.text }}>{currentUser?.name}</span>
           <span style={{ display: 'block', fontSize: 11, color: C.text4 }}>마이페이지</span>

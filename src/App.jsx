@@ -105,6 +105,7 @@ import PerformanceWorkbench from './components/PerformanceWorkbench.jsx';
 import ScheduleWorkbench from './components/ScheduleWorkbench.jsx';
 import MainDashboard from './components/MainDashboard.jsx';
 import StaffHome from './components/StaffHome.jsx';
+import MyPage from './components/MyPage.jsx';
 import { finalConfirmBlockers } from './utils/staffHome.js';
 import { buildBriefJandiMessage, briefRecipients, unassignedUpcoming } from './utils/morningBrief.js';
 
@@ -317,6 +318,7 @@ const SETTLEMENT_BADGE_STYLE = {
       const [useLegacySchedule, setUseLegacySchedule] = useState(false); // 일정 화면(#6b·#6c) 전환 기간 — 이전 화면 보기
       const [useLegacyMain, setUseLegacyMain] = useState(false); // 메인(#6a) 전환 기간 — 이전 화면 보기
       const [useLegacyStaffHome, setUseLegacyStaffHome] = useState(false); // 담당자 홈(#3a) 전환 기간 — 이전 마이페이지 보기
+      const [showProfilePage, setShowProfilePage] = useState(false); // 마이페이지(#9a) — 사이드바 프로필 카드로 연다
       const [perfInit, setPerfInit] = useState({}); // 메인에서 실적 작업대로 넘어갈 때 첫 필터 { filter, who }
       const [scheduleInit, setScheduleInit] = useState({}); // 메인에서 일정으로 넘어갈 때 첫 상태 { view, listFilter, search }
       const [morningBriefConfig, setMorningBriefConfig] = useState({}); // config/morningBrief { autoSend, days }
@@ -2851,6 +2853,7 @@ const SETTLEMENT_BADGE_STYLE = {
           setPasswordError('');
           setShowMyPasswordModal(false);
           alert('비밀번호가 변경되었습니다.');
+          return true;
         } catch (e) {
           console.error('[changeMyPassword] failed', e);
           setPasswordError('변경 실패: ' + (e?.message || '알 수 없는 오류'));
@@ -6279,6 +6282,7 @@ const SETTLEMENT_BADGE_STYLE = {
         const goTo = (view, title) => {
           setPerfInit({});
           setScheduleInit({});
+          setShowProfilePage(false);
           setShowDashboard(view === 'main');
           setShowPerformance(view === 'perf');
           setShowMeetingView(view === 'meeting');
@@ -6311,7 +6315,11 @@ const SETTLEMENT_BADGE_STYLE = {
             ] : []),
             { key: 'settings', label: '설정', onClick: () => setShowSettings(true) },
           ],
-          onOpenMyPage: () => { setMyPageUser(currentUser.name); setShowMyPage(true); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); },
+          // 데스크톱은 마이페이지(#9a), 모바일은 기존 마이페이지
+          onOpenMyPage: () => {
+            if (!isMobile) { setShowProfilePage(true); return; }
+            setMyPageUser(currentUser.name); setShowMyPage(true); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false);
+          },
           onLogout: handleLogout,
           onOpenLegacy,
         };
@@ -6327,14 +6335,15 @@ const SETTLEMENT_BADGE_STYLE = {
       const staffSidebarProps = () => {
         const base = shellSidebarProps('home', () => setUseLegacyStaffHome(true));
         const full = hasFullDataViewAccess(currentUser);
-        const go = (view, title) => { setShowMyPage(false); setShowDashboard(false); setShowPerformance(view === 'perf'); setShowMeetingView(false); setShowSalesView(false); updatePageTitle(title); };
+        const go = (view, title) => { setShowProfilePage(false); setShowMyPage(false); setShowDashboard(false); setShowPerformance(view === 'perf'); setShowMeetingView(false); setShowSalesView(false); updatePageTitle(title); };
+        const goHome = () => { setShowProfilePage(false); setUseLegacyStaffHome(false); if (!full) setMyPageUser(currentUser?.name || null); setShowMyPage(true); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); updatePageTitle('홈'); };
         return {
           ...base,
           nav: [
-            { key: 'home', label: '홈', active: true, onClick: () => {} },
+            { key: 'home', label: '홈', active: showStaffHome && !showProfilePage, onClick: goHome },
             { key: 'schedule', label: '내 일정', onClick: () => go('schedule', '일정') },
             ...(currentUser?.canAccessPerformance !== false ? [{ key: 'perf', label: '내 실적', onClick: () => go('perf', '실적') }] : []),
-            { key: 'settle', label: '내 정산', onClick: () => setUseLegacyStaffHome(true) },
+            { key: 'settle', label: '내 정산', onClick: () => { goHome(); setUseLegacyStaffHome(true); } },
           ],
           adminNav: full ? base.adminNav : [],
         };
@@ -6399,11 +6408,32 @@ const SETTLEMENT_BADGE_STYLE = {
         } catch (e) { alert('저장 실패: ' + e.message); }
       };
 
+      // ===== 마이페이지(#9a) =====
+      // 연락처·이메일만 본인이 수정 — users/{id} 의 두 필드만 update (노드 전체 set 금지)
+      const saveMyProfile = async ({ phone, email }) => {
+        const myId = currentUser?.id;
+        if (!myId) { alert('로그인 정보가 유효하지 않습니다. 다시 로그인해주세요.'); return false; }
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { alert('이메일 형식을 확인해 주세요.'); return false; }
+        try {
+          if (firebaseEnabled && database) await database.ref(`users/${myId}`).update({ phone: phone || null, email: email || null });
+          setUserAccounts(prev => ({ ...prev, [myId]: { ...(prev[myId] || {}), phone: phone || null, email: email || null } }));
+          setCurrentUser(prev => (prev ? { ...prev, phone: phone || null, email: email || null } : prev));
+          return true;
+        } catch (e) { alert('저장 실패: ' + e.message); return false; }
+      };
+      // 개인 잔디 알림 종류별 수신 — config/jandi/users/{이름}/prefs/{brief|pay} (없으면 받음)
+      const toggleMyNotifyPref = async (key, on) => {
+        const name = currentUser?.name;
+        if (!name || !database) return;
+        try { await database.ref(`config/jandi/users/${name}/prefs/${key}`).set(on); }
+        catch (e) { alert('저장 실패: ' + e.message); }
+      };
+
       // 아침 브리핑(#6c) 수동 발송 — 관리자 채널엔 전체, 담당자 개인 잔디엔 각자 일정만.
       // 발송 기록(morningBriefLog/{오늘})을 남겨 같은 날 Worker 자동 발송이 중복되지 않게 한다.
       const sendMorningBrief = async ({ rows, days }) => {
         const recipients = briefRecipients(rows);
-        const withHook = recipients.filter(n => jandiUserWebhooks?.[n]?.url && jandiUserWebhooks[n].enabled !== false);
+        const withHook = recipients.filter(n => jandiUserWebhooks?.[n]?.url && jandiUserWebhooks[n].enabled !== false && jandiUserWebhooks[n].prefs?.brief !== false);
         const noHook = recipients.filter(n => !withHook.includes(n));
         const adminOn = !!(jandiUrl && jandiEnabled);
         const unassigned = unassignedUpcoming(allSchedules, todayStr);
@@ -12964,6 +12994,38 @@ tr.suppressed td.fname{color:#64748b;}
                 onUndoConfirm={(q) => staffUndoConfirmQuarter(q, staffHomeMe)}
                 onRequestFix={(q, text) => staffRequestFix(q, staffHomeMe, text)}
                 onFinalConfirm={(q) => staffFinalConfirm(q, staffHomeMe)}
+              />
+            </div>
+          )}
+          {/* 마이페이지(#9a) — 데스크톱. 어느 화면에서든 사이드바 프로필 카드로 열고, 메뉴를 누르면 닫힌다. */}
+          {showProfilePage && !isMobile && isLoggedIn && currentUser && (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 510, overflow: 'auto', background: '#f8fafc', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>
+              <MyPage
+                me={currentUser.name}
+                account={{ ...(userAccounts?.[currentUser.id] || {}), ...currentUser }}
+                isAdmin={hasFullDataViewAccess(currentUser)}
+                ptSchedules={ptSchedules}
+                todayStr={todayStr}
+                teamNames={['한준엽', '조재연', '정정훈', '김성민', '이필선', '조현식', '한인규']}
+                teams={[
+                  { name: '영업1팀', members: ['한준엽', '조재연', '정정훈', '김성민'] },
+                  { name: '영업2팀', members: ['이필선'] },
+                  { name: '영업3팀', members: ['조현식', '한인규'] },
+                ]}
+                sidebar={hasFullDataViewAccess(currentUser) ? shellSidebarProps(null, null) : staffSidebarProps()}
+                jandiOn={!!(jandiUserWebhooks?.[currentUser.name]?.url && jandiUserWebhooks[currentUser.name].enabled !== false)}
+                prefs={jandiUserWebhooks?.[currentUser.name]?.prefs || {}}
+                onSaveProfile={saveMyProfile}
+                onTogglePref={toggleMyNotifyPref}
+                password={{
+                  current: currentPassword, next: newPassword, confirm: confirmPassword, error: passwordError,
+                  setCurrent: setCurrentPassword, setNext: setNewPassword, setConfirm: setConfirmPassword,
+                  submit: handleChangeMyPassword,
+                  reset: () => { setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); setPasswordError(''); },
+                }}
+                onLogout={() => { setShowProfilePage(false); handleLogout(); }}
+                onOpenSettlement={() => { setShowProfilePage(false); setUseLegacyStaffHome(true); setMyPageUser(currentUser.name); setShowMyPage(true); setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); }}
+                onManageAccounts={currentUser?.canManagePasswords ? () => setShowPasswordModal(true) : (currentUser?.isAdmin ? () => setShowSettings(true) : null)}
               />
             </div>
           )}
