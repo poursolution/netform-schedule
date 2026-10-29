@@ -112,6 +112,7 @@ import ExceptionQueueModal from './components/ExceptionQueueModal.jsx';
 import FeedbackInbox from './components/FeedbackInbox.jsx';
 import FeedbackSend from './components/FeedbackSend.jsx';
 import { feedbackScreen, feedbackDevice } from './utils/feedback.js';
+import LoginScreen from './components/LoginScreen.jsx';
 import ResultRecordModal from './components/ResultRecordModal.jsx';
 import MyPage from './components/MyPage.jsx';
 import ScheduleEditModal from './components/ScheduleEditModal.jsx';
@@ -16535,7 +16536,20 @@ tr.suppressed td.fname{color:#64748b;}
           )}
 
           {/* 로그인 모달 */}
-          {showLoginModal && (
+          {/* 로그인 전 화면 — 로그인 전에는 앱 화면(데이터)을 덮는다. 저장된 자동 로그인이 있으면 "자동 로그인 중…" */}
+          {!isLoggedIn && (
+            <LoginScreen
+              isMobile={isMobile}
+              loginId={loginId}
+              onLoginId={setLoginId}
+              loginPw={loginPw}
+              onLoginPw={setLoginPw}
+              error={loginError}
+              onLogin={handleLogin}
+              autoPending={(() => { try { return !!localStorage.getItem('autoLogin'); } catch { return false; } })()}
+            />
+          )}
+          {showLoginModal && isLoggedIn && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowLoginModal(false)}>
               <div style={{ background: 'white', borderRadius: '16px', padding: '24px', width: '360px', maxWidth: '90%' }} onClick={e => e.stopPropagation()}>
                 <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '20px', textAlign: 'center' }}>로그인</h2>
