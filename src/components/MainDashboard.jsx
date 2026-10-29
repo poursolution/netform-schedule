@@ -367,7 +367,7 @@ export default function MainDashboard({
           <div style={{ flex: 1 }} />
           <form role="search" onSubmit={e => { e.preventDefault(); if (search.trim() && onSearch) onSearch(search.trim()); }}>
             <label htmlFor="md-search" style={srOnly}>현장·담당자 검색 (일정에서 찾기)</label>
-            <input id="md-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="현장·담당자 검색" style={{ height: 36, width: 240, minWidth: 0, padding: '0 12px', border: `1px solid ${C.line}`, borderRadius: 8, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }} />
+            <input id="md-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="현장·담당자 검색 ( / )" style={{ height: 36, width: 240, minWidth: 0, padding: '0 12px', border: `1px solid ${C.line}`, borderRadius: 8, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }} />
           </form>
           {onAdd && <button type="button" onClick={onAdd} style={{ height: 36, padding: '0 16px', border: 0, borderRadius: 8, background: C.brand, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>+ 일정 추가</button>}
         </div>

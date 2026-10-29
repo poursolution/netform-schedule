@@ -134,11 +134,51 @@
     })();
   </script>
   
-  <!-- 로딩 화면 -->
-  <div id="loader" style="position:fixed;top:0;left:0;right:0;bottom:0;background:#f8fafc;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999">
-    <div style="font-size:48px;margin-bottom:16px">📅</div>
-    <div class="spinner"></div>
+  <!-- 로딩 화면 — 스켈레톤(README 기본 동작 규칙: 스피너 금지, 회색 블록 0.8s 펄스) -->
+  <div id="loader" aria-busy="true" aria-label="불러오는 중">
+    <aside class="sk-side">
+      <div class="sk-logo"><i class="sk" style="width:28px;height:28px;border-radius:8px"></i><i class="sk" style="width:96px;height:14px"></i></div>
+      <div class="sk-nav"><i class="sk"></i><i class="sk"></i><i class="sk"></i><i class="sk"></i></div>
+    </aside>
+    <main class="sk-main">
+      <header class="sk-head"><i class="sk" style="width:120px;height:20px"></i><i class="sk" style="width:110px;height:36px;border-radius:10px;margin-left:auto"></i></header>
+      <div class="sk-body">
+        <div class="sk-card" style="height:120px"></div>
+        <div class="sk-row"><div class="sk-card"></div><div class="sk-card"></div><div class="sk-card"></div><div class="sk-card"></div></div>
+        <div class="sk-card sk-table"><i class="sk"></i><i class="sk"></i><i class="sk"></i><i class="sk"></i><i class="sk"></i></div>
+      </div>
+    </main>
+    <nav class="sk-tab"><i class="sk"></i><i class="sk"></i><i class="sk"></i><i class="sk"></i><i class="sk"></i></nav>
   </div>
+  <style>
+    #loader { position:fixed; inset:0; z-index:9999; display:flex; background:#f8fafc; font-family:'Pretendard Variable',Pretendard,system-ui,sans-serif; }
+    #loader i { display:block; }
+    #loader .sk, #loader .sk-card { background:#e2e8f0; border-radius:6px; animation:sk-pulse .8s ease-in-out infinite alternate; }
+    #loader .sk-card { background:#fff; border:1px solid #e2e8f0; border-radius:14px; }
+    @keyframes sk-pulse { from { opacity:1; } to { opacity:.55; } }
+    .sk-side { width:224px; flex:none; background:#fff; border-right:1px solid #e2e8f0; }
+    .sk-logo { height:64px; display:flex; align-items:center; gap:10px; padding:0 20px; border-bottom:1px solid #e2e8f0; }
+    .sk-nav { padding:48px 12px 0; display:grid; gap:10px; }
+    .sk-nav .sk { height:34px; border-radius:10px; }
+    .sk-main { flex:1; min-width:0; display:flex; flex-direction:column; }
+    .sk-head { height:64px; flex:none; display:flex; align-items:center; padding:0 28px; background:#fff; border-bottom:1px solid #e2e8f0; }
+    .sk-body { padding:24px 28px; display:grid; gap:16px; }
+    .sk-row { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; }
+    .sk-row .sk-card { height:96px; }
+    .sk-table { padding:18px; display:grid; gap:14px; }
+    .sk-table .sk { height:16px; }
+    .sk-tab { display:none; }
+    @media (max-width:768px) {
+      #loader { flex-direction:column; }
+      .sk-side { display:none; }
+      .sk-head { padding:0 16px; }
+      .sk-body { padding:16px; }
+      .sk-row { grid-template-columns:repeat(2,1fr); gap:12px; }
+      .sk-tab { display:grid; grid-template-columns:repeat(5,1fr); gap:18px; height:84px; flex:none; padding:14px 22px 0; background:#fff; border-top:1px solid #e2e8f0; }
+      .sk-tab .sk { height:22px; width:22px; margin:0 auto; border-radius:6px; }
+      .sk-main { flex:1; overflow:hidden; }
+    }
+  </style>
   
   <div id="root"></div>
   <script type="module" src="/src/main.jsx"></script>

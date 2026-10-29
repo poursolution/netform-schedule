@@ -104,6 +104,7 @@ import * as theme from './utils/theme.js';
 import PerformanceWorkbench from './components/PerformanceWorkbench.jsx';
 import ScheduleWorkbench from './components/ScheduleWorkbench.jsx';
 import MainDashboard from './components/MainDashboard.jsx';
+import ShellBehaviors from './components/ShellBehaviors.jsx';
 import StaffHome from './components/StaffHome.jsx';
 import MobileStaffHome from './components/MobileStaffHome.jsx';
 import MobileSchedule from './components/MobileSchedule.jsx';
@@ -7793,6 +7794,7 @@ const SETTLEMENT_BADGE_STYLE = {
 
       return (
         <div style={{ minHeight: '100vh', background: '#f8fafc', padding: isMobile ? '12px' : '20px', paddingTop: (showInstallBanner && isMobile) ? '56px' : (isMobile ? '12px' : '20px') }} onClick={() => showWorkTypeFilter && setShowWorkTypeFilter(false)}>
+          <ShellBehaviors />
           {/* DB 연결 상태 표시 */}
           <div style={{ position: 'fixed', bottom: '12px', right: '12px', padding: '8px 12px', borderRadius: '8px', fontSize: '11px', background: dbConnected ? '#dcfce7' : '#e0f2fe', color: dbConnected ? '#166534' : '#0369a1', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', zIndex: 100 }}>
             {dbConnected ? 'DB' : '로컬'}

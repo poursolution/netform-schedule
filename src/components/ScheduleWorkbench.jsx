@@ -184,7 +184,7 @@ export default function ScheduleWorkbench({
           </div>
           <div style={{ flex: 1 }} />
           <label htmlFor="sw-search" style={srOnly}>현장·담당자 검색</label>
-          <input id="sw-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="현장·담당자 검색" style={{ height: 34, width: 220, minWidth: 0, padding: '0 12px', border: `1px solid ${C.line}`, borderRadius: 8, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }} />
+          <input id="sw-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="현장·담당자 검색 ( / )" style={{ height: 34, width: 220, minWidth: 0, padding: '0 12px', border: `1px solid ${C.line}`, borderRadius: 8, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }} />
           <label htmlFor="sw-who" style={srOnly}>담당</label>
           <select id="sw-who" value={who} onChange={e => setWho(e.target.value)} style={selectStyle}>
             <option value="all">담당 전체</option>
