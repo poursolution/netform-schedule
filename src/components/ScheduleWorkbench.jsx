@@ -323,9 +323,18 @@ export default function ScheduleWorkbench({
                     </div>
                     <button type="button" onClick={() => setTypeFilter('un')} style={{ ...primary(30), background: '#b91c1c', fontSize: 12, borderRadius: 7, padding: '0 10px' }}>배정하기</button>
                   </section>
+                ) : unUpcoming.length > 0 ? (
+                  // 이 달엔 없어도 앞으로 미배정이 있으면 초록 ✓ 대신 건수 — 메인 "담당 미배정 PT"와 같은 기준(unassignedUpcoming)
+                  <section aria-label="담당 미배정 PT" style={{ ...card, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#b91c1c' }}>앞으로 담당 미배정 {unUpcoming.length}건</div>
+                      <div style={{ fontSize: 12, color: C.text3, marginTop: 2 }}>이 달엔 없음 · 가장 가까운 건 {unUpcoming[0].date.slice(5).replace('-', '/')}</div>
+                    </div>
+                    <button type="button" onClick={() => { setListFilter('unassigned'); setView('list'); }} style={{ ...primary(30), background: '#b91c1c', fontSize: 12, borderRadius: 7, padding: '0 10px' }}>리스트에서 배정</button>
+                  </section>
                 ) : (
                   <section aria-label="담당 미배정 PT" style={{ ...card, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: '#15803d', fontWeight: 600 }}>
-                    <span aria-hidden="true" style={{ width: 18, height: 18, borderRadius: '50%', background: '#16a34a', color: '#fff', fontSize: 11, display: 'grid', placeItems: 'center' }}>✓</span>이번 달 미배정 PT 없음
+                    <span aria-hidden="true" style={{ width: 18, height: 18, borderRadius: '50%', background: '#16a34a', color: '#fff', fontSize: 11, display: 'grid', placeItems: 'center' }}>✓</span>미배정 PT 없음
                   </section>
                 )}
               </div>

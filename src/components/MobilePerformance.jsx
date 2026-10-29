@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  buildRow, FILTERS, matchesWho, matchesSearch, sortByPriority, kpis, quarterPts, quarterMeta, formatWon, mmdd, todayKey,
+  buildRow, FILTERS, matchesWho, matchesSearch, sortByPriority, kpis, quarterPts, quarterMeta, formatWon, mmdd, todayKey, ptsBeforeQuarter, isCarryover,
   settlementStep, SETTLEMENT_STEPS, kaptCandidateText, nextReviewId,
 } from '../utils/workbench.js';
 import { calculateSettlementAmount, deriveAssigneeResult, getQuarterKey } from '../utils/settlement.js';
@@ -67,14 +67,20 @@ export default function MobilePerformance({
   const meta = useMemo(() => quarterMeta(quarterKey, now), [quarterKey, today]); // eslint-disable-line react-hooks/exhaustive-deps
   const minuteKey = `${today} ${now.getHours()}:${now.getMinutes()}`;
   const allRows = useMemo(() => quarterPts(ptSchedules || [], quarterKey).map(pt => buildRow(pt, today, now)), [ptSchedules, quarterKey, minuteKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  const byWho = useMemo(() => allRows.filter(r => matchesSearch(r, search) && matchesWho(r, who)), [allRows, search, who]);
-  const rows = useMemo(() => sortByPriority(byWho.filter(FILTERS[filter] || FILTERS.all)), [byWho, filter]);
+  // PC 실적과 같은 범위 — 목록·칩 건수엔 이전 분기 미확인(결과 미입력·검토필요)도 포함, KPI는 이번 분기만
+  const carryRows = useMemo(() => ptsBeforeQuarter(ptSchedules || [], quarterKey)
+    .map(pt => ({ ...buildRow(pt, today, now), carry: true })).filter(isCarryover), [ptSchedules, quarterKey, minuteKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const listRows = useMemo(() => [...allRows, ...carryRows], [allRows, carryRows]);
+  const pick = r => matchesSearch(r, search) && matchesWho(r, who);
+  const byWho = useMemo(() => allRows.filter(pick), [allRows, search, who]); // eslint-disable-line react-hooks/exhaustive-deps
+  const listByWho = useMemo(() => listRows.filter(pick), [listRows, search, who]); // eslint-disable-line react-hooks/exhaustive-deps
+  const rows = useMemo(() => sortByPriority(listByWho.filter(FILTERS[filter] || FILTERS.all)), [listByWho, filter]);
   const k = kpis(byWho);
-  const count = key => byWho.filter(FILTERS[key]).length;
-  const selected = selectedId ? allRows.find(r => r.id === selectedId) || null : null;
+  const count = key => listByWho.filter(FILTERS[key]).length;
+  const selected = selectedId ? listRows.find(r => r.id === selectedId) || null : null;
 
   // 다음 검토필요 행으로 시트 내용 교체 — 없으면 닫힘
-  const nextReview = () => setSelectedId(nextReviewId(sortByPriority(byWho), selectedId));
+  const nextReview = () => setSelectedId(nextReviewId(sortByPriority(listByWho), selectedId));
 
   return createPortal(
     <div style={{ position: 'fixed', top: topInset, left: 0, right: 0, bottom: 0, zIndex: 500, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.muted, color: C.ink, fontVariantNumeric: 'tabular-nums', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>

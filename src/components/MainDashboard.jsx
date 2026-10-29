@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import AppSidebar from './AppSidebar.jsx';
 import { filterPipeline, filterPtByYear, flow, teamRows, eok } from '../utils/mainDashboard.js';
-import { buildRow, FILTERS, settlementTargets, quarterPts, quarterMeta, defaultQuarterKey } from '../utils/workbench.js';
+import { buildRow, FILTERS, quarterPts, quarterMeta, defaultQuarterKey, ptsBeforeQuarter, isCarryover } from '../utils/workbench.js';
 import { unassignedUpcoming } from '../utils/morningBrief.js';
 import { isUnassignedPT, titleOf, shortTime } from '../utils/scheduleView.js';
 import { getQuarterKey } from '../utils/settlement.js';
@@ -76,6 +76,8 @@ export default function MainDashboard({
   teams,
   confirmStateOf,       // (quarterKey, name) => '최종확정' 등
   assigneeNames,
+  settlementQuarterKey, // 분기정산 화면이 여는 분기
+  settlementSummary,    // quarterSettlementSummary() — 분기정산 화면과 같은 숫자
   sidebar,
   onGoReview, onGoUnassigned, onGoPending, onGoSettlement, onGoTeam, onGoMember,
   onSearch, onAdd,
@@ -103,13 +105,17 @@ export default function MainDashboard({
   // 실적 작업대가 처음 여는 분기(이번 분기)와 같은 기준 — 카드 숫자와 넘어간 목록 건수가 같게
   const qKey = getQuarterKey(today);
   // 분기정산 카드는 마감 처리할 분기(지난 분기 마감 전이면 지난 분기)
-  const stlKey = defaultQuarterKey(today);
-  const reviewCount = useMemo(() => quarterPts(ptSchedules || [], qKey).map(pt => buildRow(pt, todayStr)).filter(FILTERS.review).length, [ptSchedules, qKey, todayStr]);
+  const stlKey = settlementQuarterKey || defaultQuarterKey(today);
+  // 검토필요 — 실적 목록과 같은 범위(이번 분기 + 이전 분기 미확인). 범위는 카드 이름표에 적는다.
+  const review = useMemo(() => {
+    const cur = quarterPts(ptSchedules || [], qKey).map(pt => buildRow(pt, todayStr)).filter(FILTERS.review).length;
+    const carry = ptsBeforeQuarter(ptSchedules || [], qKey).map(pt => buildRow(pt, todayStr)).filter(r => isCarryover(r) && FILTERS.review(r)).length;
+    return { cur, carry, total: cur + carry };
+  }, [ptSchedules, qKey, todayStr]);
   const unassignedCount = useMemo(() => unassignedUpcoming(schedules, todayStr).length, [schedules, todayStr]);
   const reviewQ = quarterMeta(qKey, today)?.quarter;
   const qMeta = quarterMeta(stlKey, today);
-  const stl = useMemo(() => settlementTargets(quarterPts(ptSchedules || [], stlKey)), [ptSchedules, stlKey]);
-  const finalCount = (assigneeNames || []).filter(n => confirmStateOf && confirmStateOf(stlKey, n) === '최종확정').length;
+  const stl = settlementSummary || { assignees: 0, targetCount: 0, amount: 0, reviewTotal: 0, confirmedCount: 0 };
 
   // 오늘·내일 PT — 시간순, 미배정은 주황 행 + [배정]
   const tomorrow = addDays(todayStr, 1);
@@ -206,9 +212,10 @@ export default function MainDashboard({
 
       {/* 처리할 것 4 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
-        <button type="button" onClick={onGoReview} style={queueBtn(reviewCount > 0 ? '#fffbeb' : '#fff', reviewCount > 0 ? '#fde68a' : C.line)}>
-          <span style={qTitle('#b45309')}>{dot('#d97706')}검토필요 · K-APT 미매칭 · Q{reviewQ}</span>
-          <span style={{ display: 'flex', alignItems: 'baseline', width: '100%' }}>{queueNum(reviewCount)}<span style={go}>실적에서 처리 →</span></span>
+        <button type="button" onClick={onGoReview} style={queueBtn(review.total > 0 ? '#fffbeb' : '#fff', review.total > 0 ? '#fde68a' : C.line)}>
+          <span style={qTitle('#b45309')}>{dot('#d97706')}검토필요 · K-APT 미매칭</span>
+          <span style={{ display: 'flex', alignItems: 'baseline', width: '100%' }}>{queueNum(review.total)}<span style={go}>실적에서 처리 →</span></span>
+          <span style={{ fontSize: 11.5, color: C.text3 }}>Q{reviewQ} {review.cur}{review.carry ? ` + 이전 분기 ${review.carry}` : ''}</span>
         </button>
         <button type="button" onClick={onGoUnassigned} style={queueBtn(unassignedCount > 0 ? '#fef2f2' : '#fff', unassignedCount > 0 ? '#fecaca' : C.line)}>
           <span style={qTitle(unassignedCount > 0 ? '#b91c1c' : C.text3)}>{dot(unassignedCount > 0 ? '#b91c1c' : C.strong)}담당 미배정 PT</span>
@@ -324,7 +331,7 @@ export default function MainDashboard({
         </div>
         <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-.02em' }}>{stl.amount.toLocaleString('ko-KR')}<span style={{ fontSize: 13, fontWeight: 600, marginLeft: 2, opacity: .85 }}>원</span></div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6, fontSize: 11.5 }}>
-          {[['담당자 확인', `${finalCount} / ${(assigneeNames || []).length}`], ['정산요청', `${stl.byStatus.requested || 0}건`], ['검토필요', `${stl.byStatus.needs_review || 0}건`, (stl.byStatus.needs_review || 0) > 0 ? '#fcd34d' : '#fff']].map(([k, v, c]) => (
+          {[['담당자 1R 확인', `${stl.confirmedCount} / ${stl.assignees}`], ['정산 대상', `${stl.targetCount}건`], ['검토필요', `${stl.reviewTotal}건`, stl.reviewTotal > 0 ? '#fcd34d' : '#fff']].map(([k, v, c]) => (
             <div key={k} style={{ padding: 8, borderRadius: 8, background: 'rgba(255,255,255,.12)' }}>
               <div style={{ opacity: .8 }}>{k}</div>
               <div style={{ fontSize: 14, fontWeight: 700, marginTop: 2, color: c || '#fff' }}>{v}</div>
