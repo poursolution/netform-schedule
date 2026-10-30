@@ -12,8 +12,8 @@ const C = {
 // 회의는 별도 회의 모달에서 다루고 저장 경로도 달라 여기 칩에서 뺀다
 const KINDS = [['pt', 'PT'], ['briefing', '현설'], ['seminar', '세미나'], ['asq', '아.스.퀘'], ['personal', '개인'], ['vacation', '휴가']];
 const WHEN = [['confirmed', '날짜 확정'], ['monthOnly', '월만 정해짐'], ['pending', '미정']];
-// 시작·종료는 셀렉트 하나(#14b) — 정시 07~20시, 저장돼 있던 다른 값(09:30 등)은 그대로 옵션에 남긴다
-const HOURS = Array.from({ length: 14 }, (_, i) => `${String(i + 7).padStart(2, '0')}:00`);
+// 시작·종료는 셀렉트 하나(#14b) — 07:00~21:00 10분 단위(19:20 같은 시간), 저장돼 있던 다른 값(09:15 등)은 그대로 옵션에 남긴다
+const HOURS = Array.from({ length: 85 }, (_, i) => `${String(7 + Math.floor(i / 6)).padStart(2, '0')}:${String((i % 6) * 10).padStart(2, '0')}`);
 const timeOptions = v => (v && !HOURS.includes(v) ? [...HOURS, v].sort() : HOURS);
 const KIND_LABEL = Object.fromEntries(KINDS);
 
@@ -88,10 +88,11 @@ export default function ScheduleEditModal({
   const agreement = s.requester && checkAgreement ? checkAgreement(s.requester) : null;
 
   const noAssignee = (hasSite) && who.length === 0;
-  // #14b 추가 모드 필수: 현장명(현장 있는 종류) · 담당자(PT·현설) — 비면 등록 비활성
+  // #14b 추가 모드 필수: 현장명(현장 있는 종류) · 담당자(현설) — 비면 등록 비활성
   const isAdd = mode === 'add';
-  // PT는 날짜가 확정일 때만 담당자 필수 — 날짜가 '미정'이면 담당자도 나중에
-  const needWho = (s.type === 'pt' && (s.dateType || 'confirmed') === 'confirmed') || s.type === 'briefing';
+  // PT는 담당자 없이도 등록 → '담당 미배정'으로 올라가고 배정되면 확인. 현설만 담당자 필수
+  const needWho = s.type === 'briefing';
+  const ptUnassigned = isAdd && s.type === 'pt' && who.length === 0;
   const missing = isAdd ? [hasSite && !String(s.siteName || '').trim() && '현장명', needWho && who.length === 0 && '담당자'].filter(Boolean) : [];
   const canSave = missing.length === 0;
   const req = <span style={{ color: '#b91c1c' }}> *</span>;
@@ -141,7 +142,7 @@ export default function ScheduleEditModal({
 
         {/* 본문 */}
         <div style={{ padding: mobile ? '4px 16px 16px' : '4px 22px 8px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
-          {noAssignee && !(isAdd && needWho) && (
+          {noAssignee && !(isAdd && needWho) && !ptUnassigned && (
             <div role="alert" style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 14, padding: '12px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, fontSize: 13, color: '#b91c1c' }}>
               <span aria-hidden="true" style={{ width: 20, height: 20, borderRadius: '50%', background: '#b91c1c', color: '#fff', fontSize: 12, fontWeight: 800, display: 'grid', placeItems: 'center', flex: 'none' }}>!</span>
               <span>담당자가 없어요. 이대로 저장하면 미배정으로 남고 아침 브리핑에 경고로 나갑니다.</span>
@@ -233,10 +234,15 @@ export default function ScheduleEditModal({
               {isAdd && needWho && who.length === 0 && (
                 <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, padding: '9px 12px', borderRadius: 9, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 12.5 }}>
                   <span aria-hidden="true" style={{ width: 18, height: 18, borderRadius: '50%', background: '#b91c1c', color: '#fff', fontWeight: 800, fontSize: 11, display: 'grid', placeItems: 'center', flex: 'none' }}>!</span>
-                  <span><b>{KIND_LABEL[s.type]}는 담당자 없이 등록할 수 없어요.</b>{s.type === 'pt' ? " 아직 미정이면 1단계에서 '미정' 일정으로 저장하세요." : ''}</span>
+                  <span><b>{KIND_LABEL[s.type]}는 담당자 없이 등록할 수 없어요.</b></span>
                 </div>
               )}
-              {!(isAdd && needWho && who.length === 0) && <div style={{ fontSize: 12.5, marginTop: 8, color: who.length ? C.brand : '#b91c1c', fontWeight: who.length ? 600 : 500 }}>
+              {ptUnassigned && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, padding: '9px 12px', borderRadius: 9, background: '#fff7ed', border: '1px solid #fed7aa', color: '#9a3412', fontSize: 12.5 }}>
+                  <span><b>담당자 없이 등록하면 '담당 미배정'으로 올라가요.</b> 나중에 배정하면 그때 확인돼요.</span>
+                </div>
+              )}
+              {!(isAdd && needWho && who.length === 0) && !ptUnassigned && <div style={{ fontSize: 12.5, marginTop: 8, color: who.length ? C.brand : '#b91c1c', fontWeight: who.length ? 600 : 500 }}>
                 {who.length === 0 ? '아직 아무도 선택되지 않았어요' : hasSite ? who.map((n, i) => `${n} (${i === 0 ? '주담' : '지원'})`).join(' + ') : who.join(', ')}
               </div>}
               {hasSite && who.length > 1 && <div style={{ fontSize: 11.5, color: C.text4, marginTop: 2 }}>먼저 고른 사람이 주담당이에요</div>}
