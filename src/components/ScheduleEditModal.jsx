@@ -194,6 +194,18 @@ export default function ScheduleEditModal({
                   {workTypeOptions?.length > 0 && <datalist id="sem-worktypes">{workTypeOptions.map(w => <option key={w} value={w} />)}</datalist>}
                   {isPtLike && <label style={fieldLabel}>참여인원<input value={s.participants || ''} onChange={e => set({ participants: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>}
                 </div>
+                {/* 요청사·경쟁사는 현장 정보 — 담당자(누가)는 나중에 배정될 수 있어 그 위에 둔다 */}
+                <div style={{ display: 'grid', gridTemplateColumns: isPtLike ? '1fr 1fr' : '1fr', gap: 8 }}>
+                  <label style={fieldLabel}>요청사 · 연락처
+                    <input value={s.requester || ''} onChange={e => set({ requester: e.target.value })} style={{ ...field, marginTop: 6, borderColor: agreement && !agreement.isAgreement ? '#fca5a5' : C.line }} />
+                    {agreement && (
+                      <span style={{ display: 'block', fontSize: 11.5, fontWeight: 600, marginTop: 4, color: agreement.isAgreement ? '#15803d' : '#b91c1c' }}>
+                        {agreement.isAgreement ? `협약업체${agreement.grade ? ` ${agreement.grade}등급` : ''}` : 'POUR공법 협약업체가 아니에요 · 확인해 주세요'}
+                      </span>
+                    )}
+                  </label>
+                  {isPtLike && <label style={fieldLabel}>경쟁사<input value={s.competitor || ''} onChange={e => set({ competitor: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>}
+                </div>
               </>
             )}
             {(s.type === 'personal' || s.type === 'seminar') && <label style={fieldLabel}>장소<input value={s.location || ''} onChange={e => set({ location: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>}
@@ -247,19 +259,6 @@ export default function ScheduleEditModal({
               </div>}
               {hasSite && who.length > 1 && <div style={{ fontSize: 11.5, color: C.text4, marginTop: 2 }}>먼저 고른 사람이 주담당이에요</div>}
             </div>
-            {hasSite && (
-              <div style={{ display: 'grid', gridTemplateColumns: isPtLike ? '1fr 1fr' : '1fr', gap: 8 }}>
-                <label style={fieldLabel}>요청사 · 연락처
-                  <input value={s.requester || ''} onChange={e => set({ requester: e.target.value })} style={{ ...field, marginTop: 6, borderColor: agreement && !agreement.isAgreement ? '#fca5a5' : C.line }} />
-                  {agreement && (
-                    <span style={{ display: 'block', fontSize: 11.5, fontWeight: 600, marginTop: 4, color: agreement.isAgreement ? '#15803d' : '#b91c1c' }}>
-                      {agreement.isAgreement ? `협약업체${agreement.grade ? ` ${agreement.grade}등급` : ''}` : 'POUR공법 협약업체가 아니에요 · 확인해 주세요'}
-                    </span>
-                  )}
-                </label>
-                {isPtLike && <label style={fieldLabel}>경쟁사<input value={s.competitor || ''} onChange={e => set({ competitor: e.target.value })} style={{ ...field, marginTop: 6 }} /></label>}
-              </div>
-            )}
           </Section>
 
           <Section n="4" title="메모 · 첨부" optional>
