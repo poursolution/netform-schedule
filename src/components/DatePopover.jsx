@@ -16,7 +16,8 @@ const KINDS = [
   { key: 'vacation', name: '휴가', dot: '#b91c1c', quick: true },
 ];
 const KDAY = ['일', '월', '화', '수', '목', '금', '토'];
-const TIMES = Array.from({ length: 14 }, (_, i) => `${String(i + 7).padStart(2, '0')}:00`);
+// 07:00~21:00 10분 단위 — 일정 입력 창과 같은 목록
+const TIMES = Array.from({ length: 85 }, (_, i) => `${String(7 + Math.floor(i / 6)).padStart(2, '0')}:${String((i % 6) * 10).padStart(2, '0')}`);
 const W = 300;
 
 export function dateTitle(ds) {
