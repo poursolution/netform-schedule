@@ -248,6 +248,13 @@ export function ptsBeforeQuarter(pts, quarterKey) {
 // 이월: 결과 미입력(끝난 PT) 또는 정산 검토필요
 export const isCarryover = row => !!row && (row.isPending || row.isReview);
 
+// 메인 "검토필요" 큐 — 실적 목록과 같은 범위(이번 분기 + 이전 분기 미확인)
+export function reviewQueueCounts(pts, quarterKey, today = todayKey()) {
+  const cur = quarterPts(pts || [], quarterKey).map(pt => buildRow(pt, today)).filter(FILTERS.review).length;
+  const carry = ptsBeforeQuarter(pts || [], quarterKey).map(pt => buildRow(pt, today)).filter(r => isCarryover(r) && FILTERS.review(r)).length;
+  return { cur, carry, total: cur + carry };
+}
+
 export function quarterLabelOf(date) {
   const m = String(date || '').match(/^(\d{4})-(\d{2})/);
   return m ? `${m[1].slice(2)}Q${Math.ceil(+m[2] / 3)}` : '';

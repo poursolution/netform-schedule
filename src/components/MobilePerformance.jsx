@@ -36,6 +36,7 @@ function quarterOptions(now = new Date()) {
 }
 
 export default function MobilePerformance({
+  initialFilter,          // 메인에서 넘어올 때 첫 필터(예: 'review')
   ptSchedules,
   assigneeNames,
   tabs,                   // MobileTabBar 탭 정의
@@ -57,7 +58,7 @@ export default function MobilePerformance({
   }, []);
   const today = todayKey(now);
   const [quarterKey, setQuarterKey] = useState(getQuarterKey());
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState(initialFilter && FILTERS[initialFilter] ? initialFilter : 'all');
   const [who, setWho] = useState('전체');
   const [whoSheet, setWhoSheet] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -114,7 +115,7 @@ export default function MobilePerformance({
             const warn = key === 'review' && !on;
             return (
               <button key={key} type="button" aria-pressed={on} onClick={() => setFilter(key)} style={{ height: 34, padding: '0 12px', borderRadius: 999, border: `1px solid ${on ? C.brand : warn ? '#fde68a' : C.line}`, background: on ? C.brand : warn ? '#fef3c7' : '#fff', color: on ? '#fff' : warn ? '#b45309' : C.text2, fontSize: 13, fontWeight: on ? 700 : 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', flex: 'none' }}>
-                {label} {key === 'all' ? byWho.length : count(key)}
+                {label} {key === 'all' ? listByWho.length : count(key)}
               </button>
             );
           })}
@@ -132,7 +133,7 @@ export default function MobilePerformance({
           ))}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', fontSize: 12.5, color: C.text3, margin: '14px 2px 8px' }}>
-          <span>{rows.length}건 · 처리 우선 정렬</span>
+          <span>{rows.length}건{carryRows.length ? ' · 이전 분기 미확인 포함' : ''} · 처리 우선 정렬</span>
           {meta && <span style={{ marginLeft: 'auto', color: C.red, fontWeight: 700 }}>Q{meta.quarter} 마감 {meta.ddayText}</span>}
         </div>
 
