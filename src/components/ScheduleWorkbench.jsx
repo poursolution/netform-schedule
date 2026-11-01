@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import AppSidebar from './AppSidebar.jsx';
 import DatePopover from './DatePopover.jsx';
+import EmptyArt from './EmptyArt.jsx';
 import {
   TYPE_ORDER, typeMeta, assigneesOf, isUnassignedItem, isUnassignedPT, titleOf, subOf, shortTime, matchesSearch, matchesWorkType,
   matchesWho, monthCells, sortDay, LIST_FILTERS, LIST_TITLES,
@@ -272,7 +273,7 @@ export default function ScheduleWorkbench({
                     {onAdd && <button type="button" onClick={() => openAdd(selDate)} style={{ ...outline(), marginLeft: 'auto' }}>+ 이 날에 추가</button>}
                   </div>
                   {holidayName && holidayName(selDate) && <div style={{ padding: '6px 16px', fontSize: 12, color: '#b91c1c', borderBottom: `1px solid ${C.muted}` }}>{holidayName(selDate)}</div>}
-                  {dayItems.length === 0 && <div style={{ padding: 28, textAlign: 'center', color: C.text4, fontSize: 13 }}>선택한 날짜에 일정이 없습니다</div>}
+                  {dayItems.length === 0 && <div style={{ padding: 28, textAlign: 'center', color: C.text4, fontSize: 13 }}><EmptyArt kind="calendar" size={76} />선택한 날짜에 일정이 없습니다</div>}
                   <div style={{ maxHeight: 'calc(100vh - 360px)', overflow: 'auto' }}>
                     {dayItems.map(s => {
                       const names = assigneesOf(s);
@@ -374,7 +375,7 @@ export default function ScheduleWorkbench({
                   <div style={{ display: 'grid', gridTemplateColumns: LIST_GRID, columnGap: 14, padding: '6px 16px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}`, position: 'sticky', top: 64 + listBarH, zIndex: 5, background: '#fff' }}>
                     <span>일시</span><span>현장 (참여인원){listMode === 'detail' ? ' · 주소' : ''}</span><span>요청사</span><span>공종</span><span>경쟁</span><span style={{ textAlign: 'right' }}>담당</span>
                   </div>
-                  {listRows.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: C.text4, fontSize: 13 }}>해당하는 일정이 없습니다 · 위 필터나 연도·월을 바꿔보세요</div>}
+                  {listRows.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: C.text4, fontSize: 13 }}><EmptyArt kind={listFilter === 'unassigned' ? 'done' : 'search'} />{listFilter === 'unassigned' ? '담당 미배정 PT가 없어요' : '해당하는 일정이 없습니다 · 위 필터나 연도·월을 바꿔보세요'}</div>}
                   {listRows.map(s => {
                     const names = assigneesOf(s);
                     const un = !s.ptAssignee;

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { parseAssignees, quarterMeta, defaultQuarterKey } from '../utils/workbench.js';
 import { rawResultOf, todoItems, quarterMoney, upcomingPts, confirmStage } from '../utils/staffHome.js';
 import MobileTabBar from './MobileTabBar.jsx';
+import EmptyArt from './EmptyArt.jsx';
 
 // 담당자 홈 모바일 (#5a) — [고정 헤더] + [스크롤] + [고정 하단 탭].
 // 결과 입력·공고문·분기 확인은 데스크톱 담당자 홈(#3a)과 같은 콜백을 쓴다.
@@ -157,7 +158,7 @@ export default function MobileStaffHome({
             <button type="button" onClick={onGoSchedule} style={{ marginLeft: 'auto', padding: 0, border: 0, background: 'none', color: C.brand, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>일정 보기 →</button>
           </div>
           <div style={{ ...card, overflow: 'hidden' }}>
-            {upcoming.length === 0 && <div style={{ padding: 20, textAlign: 'center', fontSize: 13, color: C.text4 }}>예정된 PT가 없어요</div>}
+            {upcoming.length === 0 && <div style={{ padding: 20, textAlign: 'center', fontSize: 13, color: C.text4 }}><EmptyArt kind="calendar" size={76} />예정된 PT가 없어요</div>}
             {upcoming.map((pt, i) => {
               const tokens = parseAssignees(pt.ptAssignee);
               const place = pt.address || pt.siteName || '';
