@@ -40,5 +40,10 @@ cloudflare-worker/.wrangler/
 __pycache__/
 *.pyc
 
+# 화면 자동 점검 — 로그인 상태(비밀번호가 들어갈 수 있음)·결과물
+e2e/.auth/
+e2e/report/
+e2e/results/
+
 # Claude Code 로컬 설정
 .claude/
