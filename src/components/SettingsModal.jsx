@@ -15,9 +15,9 @@ const TABS = [
   ['automation', '알림·자동화', '아침 브리핑 · 잔디 · K-APT'],
 ];
 const MODES = [
-  ['merge', '병합', '권장', '새 항목 추가 + 같은 현장·일정은 시트 값으로 업데이트 (결과는 유지)'],
+  ['merge', '병합', '권장', '새 항목 추가 + 같은 현장·일정은 시트 칸만 업데이트 (결과·정산·K-APT 유지, 빈 칸은 안 지움)'],
   ['addNew', '새 항목만', '', '이미 있는 현장·일정은 건드리지 않고 새 항목만 추가'],
-  ['replace', '전체 교체', '', '기존 PT 일정을 모두 지우고 시트 데이터로 바꿔요 · 되돌릴 수 없어요'],
+  ['replace', '전체 교체', '', '기존 PT 일정을 모두 지우고 시트 데이터로 바꿔요 · 결과·정산 기록도 사라져요'],
 ];
 const pill = (bg, fg) => ({ display: 'inline-block', padding: '3px 7px', borderRadius: 999, background: bg, color: fg, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' });
 const input = { display: 'block', width: '100%', height: 40, boxSizing: 'border-box', padding: '0 12px', border: `1px solid ${C.line}`, borderRadius: 8, fontSize: 13.5, fontFamily: 'inherit', color: C.ink, background: '#fff' };
@@ -112,9 +112,15 @@ export default function SettingsModal({
                   {importer.status && (
                     <div role="status" style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, fontSize: 13, background: importer.status.type === 'success' ? '#dcfce7' : importer.status.type === 'error' ? '#fef2f2' : '#fef3c7', color: importer.status.type === 'success' ? C.green : importer.status.type === 'error' ? C.red : '#b45309' }}>{importer.status.message}</div>
                   )}
+                  {importer.onUndo && importer.lastBackup && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, padding: '8px 12px', border: `1px solid ${C.line}`, borderRadius: 10, fontSize: 12.5, color: C.text3 }}>
+                      <span style={{ flex: 1 }}>마지막 가져오기 · {new Date(importer.lastBackup.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}{importer.lastBackup.by ? ` · ${importer.lastBackup.by}` : ''} · 24시간 안에 되돌릴 수 있어요</span>
+                      <button type="button" disabled={importer.busy} onClick={importer.onUndo} style={{ ...secondary, height: 30 }}>되돌리기</button>
+                    </div>
+                  )}
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 18 }}>
-                    <span style={{ flex: 1, fontSize: 12, color: danger ? C.red : C.text4 }}>{danger ? '전체 교체는 기존 PT 일정을 지워요 · 실행 전에 한 번 더 확인해요' : '미리보기는 저장하지 않아요'}</span>
+                    <span style={{ flex: 1, fontSize: 12, color: danger ? C.red : C.text4 }}>{danger ? '전체 교체는 시트에 없는 PT를 지워요 · 실행 전에 한 번 더 확인해요' : '시트 칸만 바꿔요 · 결과·정산·K-APT 기록은 그대로'}</span>
                     <button type="button" disabled={importer.busy || !importer.url} onClick={importer.onPreview} style={{ ...secondary, opacity: importer.busy || !importer.url ? .5 : 1 }}>미리보기만</button>
                     <button type="button" disabled={importer.busy || !importer.url} onClick={importer.onImport} style={{ ...primary(danger ? C.red : C.brand), opacity: importer.busy || !importer.url ? .5 : 1 }}>{importer.busy ? '처리 중…' : danger ? '전체 교체 실행' : '가져오기'}</button>
                   </div>

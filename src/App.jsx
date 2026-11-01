@@ -128,6 +128,7 @@ import SettlementPage from './components/SettlementPage.jsx';
 import { quarterMeta } from './utils/workbench.js';
 import { finalConfirmBlockers, todoItems } from './utils/staffHome.js';
 import { buildBriefJandiMessage, briefRecipients, unassignedUpcoming } from './utils/morningBrief.js';
+import { planImport, undoUpdates } from './utils/importPlan.js';
 
 const INSTALL_BANNER_H = 57; // PWA 설치 안내 배너 높이 — 새 모바일 화면(#5a·#5b)은 이만큼 아래에서 시작
 // 등록 후 새 일정 입력값 초기 상태
@@ -937,6 +938,39 @@ const SETTLEMENT_BADGE_STYLE = {
       const [importMode, setImportMode] = useState('merge'); // 'replace', 'merge', 'addNew'
       const [sheetTab, setSheetTab] = useState('import'); // 'import', 'export'
       const [importPreview, setImportPreview] = useState(null); // 설정(#12c) 가져오기 미리보기 결과
+      // 마지막 가져오기 백업(importBackups/{key}) — 24시간 안이면 설정에 [되돌리기]. 새로고침해도 Firebase 에서 다시 찾음
+      const [lastImportBackup, setLastImportBackup] = useState(null);
+      useEffect(() => {
+        if (!showSettings || !firebaseEnabled || !database) return;
+        database.ref('importBackups').orderByKey().limitToLast(1).once('value').then(snap => {
+          const [key, b] = Object.entries(snap.val() || {})[0] || [];
+          const at = b ? Date.parse(b.at) : 0;
+          setLastImportBackup(key && !b.undoneAt && Date.now() - at < 24 * 3600 * 1000 ? { key, at, by: b.by, counts: b.counts } : null);
+        }).catch(() => {});
+      }, [showSettings]); // eslint-disable-line react-hooks/exhaustive-deps
+      const undoLastImport = async () => {
+        const k = lastImportBackup?.key;
+        if (!k || !database) return;
+        const snap = await database.ref(`importBackups/${k}`).once('value');
+        const b = snap.val();
+        if (!b?.nodes) { setImportStatus({ type: 'error', message: '백업을 찾지 못했어요.' }); return; }
+        const n = Object.keys(b.nodes).length;
+        if (!window.confirm(`가져오기를 되돌릴까요?\n\nPT ${n}건을 가져오기 전 상태로 되돌려요. 가져온 뒤에 그 PT에서 바꾼 내용(결과 입력 등)도 함께 되돌아가요.`)) return;
+        try {
+          await database.ref().update(undoUpdates(b.nodes));
+          await database.ref(`importBackups/${k}`).update({ undoneAt: new Date().toISOString(), undoneBy: currentUser?.name || '' });
+          setPtSchedules(prev => {
+            const map = new Map(prev.map(s => [s.id, s]));
+            Object.entries(b.nodes).forEach(([id, node]) => { if (node) map.set(id, node); else map.delete(id); });
+            return Array.from(map.values());
+          });
+          setLastImportBackup(null);
+          logActivity('sheet_import_undo', { backupKey: k, count: n });
+          setImportStatus({ type: 'success', message: `되돌렸어요 · PT ${n}건을 가져오기 전으로` });
+        } catch (e) {
+          setImportStatus({ type: 'error', message: `되돌리지 못했어요: ${e.message}` });
+        }
+      };
       const [useLegacySettings, setUseLegacySettings] = useState(false); // 설정(#12c) 전환 기간 — 이전 설정 화면(데이터 초기화·복원 포함)
       useEffect(() => { if (!showSettings) setUseLegacySettings(false); }, [showSettings]); // 닫으면 다음엔 새 설정으로
       
@@ -1177,63 +1211,21 @@ const SETTLEMENT_BADGE_STYLE = {
             return;
           }
           
-          let finalData = [];
-          let addedCount = 0;
-          let updatedCount = 0;
-          let skippedCount = 0;
-          let unchangedCount = 0;
+          // 시트 칸만 칸 단위로 — 결과·정산·K-APT·증빙은 건드리지 않음 (utils/importPlan.js)
+          const plan = planImport(ptSchedules, imported, importMode);
+          const { added, updated, unchanged, skipped, removed } = plan.counts;
 
-          // 중복 판단 키 생성 함수
-          const getKey = (s) => `${s.siteName}_${s.date || s.expectedMonth || s.dateNote}`.toLowerCase().replace(/\s/g, '');
-          
-          if (importMode === 'replace') {
-            // 전체 교체
-            finalData = imported;
-            addedCount = imported.length;
-          } else if (importMode === 'merge') {
-            // 병합: 기존 데이터 유지 + 새 데이터 추가/업데이트
-            const existingMap = new Map();
-            ptSchedules.forEach(s => existingMap.set(getKey(s), s));
-            
-            imported.forEach(newItem => {
-              const key = getKey(newItem);
-              if (existingMap.has(key)) {
-                // 기존 항목 업데이트 (결과 유지)
-                const existing = existingMap.get(key);
-                existingMap.set(key, { ...newItem, id: existing.id, result: existing.result });
-                // 미리보기용: 시트 값이 기존과 같으면 "변경 없음"
-                const fields = ['siteName', 'address', 'time', 'participants', 'workType', 'mainCategory', 'requester', 'competitor', 'status', 'ptAssignee', 'dateType', 'date', 'expectedMonth'];
-                if (fields.every(f => String(existing[f] || '') === String(newItem[f] || ''))) unchangedCount++;
-                updatedCount++;
-              } else {
-                // 새 항목 추가
-                existingMap.set(key, newItem);
-                addedCount++;
-              }
-            });
-            
-            finalData = Array.from(existingMap.values());
-          } else if (importMode === 'addNew') {
-            // 새 항목만 추가
-            const existingKeysList = ptSchedules.map(s => getKey(s));
-            const newItems = imported.filter(item => !existingKeysList.includes(getKey(item)));
-            
-            finalData = [...ptSchedules, ...newItems];
-            addedCount = newItems.length;
-            skippedCount = imported.length - newItems.length;
-          }
-          
           if (dryRun) {
             const todayKeyStr = new Date().toISOString().slice(0, 10);
             setImportPreview({
               mode: importMode,
               rows: data.length,
               valid: imported.length,
-              added: addedCount,
-              updated: updatedCount - unchangedCount,
-              unchanged: unchangedCount + skippedCount,
+              added,
+              updated,
+              unchanged: unchanged + skipped,
               unassigned: imported.filter(s => !s.ptAssignee && s.date && s.date >= todayKeyStr).length,
-              removed: importMode === 'replace' ? Math.max(0, ptSchedules.length - imported.length) : 0,
+              removed,
               at: new Date().toISOString(),
             });
             setImportStatus(null);
@@ -1241,54 +1233,34 @@ const SETTLEMENT_BADGE_STYLE = {
             return;
           }
 
-          // ID 기반 중복 제거
-          const seenIds660 = [];
-          finalData = finalData.filter(item => {
-            if (seenIds660.includes(item.id)) return false;
-            seenIds660.push(item.id);
-            return true;
-          });
-          
-          // 데이터 저장
-          setPtSchedules(finalData);
-          
-          // Firebase 또는 로컬에 저장 (안전한 방식: 개별 업데이트)
+          if (!Object.keys(plan.updates).length) {
+            setImportStatus({ type: 'success', message: `바뀐 게 없어요 · 시트와 앱이 같아요 (${imported.length}행 확인)` });
+            setIsImporting(false);
+            return;
+          }
+
+          // 되돌리기용 백업 — 손대는 PT의 원래 값만, 쓰기보다 먼저 (백업이 실패하면 가져오기도 안 함)
+          let backupKey = null;
           if (firebaseEnabled && database) {
-            // 삭제 전 백업 로그
-            console.log('=== PT 데이터 백업 (업로드 전) ===', JSON.stringify(ptSchedules));
-            
-            const updates = {};
-            finalData.forEach(item => {
-              const safeId = item.id.replace(/[.#$\/\[\]]/g, '_');
-              updates['pt/' + safeId] = {...item, id: safeId};
+            backupKey = `imp_${Date.now()}`;
+            await database.ref(`importBackups/${backupKey}`).set({
+              at: new Date().toISOString(), by: currentUser?.name || '', mode: importMode,
+              counts: plan.counts, nodes: plan.backup,
             });
-            
-            // 전체 교체 모드일 때만 기존 항목 삭제
-            if (importMode === 'replace') {
-              ptSchedules.forEach(oldItem => {
-                const safeId = oldItem.id.replace(/[.#$\/\[\]]/g, '_');
-                const existsInFinal = finalData.some(item => item.id.replace(/[.#$\/\[\]]/g, '_') === safeId);
-                if (!existsInFinal) {
-                  updates['pt/' + safeId] = null;
-                }
-              });
-            }
-            
-            await database.ref().update(updates);
+            await database.ref().update(plan.updates);
           } else {
-            saveToLocal('pt_schedules', finalData);
+            saveToLocal('pt_schedules', plan.next);
           }
+          setPtSchedules(plan.next);
           setLastSaved(new Date().toLocaleTimeString());
-          
-          // 결과 메시지
-          let message = `완료! `;
-          if (importMode === 'replace') {
-            message += `${addedCount}건 가져옴`;
-          } else if (importMode === 'merge') {
-            message += `추가 ${addedCount}건, 업데이트 ${updatedCount}건 (총 ${finalData.length}건)`;
-          } else {
-            message += `새로 추가 ${addedCount}건, 건너뜀 ${skippedCount}건`;
-          }
+          if (backupKey) setLastImportBackup({ key: backupKey, at: Date.now() });
+          logActivity('sheet_import', { mode: importMode, backupKey, ...plan.counts });
+
+          let message = '완료! ';
+          if (importMode === 'replace') message += `${added}건 가져옴 · 삭제 ${removed}건`;
+          else if (importMode === 'merge') message += `추가 ${added}건 · 업데이트 ${updated}건 · 변경 없음 ${unchanged}건`;
+          else message += `새로 추가 ${added}건 · 건너뜀 ${skipped}건`;
+          if (backupKey) message += ' · 24시간 안에 되돌릴 수 있어요';
           setImportStatus({ type: 'success', message });
           
         } catch (error) {
@@ -2857,18 +2829,22 @@ const SETTLEMENT_BADGE_STYLE = {
       }, [currentUser, meetingSchedules]);
       
       // 비밀번호 변경 저장
-      const handleSavePasswords = () => {
+      const handleSavePasswords = async () => {
         const updated = { ...userAccounts };
+        const paths = {};
         Object.keys(passwordChanges).forEach(id => {
           if (passwordChanges[id] && passwordChanges[id].trim()) {
             updated[id] = { ...updated[id], password: passwordChanges[id].trim() };
+            paths[`users/${id}/password`] = passwordChanges[id].trim();
           }
         });
-        setUserAccounts(updated);
-        if (database) {
-          database.ref('users').set(updated);
+        if (database && Object.keys(paths).length) {
+          // 바꾼 비밀번호 칸만 — users 통째 set 은 다른 사람이 방금 저장한 연락처·이메일을 되돌렸음
+          try { await database.ref().update(paths); }
+          catch (e) { alert(`저장하지 못했어요: ${e.message}`); return; }
           setLastSaved(new Date().toLocaleTimeString());
         }
+        setUserAccounts(updated);
         setPasswordChanges({});
         setShowPasswordModal(false);
         alert('비밀번호가 변경되었습니다!');
@@ -15402,9 +15378,11 @@ tr.suppressed td.fname{color:#64748b;}
                 status: importStatus, preview: importPreview, busy: isImporting,
                 onPreview: () => handleImportFromSheet({ dryRun: true }),
                 onImport: () => {
-                  if (importMode === 'replace' && !window.confirm(`전체 교체: 기존 PT 일정 ${ptSchedules.length}건을 시트 데이터로 바꿉니다.\n\n되돌릴 수 없어요. 진행할까요?`)) return;
+                  if (importMode === 'replace' && !window.confirm(`전체 교체: 기존 PT 일정 ${ptSchedules.length}건을 시트 데이터로 바꿉니다.\n시트에 없는 PT와 그 결과·정산 기록이 지워져요(24시간 안에 되돌리기 가능).\n\n진행할까요?`)) return;
                   handleImportFromSheet();
                 },
+                lastBackup: lastImportBackup,
+                onUndo: lastImportBackup ? undoLastImport : undefined,
               }}
               hiworks={{ busy: hiworksSyncLoading, lastSync: hiworksLastSync, vacations: hiworksVacations, onSync: () => syncHiworksVacations() }}
               exporter={{ counts: { pt: ptSchedules.length, briefing: briefingSchedules.length, personal: personalSchedules.length }, onExport: handleExportCSV }}
@@ -21292,23 +21270,22 @@ tr.suppressed td.fname{color:#64748b;}
                 </label>
                 <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       const trimmed = jandiUrl.trim();
-                      // 담당자별 webhook 정제 (빈 URL 제거, trim)
-                      const cleanedUsers = {};
+                      // 칸 단위로만 씀 — config/jandi 통째 set 은 담당자가 마이페이지에서 고른 알림(users/*/prefs)까지 지웠음
+                      const updates = { 'config/jandi/url': trimmed, 'config/jandi/enabled': jandiEnabled };
+                      let userCount = 0;
                       Object.entries(jandiUserWebhooks || {}).forEach(([name, cfg]) => {
                         const u = (cfg?.url || '').trim();
-                        if (u) cleanedUsers[name] = { url: u, enabled: cfg?.enabled !== false };
+                        if (u) userCount++;
+                        updates[`config/jandi/users/${name}/url`] = u || null;
+                        updates[`config/jandi/users/${name}/enabled`] = u ? cfg?.enabled !== false : null;
                       });
                       if (firebaseEnabled && database) {
-                        database.ref('config/jandi').set({
-                          url: trimmed,
-                          enabled: jandiEnabled,
-                          users: cleanedUsers,
-                        });
+                        try { await database.ref().update(updates); }
+                        catch (e) { alert(`저장하지 못했어요: ${e.message}\n입력한 값은 그대로 있어요. 다시 눌러 주세요.`); return; }
                       }
                       setJandiConfig({ url: trimmed, enabled: jandiEnabled });
-                      const userCount = Object.keys(cleanedUsers).length;
                       alert(`잔디 웹훅 설정이 저장되었습니다.\n관리자 채널: ${trimmed ? '등록' : '미등록'}\n담당자별: ${userCount}명 등록`);
                       setShowJandiModal(false);
                     }}
