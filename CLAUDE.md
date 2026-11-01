@@ -54,7 +54,8 @@
 - Vite + Firebase Realtime DB
 - dev: `npm run dev` (vite, port 3002)
 - worktree에 node_modules 없음 — `npm i` 먼저
-- Worker: `cloudflare-worker/` 별도 배포
+- Worker: **운영 소스는 `C:\Users\User\Documents\ChatGPT\영업운영시스템\deploy-source\`** (최신 release 폴더의 `candidate/`). 이 저장소 `cloudflare-worker/` 는 옛 버전 — 배포 금지(`cloudflare-worker/NOT-LIVE.md`)
+- 운영 화면(Pages)은 이 저장소 main 병합 시 자동 배포. 영업운영시스템 쪽에서 `wrangler pages deploy` 하면 서로 덮어씀 — 2026-11-01부터 이 저장소가 기준
 
 ## 6. 주요 파일
 
@@ -65,5 +66,5 @@
 | 잔디 알림 | `src/utils/jandi.js` |
 | 단지명 매칭/별칭 | `src/utils/apartmentMatch.js` |
 | 정산 계산 | `src/utils/settlement.js`, `src/utils/verification.js` |
-| Cloudflare Worker | `cloudflare-worker/index.js` |
+| Cloudflare Worker (운영) | `영업운영시스템/deploy-source/release-*/candidate/src/production-entry.js` — 이 저장소 `cloudflare-worker/` 는 참고용 옛 버전 |
 | 운영 룰 (정산·분기) | `OPERATIONS.md` ← **단일 출처** |
