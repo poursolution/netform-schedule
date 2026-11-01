@@ -1,7 +1,8 @@
 // PT 결과 예외 신청 워크플로우
 // - tie_to_win: 입찰 결과는 무승부지만 영업적 조건으로 승리 인정 신청
 // - no_bid_to_win: 공고문이 없는 현장(교회·일반건물 등)에 대해 승리 인정 신청
-// 흐름: 담당자 신청 → admin 승인 → result='승' 자동 변경 + 정산 인정
+// 흐름: 담당자 신청 → admin 승인 → 결과 '승'으로 계산(settlement.js isWinExceptionApproved) + 정산 대상 전환
+import { calculateSettlementAmount, SETTLEMENT_STATUS } from './settlement.js';
 
 export const EXCEPTION_TYPES = {
   tie_to_win: {
@@ -107,6 +108,44 @@ export function exceptionWaitDays(requestedAt, now = new Date()) {
 
 export const exceptionKey = item => `${item.scheduleId}_${item.assignee}`;
 
+// 승인하면 받게 될 금액 — 승 규칙 그대로(단독 50만 · 여러 명 PT 25만 · 본인영업/취소공고 등은 0)
+export function approvedWinAmount(pt, assignee) {
+  if (!pt) return 0;
+  const sim = { ...pt, exceptionRequests: { ...(pt.exceptionRequests || {}), [assignee]: { ...(pt.exceptionRequests?.[assignee] || {}), status: 'approved' } } };
+  return calculateSettlementAmount(sim, assignee).amount;
+}
+
+/**
+ * #11a 승인·거절 저장 — pt 노드 기준 상대 경로 { 'exceptionRequests/김성민': {...}, 'settlement/김성민/..': v }
+ *  승인: 예외 상태 + 정산 대상 전환(requested) + 관리자 확인(manualVerified) + 금액 캐시.
+ *        이미 확정·지급된 건은 정산 상태를 건드리지 않음(지급 이력 보존).
+ *  undo: 같은 경로를 처리 전 값으로 되돌리는 patch.
+ */
+export function buildExceptionDecisionPatch(pt, assignee, status, { reviewedBy, reviewNote = '', at = new Date().toISOString() } = {}) {
+  const req = pt?.exceptionRequests?.[assignee] || {};
+  const nextReq = status === 'approved' ? approveException(req, { reviewedBy, reviewNote }) : rejectException(req, { reviewedBy, reviewNote });
+  nextReq.reviewedAt = at;
+  const patch = { [`exceptionRequests/${assignee}`]: nextReq };
+  const undo = { [`exceptionRequests/${assignee}`]: req };
+  if (status !== 'approved') return { patch, undo };
+
+  const stl = pt?.settlement?.[assignee] || {};
+  const paid = stl.completed || stl.confirmed || stl.status === SETTLEMENT_STATUS.COMPLETED || stl.status === SETTLEMENT_STATUS.CONFIRMED;
+  const amount = approvedWinAmount(pt, assignee);
+  const fields = {
+    manualVerified: true,
+    reviewBypassedBy: reviewedBy || 'admin',
+    reviewBypassedAt: at,
+    ...(paid ? {} : { calculatedAmount: amount }),
+    ...(paid || stl.requested ? {} : { requested: true, requestedAt: at, requestedBy: 'exception-approved', status: SETTLEMENT_STATUS.REQUESTED }),
+  };
+  Object.entries(fields).forEach(([f, v]) => {
+    patch[`settlement/${assignee}/${f}`] = v;
+    undo[`settlement/${assignee}/${f}`] = stl[f] === undefined ? null : stl[f];
+  });
+  return { patch, undo };
+}
+
 // #11a 처리 요약 — decisions: { key: 'ok'|'no' }, deltaOf(item) → 승인 시 정산 증가액
 export function exceptionSummary(items, decisions, deltaOf = () => 0) {
   const ok = items.filter(it => decisions[exceptionKey(it)] === 'ok');
@@ -140,16 +179,17 @@ export function buildExceptionRequestMessage({ assignee, siteName, type, reason,
 }
 
 // 잔디 메시지 빌더 (담당자 알림 — 승인/거절 결과)
-export function buildExceptionResultMessage({ assignee, siteName, type, status, reviewedBy, reviewNote }) {
+export function buildExceptionResultMessage({ assignee, siteName, type, status, reviewedBy, reviewNote, amount }) {
   const typeMeta = EXCEPTION_TYPES[type] || { label: type };
   const isApproved = status === 'approved';
+  const amt = typeof amount === 'number' ? ` · ${amount.toLocaleString('ko-KR')}원` : '';
   return {
     body: isApproved ? '✅ PT 예외 승인됨 — 승리 처리' : '❌ PT 예외 거절됨',
     connectColor: isApproved ? '#16a34a' : '#dc2626',
     connectInfo: [{
       title: `[${typeMeta.label}] ${siteName || '단지명 미입력'} — ${assignee} 담당`,
       description: [
-        `결정: ${isApproved ? '승인 (정산 대상에 포함)' : '거절 (기존 결과 유지)'}`,
+        `결정: ${isApproved ? `승인 — 결과 승으로 정산 대상에 포함${amt}` : '거절 (기존 결과 유지)'}`,
         `검토자: ${reviewedBy || '-'}`,
         '',
         `검토 사유:`,

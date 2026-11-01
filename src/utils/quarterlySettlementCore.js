@@ -1,4 +1,4 @@
-import { calculateSettlementAmount } from './settlement.js';
+import { calculateSettlementAmount, isWinExceptionApproved } from './settlement.js';
 
 export const SETTLEMENT_ASSIGNEES = [
   '황윤선', '이필선', '한준엽', '조재연', '정정훈', '김성민',
@@ -64,6 +64,8 @@ export function isQuarterSettlementTarget(pt, assignee, quarterKey, opts = {}) {
   if (!inRange && !includeLegacyCarryover) return false;
 
   const stl = pt.settlement?.[assignee] || {};
+  // 예외 승인은 승인 시점에 requested·manualVerified 를 같이 저장한다(utils/exceptions.js) — 승인만으로 대상이 되진 않음
+  //   (예전에 승인만 되고 정산요청 안 된 지난 분기 건이 이월로 갑자기 급여에 들어가지 않게)
   if (!(stl.requested === true || stl.manualVerified === true)) return false;
   if (stl.completed === true || stl.status === 'completed') return false;
   if (stl.superseded === true || stl.status === 'superseded') return false;
@@ -120,7 +122,8 @@ export function aggregateQuarterSettlement(ptSchedules, quarterKey, opts = {}) {
 
       const needsReview = pt.kaptVerified?.status === 'needs_review'
         && !(pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0)
-        && stl.manualVerified !== true;
+        && stl.manualVerified !== true
+        && !isWinExceptionApproved(pt, assignee);
       if (needsReview) agg.reviewCount++;
 
       agg.estimatedAmount += calc.amount || 0;

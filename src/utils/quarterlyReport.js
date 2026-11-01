@@ -167,6 +167,8 @@ function isPtVerified(s, assignee) {
   const r = getPtResult(s, assignee);
   if (!r) return false;
   if (r === '패') return true;
+  // 관리자 예외 승인 (영업적 승리·공고문 없는 현장) — 근거 보고 승인한 것
+  if (isExceptionApproved(s, assignee)) return true;
   // K-APT 자동검증 통과
   if (s.kaptVerified?.status === 'verified') return true;
   // 관리자 수동검증 (분기정산 모달 체크박스)
@@ -184,6 +186,7 @@ function getVerifyReason(s, assignee) {
   const r = getPtResult(s, assignee);
   if (!r) return '결과 미입력';
   if (r === '패') return '';
+  if (isExceptionApproved(s, assignee)) return '';
   if (s.kaptVerified?.status === 'verified') return '';
   if (s.settlement?.[assignee]?.manualVerified === true) return '';
   if (s.evidenceFiles && Object.keys(s.evidenceFiles).length > 0) return '';
@@ -319,10 +322,9 @@ export function aggregateQuarterlyReport(allData, year, quarter, opts = {}) {
       const rawResult = getPtResult(s, a);
       const exceptionApproved = isExceptionApproved(s, a);
       const exceptionReq = exceptionApproved ? s.exceptionRequests?.[a] : null;
-      const calc = exceptionApproved
-        ? { amount: 500000, result: '\uc2b9', reason: null }
-        : calculateSettlementAmount(s, a);
-      const effectiveResult = exceptionApproved ? '\uc2b9' : (calc.result || rawResult);
+      // \uc608\uc678 \uc2b9\uc778\ub3c4 settlement.js \ud55c \uacf3\uc5d0\uc11c '\uc2b9'\uc73c\ub85c \uacc4\uc0b0(\uc5ec\ub7ec \uba85 PT\uba74 25\ub9cc \u2014 \ud654\uba74\u00b7Worker\uc640 \uac19\uc740 \uae08\uc561)
+      const calc = calculateSettlementAmount(s, a);
+      const effectiveResult = calc.result || rawResult;
       if (!SETTLEMENT_RESULTS.has(effectiveResult)) {
         debugStats.skippedNonSettlementResult++;
         if (inQuarter) {
@@ -345,7 +347,7 @@ export function aggregateQuarterlyReport(allData, year, quarter, opts = {}) {
         workType: s.workType || '',
         address: s.address || '',
         assignee: a,
-        result: exceptionApproved ? effectiveResult : calc.result,
+        result: calc.result,
         rawResult,
         isException: exceptionApproved,
         exceptionType: exceptionReq ? exceptionReq.type : null,

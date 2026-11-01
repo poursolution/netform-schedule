@@ -27,8 +27,7 @@ import {
 import {
   EXCEPTION_STATUSES,
   createExceptionRequest,
-  approveException,
-  rejectException,
+  buildExceptionDecisionPatch,
   listPendingExceptions,
   exceptionWaitDays,
   buildExceptionRequestMessage,
@@ -21007,22 +21006,31 @@ tr.suppressed td.fname{color:#64748b;}
               items={listPendingExceptions(ptSchedules)}
               ptSchedules={ptSchedules}
               onClose={() => setShowExceptionQueueModal(false)}
-              onCommit={(decisions) => {
-                decisions.forEach(({ item, status, note }) => {
-                  const base = { type: item.type, reason: item.reason, requestedBy: item.requestedBy, requestedAt: item.requestedAt, status: 'pending', reviewedBy: '', reviewedAt: '', reviewNote: '' };
-                  const review = { reviewedBy: currentUser?.name || 'admin', reviewNote: note };
-                  const updated = status === 'approved' ? approveException(base, review) : rejectException(base, review);
-                  if (firebaseEnabled && database) {
-                    database.ref(`pt/${item.scheduleId}/exceptionRequests/${item.assignee}`).set(updated);
-                  }
-                  setPtSchedules(prev => prev.map(s => s.id === item.scheduleId
-                    ? { ...s, exceptionRequests: { ...(s.exceptionRequests || {}), [item.assignee]: updated } }
-                    : s));
-                  sendJandiNotification(buildExceptionResultMessage({
-                    assignee: item.assignee, siteName: item.siteName, type: item.type,
-                    status, reviewedBy: currentUser?.name, reviewNote: note,
-                  }));
+              // 누르는 즉시 저장(창을 닫기 전 새로고침해도 남음) — 승인은 결과 승 계산 + 정산 대상 전환까지(utils/exceptions.js)
+              onDecide={async (item, status, note) => {
+                const pt = ptSchedules.find(s => s.id === item.scheduleId);
+                if (!pt) throw new Error('PT를 찾지 못했어요');
+                const { patch, undo } = buildExceptionDecisionPatch(pt, item.assignee, status, { reviewedBy: currentUser?.name || 'admin', reviewNote: note });
+                await writeWorkbenchPatch(pt, patch);
+                logActivity(status === 'approved' ? 'exception_approved' : 'exception_rejected', { ptId: item.scheduleId, siteName: item.siteName, assignee: item.assignee, note });
+                // 담당자 개인 잔디(없으면 관리자 채널) — 결과 알림
+                const msg = buildExceptionResultMessage({
+                  assignee: item.assignee, siteName: item.siteName, type: item.type, status,
+                  reviewedBy: currentUser?.name, reviewNote: note, amount: patch[`settlement/${item.assignee}/calculatedAmount`],
                 });
+                const hook = jandiUserWebhooks?.[item.assignee];
+                if (hook?.url && hook.enabled !== false) {
+                  fetch(hook.url, { method: 'POST', mode: 'no-cors', headers: { 'Accept': 'application/vnd.tosslab.jandi-v2+json', 'Content-Type': 'application/json' }, body: JSON.stringify(msg) }).catch(() => {});
+                } else {
+                  sendJandiNotification(msg);
+                }
+                return undo;
+              }}
+              onUndo={async (item, undo) => {
+                const pt = ptSchedules.find(s => s.id === item.scheduleId);
+                if (!pt) throw new Error('PT를 찾지 못했어요');
+                await writeWorkbenchPatch(pt, undo);
+                logActivity('exception_decision_undone', { ptId: item.scheduleId, assignee: item.assignee });
               }}
             />
           )}
