@@ -61,7 +61,8 @@ const dot = (bg, r = '50%') => ({ width: 7, height: 7, borderRadius: r, backgrou
 
 // 넓은 화면에선 현장 칸만 늘지 않도록 남는 폭을 오른쪽 칸들에도 나눈다
 const GRID = '24px 52px minmax(180px, 2.6fr) minmax(84px, 1fr) minmax(56px, .8fr) minmax(76px, 1fr) minmax(76px, 1fr) minmax(78px, 1fr)';
-const STAFF_GRID = '68px 40px 40px 40px 44px minmax(120px,1fr) 64px 92px 76px';
+const GRID_COMPACT = '24px 44px minmax(0, 1fr) 56px auto';
+const STAFF_GRID ='68px 40px 40px 40px 44px minmax(120px,1fr) 64px 92px 76px';
 
 
 function quarterOptions(now = new Date()) {
@@ -128,6 +129,21 @@ export default function PerformanceWorkbench({
     io.observe(el);
     return () => io.disconnect();
   }, []);
+
+  // 좁은 폭(노트북 반쪽 창 등) — 본문 폭을 재서 2열 → 1열, 표 → 두 줄 행
+  const bodyRef = useRef(null);
+  const detailRef = useRef(null);
+  const [bodyW, setBodyW] = useState(1200);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(([e]) => setBodyW(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const stacked = bodyW < 1000;                                // 상세 패널을 목록 위로
+  const listW = stacked ? bodyW : bodyW - 16 - 380;
+  const compact = listW < 720;                                 // 표 칸 대신 두 줄 행
 
   const meta = useMemo(() => quarterMeta(quarterKey), [quarterKey]);
   const qPts = useMemo(() => quarterPts(ptSchedules || [], quarterKey), [ptSchedules, quarterKey]);
@@ -204,7 +220,7 @@ export default function PerformanceWorkbench({
   };
 
   // ===== 스타일 조각 =====
-  const tabBtn = key => ({ padding: '10px 2px', border: 0, background: 'transparent', fontSize: 13.5, fontFamily: 'inherit', cursor: 'pointer', fontWeight: tab === key ? 700 : 500, color: tab === key ? C.brand : C.text3, boxShadow: tab === key ? `inset 0 -2px 0 ${C.brand}` : 'none' });
+  const tabBtn = key => ({ padding: '10px 2px', border: 0, whiteSpace: 'nowrap', background: 'transparent', fontSize: 13.5, fontFamily: 'inherit', cursor: 'pointer', fontWeight: tab === key ? 700 : 500, color: tab === key ? C.brand : C.text3, boxShadow: tab === key ? `inset 0 -2px 0 ${C.brand}` : 'none' });
   const queueStyle = (key, on) => ({ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, padding: '14px 16px', minWidth: 0, background: key === 'review' && !on ? '#fffbeb' : '#fff', border: `1px solid ${on ? C.brand : key === 'review' ? '#fde68a' : C.line}`, borderRadius: 12, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', boxShadow: on ? `0 0 0 3px ${C.accent}` : 'none' });
   const filterBtn = (on, warn) => ({ padding: '5px 10px', borderRadius: 7, border: 0, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer', fontWeight: on ? 700 : 500, background: on ? (warn ? '#fef3c7' : C.brand) : 'transparent', color: on ? (warn ? '#b45309' : '#fff') : warn ? '#b45309' : C.text2 });
   const whoChip = on => ({ padding: '4px 9px', borderRadius: 999, fontSize: 12, cursor: 'pointer', border: `1px solid ${on ? C.brand : C.line}`, background: on ? C.brand : '#fff', color: on ? '#fff' : C.text2, fontWeight: on ? 700 : 500, fontFamily: 'inherit' });
@@ -272,7 +288,7 @@ export default function PerformanceWorkbench({
         </div>
 
         {/* KPI 바 */}
-        <div style={{ ...card, display: 'grid', gridTemplateColumns: '1.1fr 1fr 1fr 1fr 1fr 1fr', margin: '18px 24px 0', overflow: 'hidden' }}>
+        <div style={{ ...card, display: 'grid', gridTemplateColumns: stacked ? 'repeat(3, minmax(0, 1fr))' : '1.1fr 1fr 1fr 1fr 1fr 1fr', margin: '18px 24px 0', overflow: 'hidden' }}>
           {[
             { label: 'PT 건수', value: k.total, color: C.text },
             { label: '승', value: k.w, color: '#15803d', dot: '#16a34a' },
@@ -280,7 +296,7 @@ export default function PerformanceWorkbench({
             { label: '패', value: k.l, color: '#b91c1c', dot: '#b91c1c' },
             { label: '진행중', value: k.p, color: C.text3, dot: C.strong },
           ].map(x => (
-            <div key={x.label} style={{ padding: '12px 16px', borderRight: `1px solid ${C.line2}` }}>
+            <div key={x.label} style={{ padding: '12px 16px', borderRight: `1px solid ${C.line2}`, borderBottom: stacked ? `1px solid ${C.line2}` : 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: C.text3, fontWeight: 600 }}>{x.dot && <span style={dot(x.dot, 2)} />}{x.label}</div>
               <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-.02em', marginTop: 2, lineHeight: 1.2, color: x.color }}>{x.value}</div>
             </div>
@@ -292,7 +308,7 @@ export default function PerformanceWorkbench({
         </div>
 
         {/* 큐 카드 */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12, padding: '12px 24px 0' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: stacked ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))', gap: 12, padding: '12px 24px 0' }}>
           {[
             { key: 'review', label: '검토필요 · K-APT 미매칭', dot: '#d97706', color: '#b45309', action: '처리 →' },
             { key: 'pending', label: '결과 미입력 · 지난 PT', dot: C.strong, color: C.text3, action: '입력 →' },
@@ -316,17 +332,17 @@ export default function PerformanceWorkbench({
         </div>
 
         {/* 본문 2열 */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 380px', gap: 16, padding: '16px 24px 24px', flex: 1, minHeight: 0, alignItems: 'start' }}>
+        <div ref={bodyRef} style={{ display: 'grid', gridTemplateColumns: stacked ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) 380px', gap: 16, padding: '16px 24px 24px', flex: 1, minHeight: 0, alignItems: 'start' }}>
           {/* 카드에 overflow:hidden 을 주면 sticky 가 잘린다 — 모서리는 sticky 블록·마지막 줄이 맡는다 */}
           <section style={{ ...card, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
             <div ref={stickSentinel} aria-hidden="true" style={{ height: 0 }} />
             <div style={{ position: 'sticky', top: 64, zIndex: 5, background: '#fff', borderRadius: '12px 12px 0 0', boxShadow: stuck ? '0 4px 12px rgba(15,23,42,.06)' : 'none', borderBottom: stuck ? `1px solid ${C.line}` : 0 }}>
-            <div role="tablist" aria-label="실적 보기" style={{ display: 'flex', alignItems: 'center', gap: 18, padding: '0 16px', borderBottom: `1px solid ${C.line}` }}>
+            <div role="tablist" aria-label="실적 보기" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 18, padding: '0 16px', borderBottom: `1px solid ${C.line}` }}>
               <button type="button" role="tab" aria-selected={tab === 'sites'} onClick={() => setTab('sites')} style={tabBtn('sites')}>현장 목록</button>
               <button type="button" role="tab" aria-selected={tab === 'staff'} onClick={() => setTab('staff')} style={tabBtn('staff')}>담당자 비교</button>
               <button type="button" role="tab" aria-selected={tab === 'stl'} onClick={() => setTab('stl')} style={tabBtn('stl')}>정산 현황</button>
               <div style={{ flex: 1 }} />
-              <span style={{ fontSize: 12, color: C.text4 }}>표시 {rows.length}건 · {qLabel} {allRows.length}건{carryRows.length ? ` + 이전 분기 미확인 ${carryRows.length}건` : ''}</span>
+              <span style={{ fontSize: 12, color: C.text4, padding: '6px 0' }}>표시 {rows.length}건 · {qLabel} {allRows.length}건{carryRows.length ? ` + 이전 분기 미확인 ${carryRows.length}건` : ''}</span>
             </div>
 
             {tab === 'sites' && (
@@ -366,13 +382,15 @@ export default function PerformanceWorkbench({
                     <button type="button" onClick={() => setChecked({})} style={{ border: 0, background: 'transparent', color: C.text3, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>선택 해제</button>
                   </div>
                 )}
-                <div style={{ display: 'grid', gridTemplateColumns: GRID, columnGap: 12, padding: '8px 14px', fontSize: 12, fontWeight: 700, color: C.text3, background: C.muted, borderBottom: `1px solid ${C.line}`, alignItems: 'center' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: compact ? GRID_COMPACT : GRID, columnGap: 12, padding: '8px 14px', fontSize: 12, fontWeight: 700, color: C.text3, background: C.muted, borderBottom: `1px solid ${C.line}`, alignItems: 'center' }}>
                   <input type="checkbox" aria-label="표시된 행 전체 선택" checked={rows.length > 0 && rows.every(r => checked[r.id])} onChange={e => setChecked(e.target.checked ? Object.fromEntries(rows.map(r => [r.id, true])) : {})} style={{ margin: 0, width: 14, height: 14 }} />
-                  <span>일자</span><span>현장 · 공종 · 공법</span><span>담당</span><span style={{ textAlign: 'center' }}>결과</span><span style={{ textAlign: 'center' }}>K-APT 검증</span><span style={{ textAlign: 'center' }}>정산</span><span style={{ textAlign: 'right' }}>금액</span>
+                  {compact
+                    ? <><span>일자</span><span>현장 · 담당</span><span style={{ textAlign: 'center' }}>결과</span><span style={{ textAlign: 'right' }}>정산 · 금액</span></>
+                    : <><span>일자</span><span>현장 · 공종 · 공법</span><span>담당</span><span style={{ textAlign: 'center' }}>결과</span><span style={{ textAlign: 'center' }}>K-APT 검증</span><span style={{ textAlign: 'center' }}>정산</span><span style={{ textAlign: 'right' }}>금액</span></>}
                 </div>
               </>
             )}
-            {tab === 'staff' && (
+            {tab === 'staff' && !compact && (
               <div style={{ display: 'grid', gridTemplateColumns: STAFF_GRID, columnGap: 8, padding: '8px 16px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}`, whiteSpace: 'nowrap' }}>
                 <span>담당자</span><span style={{ textAlign: 'right' }}>승</span><span style={{ textAlign: 'right' }}>무</span><span style={{ textAlign: 'right' }}>패</span><span style={{ textAlign: 'right' }}>진행</span><span>승률 · 승/무/패 비율</span><span style={{ textAlign: 'right' }}>검토필요</span><span style={{ textAlign: 'right' }}>{qLabel} 정산예상</span><span style={{ textAlign: 'right' }}>확인</span>
               </div>
@@ -382,8 +400,12 @@ export default function PerformanceWorkbench({
             {tab === 'sites' && (
               <>
                 <div>
-                  {rows.map(r => <SiteRow key={r.id} r={r} selected={selected?.id === r.id} checked={!!checked[r.id]} today={today}
-                    onSelect={() => setSelectedId(r.id)}
+                  {rows.map(r => <SiteRow key={r.id} r={r} compact={compact} selected={selected?.id === r.id} checked={!!checked[r.id]} today={today}
+                    onSelect={() => {
+                      setSelectedId(r.id);
+                      // 1열일 땐 상세가 목록 위에 있으니 눌렀을 때 상세로 올려 준다
+                      if (stacked) detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }}
                     onCheck={() => setChecked(c => ({ ...c, [r.id]: !c[r.id] }))} />)}
                 </div>
                 {rows.length === 0 && (
@@ -399,7 +421,14 @@ export default function PerformanceWorkbench({
             )}
 
             {tab === 'staff' && (
-              <>
+              // 좁으면 표 머리도 같이 가로 스크롤 안에 — 칸이 많아 줄일 수 없다
+              <div style={compact ? { overflowX: 'auto' } : undefined}>
+                <div style={compact ? { minWidth: 680 } : undefined}>
+                {compact && (
+                  <div style={{ display: 'grid', gridTemplateColumns: STAFF_GRID, columnGap: 8, padding: '8px 16px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}`, whiteSpace: 'nowrap' }}>
+                    <span>담당자</span><span style={{ textAlign: 'right' }}>승</span><span style={{ textAlign: 'right' }}>무</span><span style={{ textAlign: 'right' }}>패</span><span style={{ textAlign: 'right' }}>진행</span><span>승률 · 승/무/패 비율</span><span style={{ textAlign: 'right' }}>검토필요</span><span style={{ textAlign: 'right' }}>{qLabel} 정산예상</span><span style={{ textAlign: 'right' }}>확인</span>
+                  </div>
+                )}
                 {staff.map(s => {
                   const bar = (n, bg) => ({ width: s.dec ? `${n / s.dec * 100}%` : 0, background: bg });
                   const cs = confirmOf(s.name), tone = confirmTone(cs);
@@ -423,13 +452,14 @@ export default function PerformanceWorkbench({
                     </button>
                   );
                 })}
+                </div>
                 <div style={{ padding: '10px 16px', fontSize: 12, color: C.text4, borderTop: `1px solid ${C.line2}` }}>행 클릭 → 해당 담당자 현장 목록 · 확인 상태: 미확인 → 1R 확인 → (검증요청) → 최종확정</div>
-              </>
+              </div>
             )}
 
             {tab === 'stl' && (
               <div style={{ padding: '18px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: compact ? 'repeat(3, minmax(0, 1fr))' : 'repeat(6, minmax(0, 1fr))', border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden' }}>
                   {[
                     ['unsettled', '미정산', C.text3, C.text, '결과 O · 요청 전'],
                     ['needs_review', '검토필요', '#b45309', '#b45309', 'K-APT 미매칭', '#fffbeb'],
@@ -438,7 +468,7 @@ export default function PerformanceWorkbench({
                     ['completed', '정산완료', '#15803d', '#15803d', '지급 완료'],
                     ['excluded', '제외', C.text4, C.text3, '패 · 본인PT · 취소공고', C.muted],
                   ].map(([key, label, lc, vc, sub, bg], i) => (
-                    <div key={key} style={{ padding: 14, borderRight: i < 5 ? `1px solid ${C.line2}` : 0, background: bg || '#fff' }}>
+                    <div key={key} style={{ padding: 14, borderRight: i < 5 ? `1px solid ${C.line2}` : 0, borderBottom: compact && i < 3 ? `1px solid ${C.line2}` : 0, background: bg || '#fff' }}>
                       <div style={{ fontSize: 11, fontWeight: 600, color: lc }}>{label}</div>
                       <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-.02em', marginTop: 2, color: vc }}>{targets.byStatus[key] || 0}</div>
                       <div style={{ fontSize: 11, color: key === 'needs_review' ? '#b45309' : C.text4, marginTop: 4 }}>{sub}</div>
@@ -446,7 +476,7 @@ export default function PerformanceWorkbench({
                   ))}
                 </div>
                 <div style={{ fontSize: 11.5, color: C.text4, marginTop: -8 }}>담당자별 건수(지원 포함) — 위 처리 카드와 현장 목록은 현장(주담당) 기준이라 숫자가 다를 수 있습니다.</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: compact ? 'minmax(0, 1fr)' : '1fr 1fr', gap: 12 }}>
                   <div style={{ padding: '14px 16px', border: `1px solid ${C.line}`, borderRadius: 12 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>분기 메타</div>
                     {meta && (
@@ -481,6 +511,8 @@ export default function PerformanceWorkbench({
           </section>
 
           <DetailPanel
+            panelRef={detailRef}
+            stacked={stacked}
             row={selected}
             memo={memo}
             setMemo={v => { setMemo(v); setMemoSaved(''); }}
@@ -503,12 +535,36 @@ export default function PerformanceWorkbench({
   );
 }
 
-function SiteRow({ r, selected, checked, today, onSelect, onCheck }) {
+function SiteRow({ r, compact, selected, checked, today, onSelect, onCheck }) {
   const pt = r.pt;
   const methods = methodsOf(pt);
   const v = r.verify ? VERIFY[r.verify] : null;
   const st = r.stl ? STL[r.stl] : null;
   const c = r.has ? RES[r.result] : null;
+  if (compact) {
+    // 두 줄 행 — 위: 현장 / 아래: 담당 · 공종, K-APT는 칩으로. 오른쪽: 정산 칩 위 · 금액 아래
+    return (
+      <div onClick={onSelect} style={{ display: 'grid', gridTemplateColumns: GRID_COMPACT, columnGap: 12, alignItems: 'center', padding: '9px 14px', borderBottom: `1px solid ${C.line2}`, cursor: 'pointer', background: selected ? C.active : checked ? C.muted : '#fff', boxShadow: selected ? `inset 3px 0 0 ${C.brand}` : 'none' }}>
+        <input type="checkbox" aria-label={`${pt.siteName || ''} 선택`} checked={checked} onClick={e => e.stopPropagation()} onChange={onCheck} style={{ margin: 0, width: 14, height: 14 }} />
+        <span style={{ fontSize: 12, color: C.text3 }}>
+          {mmdd(r.date)}
+          {r.carry && <span title="지난 분기 PT — 아직 확인이 안 끝남" style={{ display: 'block', width: 'fit-content', marginTop: 2, padding: '0 4px', borderRadius: 4, background: '#fef3c7', color: '#b45309', fontSize: 11, fontWeight: 700 }}>{quarterLabelOf(r.date)}</span>}
+        </span>
+        <div style={{ minWidth: 0 }}>
+          <button type="button" onClick={onSelect} style={{ display: 'block', maxWidth: '100%', padding: 0, border: 0, background: 'transparent', fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer', color: C.text, fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pt.siteName || '(현장명 없음)'}</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: 12, color: C.text3 }}>
+            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{[`${r.main || '미배정'}${r.sups.length ? ` +${r.sups.join(',')}` : ''}`, pt.workType].filter(Boolean).join(' · ')}</span>
+            {v && <span style={{ ...chip(v[1], v[2]), flex: 'none' }}>{v[0]}</span>}
+          </div>
+        </div>
+        <span style={{ textAlign: 'center' }}><span style={r.has ? chip(c[0], c[1]) : chip('#f1f5f9', C.text4)}>{r.has ? r.result : r.isFuture ? '예정' : '미입력'}</span></span>
+        <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, whiteSpace: 'nowrap' }}>
+          {st ? <span style={chip(st[1], st[2])}>{st[0]}</span> : <span style={chip('transparent', C.text4)}>결과 대기</span>}
+          <span style={{ fontSize: 12, fontWeight: 700 }}>{formatWon(r.amount)}</span>
+        </span>
+      </div>
+    );
+  }
   return (
     <div onClick={onSelect} style={{ display: 'grid', gridTemplateColumns: GRID, columnGap: 12, alignItems: 'center', padding: '9px 14px', borderBottom: `1px solid ${C.line2}`, cursor: 'pointer', background: selected ? C.active : checked ? C.muted : '#fff', boxShadow: selected ? `inset 3px 0 0 ${C.brand}` : 'none' }}>
       <input type="checkbox" aria-label={`${pt.siteName || ''} 선택`} checked={checked} onClick={e => e.stopPropagation()} onChange={onCheck} style={{ margin: 0, width: 14, height: 14 }} />
@@ -538,10 +594,12 @@ function methodsOf(pt) {
   return [];
 }
 
-function DetailPanel({ row, memo, setMemo, memoSaved, canMemo, onSaveMemo, onNextReview, onResult,
+function DetailPanel({ panelRef, stacked, row, memo, setMemo, memoSaved, canMemo, onSaveMemo, onNextReview, onResult,
   onToggleSettlementFlag, onToggleSelfPT, onKaptReverify, onKaptManualApprove, onKaptCancel, onOpenKaptCandidates, onOpenExceptions }) {
+  // 1열이면 목록 위(order -1)에 고정 없이 — 헤더(64px)에 가리지 않게 scrollMargin
+  const place = stacked ? { order: -1, scrollMarginTop: 80 } : { position: 'sticky', top: 80, maxHeight: 'calc(100vh - 96px)' };
   if (!row) {
-    return <aside style={{ ...card, padding: 24, fontSize: 13, color: C.text4, textAlign: 'center' }}>왼쪽 목록에서 현장을 고르세요.</aside>;
+    return <aside ref={panelRef} style={{ ...card, ...(stacked ? { order: -1 } : null), padding: 24, fontSize: 13, color: C.text4, textAlign: 'center' }}>{stacked ? '아래' : '왼쪽'} 목록에서 현장을 고르세요.</aside>;
   }
   const pt = row.pt;
   const methods = methodsOf(pt);
@@ -577,7 +635,7 @@ function DetailPanel({ row, memo, setMemo, memoSaved, canMemo, onSaveMemo, onNex
   );
 
   return (
-    <aside aria-label="선택한 현장 상세" style={{ ...card, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden', position: 'sticky', top: 80, maxHeight: 'calc(100vh - 96px)' }}>
+    <aside ref={panelRef} aria-label="선택한 현장 상세" style={{ ...card, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden', ...place }}>
       <div style={{ padding: '16px 18px 12px', borderBottom: `1px solid ${C.line2}` }}>
         <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
           {v && <span style={chip(v[1], v[2])}>{v[0]}</span>}
