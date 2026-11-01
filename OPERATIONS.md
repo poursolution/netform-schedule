@@ -105,7 +105,8 @@
 | 거절 | 검토 메모 필수, 원래 결과 유지 |
 | 알림 | 담당자 개인 잔디(없으면 관리자 채널) + 활동 로그 `exception_approved` / `exception_rejected` |
 
-계산 위치: 앱 `src/utils/settlement.js` `isWinExceptionApproved` · Worker `cloudflare-worker/src/index.js` `isWinExceptionApprovedWorker` (같은 규칙 — `tests/exceptions.test.js` 가 둘을 함께 검사).
+계산 위치: 앱 `src/utils/settlement.js` `isWinExceptionApproved` · 이 저장소 참고용 Worker `cloudflare-worker/src/index.js` `isWinExceptionApprovedWorker` (같은 규칙 — `tests/exceptions.test.js` 가 둘을 함께 검사).
+⚠ 운영 Worker(영업운영시스템 `deploy-source`)에는 아직 이 규칙이 없음 — 운영 Worker 분기정산 생성([정산 갱신])에 반영하려면 그쪽 최신 배포본에 따로 넣어 배포해야 함(`cloudflare-worker/NOT-LIVE.md`).
 
 ---
 
