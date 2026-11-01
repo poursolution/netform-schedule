@@ -49,7 +49,6 @@ export default function ScheduleWorkbench({
   onUndoQuick,          // (type, id) => Promise
   me,                   // 로그인 이름 — 간단 폼 담당자 기본값
   onOpen,               // (schedule) => void — 기존 수정 창
-  onOpenTeam,           // 팀 캘린더(외부 링크)
   briefDayCount = 2,
   onSendBrief,          // ({ rows, days }) => Promise<string 결과 문구>
   autoSend,             // boolean | undefined
@@ -197,7 +196,6 @@ export default function ScheduleWorkbench({
           <div role="group" aria-label="보기" style={{ display: 'flex', border: `1px solid ${C.line}`, borderRadius: 8, overflow: 'hidden' }}>
             <button type="button" aria-pressed={view === 'month'} onClick={() => setView('month')} style={seg(view === 'month', true)}>월</button>
             <button type="button" aria-pressed={view === 'list'} onClick={() => setView('list')} style={seg(view === 'list')}>리스트</button>
-            {onOpenTeam && <button type="button" onClick={onOpenTeam} style={seg(false)}>팀 ↗</button>}
           </div>
           <div style={{ flex: 1 }} />
           <label htmlFor="sw-search" style={srOnly}>현장·담당자 검색</label>

@@ -9256,7 +9256,6 @@ const SETTLEMENT_BADGE_STYLE = {
                 onUndoQuick={undoQuickSchedule}
                 me={currentUser?.name}
                 onOpen={handleEditClick}
-                onOpenTeam={() => window.open('https://peaceful-chimera-1dced9.netlify.app/', '_blank')}
                 briefDayCount={Math.min(7, Math.max(1, +morningBriefConfig.days || 2))}
                 onSendBrief={sendMorningBrief}
                 autoSend={!!morningBriefConfig.autoSend}
