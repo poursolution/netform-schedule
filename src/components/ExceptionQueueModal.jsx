@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { EXCEPTION_TYPES, exceptionWaitDays, exceptionKey, exceptionSummary } from '../utils/exceptions.js';
 import { calculateSettlementAmount } from '../utils/settlement.js';
+import EmptyArt from './EmptyArt.jsx';
 
 // PT 결과 예외 승인 큐 (#11a) — 한 번에 한 건만 펼쳐 판단 근거와 함께 처리.
 // 승인·거절은 모달 안에서 되돌릴 수 있고, 닫을 때 onCommit 으로 한꺼번에 저장·알림(기존 approve/reject 경로).
@@ -63,7 +64,7 @@ export default function ExceptionQueueModal({ items, ptSchedules, onCommit, onCl
 
         {/* 본문 */}
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 22px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {list.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: C.text4, fontSize: 14 }}>대기 중인 예외 신청이 없어요.</div>}
+          {list.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: C.text4, fontSize: 14 }}><EmptyArt kind="done" />대기 중인 예외 신청이 없어요.</div>}
           {list.length > 0 && sum.pending === 0 && (
             <div style={{ padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #86efac', background: '#f0fdf4', fontSize: 13.5, color: C.green, lineHeight: 1.6 }}>
               <b>대기 중인 예외 신청을 모두 처리했어요</b><br />
