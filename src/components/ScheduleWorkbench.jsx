@@ -27,6 +27,8 @@ const primary = (h = 34) => ({ height: h, padding: '0 14px', border: 0, borderRa
 const outline = (h = 28) => ({ height: h, padding: '0 10px', border: `1px solid ${C.brand}`, borderRadius: 7, background: '#fff', color: C.brand, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' });
 const secondary = (h = 34) => ({ height: h, padding: '0 10px', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', fontSize: 12.5, color: C.text, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' });
 const LIST_GRID = '112px minmax(0, 1.6fr) minmax(0, 1.5fr) 120px minmax(0, 1fr) 92px';
+// 좁은 폭: 일시 · 현장(아래 줄에 요청사·공종·경쟁) · 담당
+const LIST_GRID_COMPACT = '96px minmax(0, 1fr) auto';
 
 export default function ScheduleWorkbench({
   schedules,            // allSchedules (모든 종류)
@@ -79,6 +81,19 @@ export default function ScheduleWorkbench({
     ro.observe(el);
     return () => ro.disconnect();
   }, [view]);
+  // 본문 폭 — 좁은 창(노트북 반 화면 등)에서 리스트가 브리핑 옆에 끼어 찌그러지지 않게
+  const bodyRef = useRef(null);
+  const [bodyW, setBodyW] = useState(1200);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(([e]) => setBodyW(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const listStack = view === 'list' && bodyW < 1000;          // 브리핑을 리스트 아래로
+  const listW = listStack ? bodyW : bodyW - 16 - 320;
+  const listCompact = view === 'list' && listW < 680;         // 표 칸 대신 두 줄 행
 
   const y = month.getFullYear(), m0 = month.getMonth();
   const monthKey = `${y}-${String(m0 + 1).padStart(2, '0')}`;
@@ -198,7 +213,7 @@ export default function ScheduleWorkbench({
           {onAdd && <button type="button" onClick={() => (view === 'month' ? openAdd(selDate) : onAdd(null))} style={primary()}>+ 일정 추가</button>}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 16, padding: '16px 24px 24px', flex: 1, minHeight: 0, alignItems: 'start' }}>
+        <div ref={bodyRef} style={{ display: 'grid', gridTemplateColumns: listStack ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) 320px', gap: 16, padding: '16px 24px 24px', flex: 1, minHeight: 0, alignItems: 'start' }}>
           {view === 'month' ? (
             <>
               {/* ===== #6b 달력 ===== */}
@@ -371,26 +386,36 @@ export default function ScheduleWorkbench({
                     <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>{LIST_TITLES[listFilter]} <span style={{ color: C.text4, fontWeight: 500 }}>{listRows.length}건</span></h2>
                     <span style={{ marginLeft: 8, fontSize: 12, color: C.text4 }}>{todayStr} 기준 · {listFilter === 'past' || listFilter === 'all' ? '최신순' : '날짜순'}</span>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: LIST_GRID, columnGap: 14, padding: '6px 16px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}`, position: 'sticky', top: 64 + listBarH, zIndex: 5, background: '#fff' }}>
-                    <span>일시</span><span>현장 (참여인원){listMode === 'detail' ? ' · 주소' : ''}</span><span>요청사</span><span>공종</span><span>경쟁</span><span style={{ textAlign: 'right' }}>담당</span>
+                  <div style={{ display: 'grid', gridTemplateColumns: listCompact ? LIST_GRID_COMPACT : LIST_GRID, columnGap: 14, padding: '6px 16px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}`, position: 'sticky', top: 64 + listBarH, zIndex: 5, background: '#fff' }}>
+                    {listCompact
+                      ? <><span>일시</span><span>현장 · 요청사 · 공종 · 경쟁</span><span style={{ textAlign: 'right' }}>담당</span></>
+                      : <><span>일시</span><span>현장 (참여인원){listMode === 'detail' ? ' · 주소' : ''}</span><span>요청사</span><span>공종</span><span>경쟁</span><span style={{ textAlign: 'right' }}>담당</span></>}
                   </div>
                   {listRows.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: C.text4, fontSize: 13 }}>해당하는 일정이 없습니다 · 위 필터나 연도·월을 바꿔보세요</div>}
                   {listRows.map(s => {
                     const names = assigneesOf(s);
                     const un = !s.ptAssignee;
                     return (
-                      <button key={s.id} type="button" onClick={() => onOpen && onOpen(s)} style={{ display: 'grid', gridTemplateColumns: LIST_GRID, columnGap: 14, alignItems: 'start', width: '100%', padding: listMode === 'detail' ? '12px 16px' : '8px 16px', border: 0, borderBottom: `1px solid ${C.line2}`, background: un ? '#fff7ed' : '#fff', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', color: C.text }}>
+                      <button key={s.id} type="button" onClick={() => onOpen && onOpen(s)} style={{ display: 'grid', gridTemplateColumns: listCompact ? LIST_GRID_COMPACT : LIST_GRID, columnGap: 14, alignItems: 'start', width: '100%', padding: listMode === 'detail' ? '12px 16px' : '8px 16px', border: 0, borderBottom: `1px solid ${C.line2}`, background: un ? '#fff7ed' : '#fff', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', color: C.text }}>
                         <span>
                           <span style={{ display: 'block', fontSize: 13, fontWeight: 700 }}>{kDate(s.date)}</span>
                           <span style={{ display: 'block', fontSize: 12.5, fontWeight: 700, color: C.brand, marginTop: 2 }}>{kTime(s.time)}</span>
                         </span>
                         <span style={{ minWidth: 0 }}>
                           <span style={{ display: 'block', fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{titleOf(s)} {s.participants ? <span style={{ fontSize: 12, fontWeight: 500, color: C.text3 }}>({String(s.participants).replace(/명$/, '')}명)</span> : null}</span>
+                          {listCompact && (s.requester || s.workType || s.competitor) && (
+                            <span style={{ display: 'block', fontSize: 12, color: C.text2, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {[s.requester, s.workType].filter(Boolean).join(' · ')}
+                              {s.competitor && <span style={{ fontWeight: 700, color: '#b91c1c' }}>{s.requester || s.workType ? ' · ' : ''}경쟁 {s.competitor}</span>}
+                            </span>
+                          )}
                           {listMode === 'detail' && s.address && <span style={{ display: 'block', fontSize: 12, color: C.text3, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.address}</span>}
                         </span>
+                        {!listCompact && <>
                         <span style={{ minWidth: 0, fontSize: 12.5, lineHeight: 1.45, ...(listMode === 'simple' ? { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } : {}) }}>{s.requester || <span style={{ color: C.text4 }}>—</span>}</span>
                         <span style={{ fontSize: 12.5, fontWeight: 600 }}>{s.workType || <span style={{ color: C.text4, fontWeight: 400 }}>—</span>}</span>
                         <span style={{ minWidth: 0, fontSize: 12.5 }}>{s.competitor ? <span style={{ fontWeight: 700, color: '#b91c1c' }}>{s.competitor}</span> : <span style={{ color: C.text4 }}>—</span>}</span>
+                        </>}
                         <span style={{ textAlign: 'right' }}>{un ? <span style={pill('#fef2f2', '#b91c1c', { padding: '4px 9px', fontSize: 12, fontWeight: 700, border: '1px solid #fecaca' })}>미배정</span> : <span style={{ fontSize: 13, fontWeight: 700 }}>{names.join(' + ')}</span>}</span>
                       </button>
                     );
@@ -399,7 +424,7 @@ export default function ScheduleWorkbench({
               </section>
 
               {/* ===== 아침 브리핑 ===== */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, position: 'sticky', top: 80 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, position: listStack ? 'static' : 'sticky', top: 80 }}>
                 <section aria-label="아침 브리핑" style={{ ...card, overflow: 'hidden' }}>
                   <div style={{ padding: '14px 16px', borderBottom: `1px solid ${C.line2}` }}>
                     <div style={{ display: 'flex', alignItems: 'baseline' }}>
