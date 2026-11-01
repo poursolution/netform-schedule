@@ -6,6 +6,7 @@ import {
 } from '../utils/workbench.js';
 import { calculateSettlementAmount, deriveAssigneeResult, getQuarterKey } from '../utils/settlement.js';
 import MobileTabBar from './MobileTabBar.jsx';
+import EmptyArt from './EmptyArt.jsx';
 
 // 관리자 실적 모바일 (#5c) — [고정 헤더: 분기 · 검색 · 분기정산 · 담당/상태 필터] + [KPI · 카드 목록] + [고정 하단 탭].
 // 카드 탭 → 상세 바텀시트. 저장은 실적 작업대(#2a)와 같은 콜백.
@@ -138,7 +139,7 @@ export default function MobilePerformance({
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {rows.length === 0 && <div style={{ padding: 28, textAlign: 'center', fontSize: 13.5, color: C.text4, background: '#fff', borderRadius: 14, border: `1px solid ${C.line}` }}>조건에 맞는 PT가 없어요</div>}
+          {rows.length === 0 && <div style={{ padding: 28, textAlign: 'center', fontSize: 13.5, color: C.text4, background: '#fff', borderRadius: 14, border: `1px solid ${C.line}` }}><EmptyArt kind="search" size={76} />조건에 맞는 PT가 없어요</div>}
           {rows.map(r => {
             const res = r.result ? RES[r.result] : null;
             const v = r.verify ? VERIFY[r.verify] : null;

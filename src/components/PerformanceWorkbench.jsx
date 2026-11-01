@@ -5,6 +5,7 @@ import {
   settlementStep, SETTLEMENT_STEPS, kaptCandidateText, ptsBeforeQuarter, isCarryover, quarterLabelOf,
 } from '../utils/workbench.js';
 import AppSidebar from './AppSidebar.jsx';
+import EmptyArt from './EmptyArt.jsx';
 import { downloadPerformanceXlsx } from '../utils/performanceExport.js';
 import { calculateSettlementAmount, deriveAssigneeResult, getQuarterKey } from '../utils/settlement.js';
 
@@ -386,7 +387,7 @@ export default function PerformanceWorkbench({
                     onCheck={() => setChecked(c => ({ ...c, [r.id]: !c[r.id] }))} />)}
                 </div>
                 {rows.length === 0 && (
-                  <div style={{ padding: '48px 20px', textAlign: 'center', color: C.text4, fontSize: 13 }}>조건에 맞는 현장이 없습니다.<div style={{ fontSize: 12, marginTop: 4 }}>담당자·상태 필터를 바꿔보세요.</div></div>
+                  <div style={{ padding: '48px 20px', textAlign: 'center', color: C.text4, fontSize: 13 }}><EmptyArt kind={filter === 'review' || filter === 'pending' ? 'done' : 'search'} />조건에 맞는 현장이 없습니다.<div style={{ fontSize: 12, marginTop: 4 }}>담당자·상태 필터를 바꿔보세요.</div></div>
                 )}
                 <div style={{ padding: '10px 14px', fontSize: 12, color: C.text4, borderTop: `1px solid ${C.line2}`, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
                   <span><b style={{ color: C.text3, fontWeight: 600 }}>↑↓</b> 이동</span>

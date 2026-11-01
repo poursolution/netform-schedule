@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import AppSidebar from './AppSidebar.jsx';
+import EmptyArt from './EmptyArt.jsx';
 import { parseAssignees, mmdd, formatWon, quarterMeta, defaultQuarterKey } from '../utils/workbench.js';
 import {
   rawResultOf, todoItems, easyStatus, quarterMoney, yearRecord, teamRate,
@@ -210,7 +211,7 @@ export default function StaffHome({
             {/* 3. 다가오는 PT */}
             <section aria-label="다가오는 PT" style={{ ...card, overflow: 'hidden' }}>
               <div style={cardHead}><h2 style={h2}>다가오는 PT</h2></div>
-              {upcoming.length === 0 && <div style={{ padding: 22, textAlign: 'center', fontSize: 13, color: C.text4 }}>예정된 PT가 없어요</div>}
+              {upcoming.length === 0 && <div style={{ padding: 22, textAlign: 'center', fontSize: 13, color: C.text4 }}><EmptyArt kind="calendar" size={76} />예정된 PT가 없어요</div>}
               {upcoming.map(pt => {
                 const d = new Date(pt.date + 'T00:00:00');
                 const tokens = parseAssignees(pt.ptAssignee);
