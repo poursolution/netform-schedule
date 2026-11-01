@@ -112,7 +112,8 @@ export default function ScheduleWorkbench({
     return map;
   }, [visible]);
 
-  const typeChips = [['all', '전체'], ...TYPE_ORDER.filter(t => inMonth.some(s => s.type === t)).map(t => [t, typeMeta(t).label])];
+  // 종류 칩은 늘 전부 — 그 달에 없으면 0으로 흐리게(없다고 칩이 사라지면 휴가·세미나 기능이 빠진 것처럼 보였음)
+  const typeChips = [['all', '전체'], ...TYPE_ORDER.map(t => [t, typeMeta(t).label])];
   const cells = monthCells(y, m0);
   // 달력이 화면 높이를 채우므로 칸이 커지면 일정을 더 보여준다(날짜 줄 36px · 일정 한 줄 24px · "+N건 더" 18px)
   const rowH = gridH ? gridH / Math.ceil(cells.length / 7) : 104;
@@ -225,9 +226,10 @@ export default function ScheduleWorkbench({
                   <h2 style={{ margin: '0 0 0 6px', fontSize: 17, fontWeight: 800, letterSpacing: '-.02em' }}>{y}년 {m0 + 1}월</h2>
                   <button type="button" onClick={goToday} style={{ height: 28, padding: '0 10px', border: `1px solid ${C.line}`, borderRadius: 7, background: '#fff', fontSize: 12, color: C.brand, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', marginLeft: 4 }}>오늘</button>
                   <span style={{ width: 1, height: 18, background: C.line, margin: '0 8px' }} />
-                  {typeChips.map(([k, l]) => (
-                    <button key={k} type="button" aria-pressed={typeFilter === k} onClick={() => setTypeFilter(k)} style={typeChip(typeFilter === k)}>{l} {k === 'all' ? inMonth.length : inMonth.filter(s => s.type === k).length}</button>
-                  ))}
+                  {typeChips.map(([k, l]) => {
+                    const n = k === 'all' ? inMonth.length : inMonth.filter(s => s.type === k).length;
+                    return <button key={k} type="button" aria-pressed={typeFilter === k} onClick={() => setTypeFilter(k)} style={{ ...typeChip(typeFilter === k), opacity: n || typeFilter === k ? 1 : .55 }}>{l} {n}</button>;
+                  })}
                   <button type="button" aria-pressed={typeFilter === 'un'} onClick={() => setTypeFilter(f => f === 'un' ? 'all' : 'un')} style={{ ...typeChip(typeFilter === 'un'), border: `1px solid ${typeFilter === 'un' ? '#b91c1c' : '#fecaca'}`, background: typeFilter === 'un' ? '#b91c1c' : '#fef2f2', color: typeFilter === 'un' ? '#fff' : '#b91c1c', fontWeight: 700 }}>미배정 {unMonth}</button>
                   <div style={{ flex: 1 }} />
                   <span style={{ fontSize: 12, color: C.text4 }}>이번 달 {inMonth.length}건</span>
