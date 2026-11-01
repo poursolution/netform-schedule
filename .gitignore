@@ -40,5 +40,6 @@ cloudflare-worker/.wrangler/
 __pycache__/
 *.pyc
 
-# Claude Code 로컬 설정
-.claude/
+# Claude Code 로컬 설정 (프로젝트 스킬은 공유)
+.claude/*
+!.claude/skills/
