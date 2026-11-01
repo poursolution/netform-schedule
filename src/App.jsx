@@ -128,6 +128,7 @@ import { quarterMeta } from './utils/workbench.js';
 import { finalConfirmBlockers, todoItems } from './utils/staffHome.js';
 import { buildBriefJandiMessage, briefRecipients, unassignedUpcoming } from './utils/morningBrief.js';
 import { planImport, undoUpdates } from './utils/importPlan.js';
+import { editableFields, isLiveRecord, softDeletePatch, resultSavePaths, hasOperationalRecord } from './utils/safeWrite.js';
 
 const INSTALL_BANNER_H = 57; // PWA 설치 안내 배너 높이 — 새 모바일 화면(#5a·#5b)은 이만큼 아래에서 시작
 // 등록 후 새 일정 입력값 초기 상태
@@ -1664,47 +1665,47 @@ const SETTLEMENT_BADGE_STYLE = {
         
         ptRef.on('value', (snapshot) => {
           const data = snapshot.val();
-          setPtSchedules(data ? removeDuplicatesById(Object.values(data).map(normalizeSchedule)) : []);
+          setPtSchedules(data ? removeDuplicatesById(Object.values(data).filter(isLiveRecord).map(normalizeSchedule)) : []);
         });
 
         brRef.on('value', (snapshot) => {
           const data = snapshot.val();
-          setBriefingSchedules(data ? removeDuplicatesById(Object.values(data).map(normalizeSchedule)) : []);
+          setBriefingSchedules(data ? removeDuplicatesById(Object.values(data).filter(isLiveRecord).map(normalizeSchedule)) : []);
         });
 
         perRef.on('value', (snapshot) => {
           const data = snapshot.val();
-          setPersonalSchedules(data ? removeDuplicatesById(Object.values(data).map(normalizeSchedule)) : []);
+          setPersonalSchedules(data ? removeDuplicatesById(Object.values(data).filter(isLiveRecord).map(normalizeSchedule)) : []);
         });
 
         const seminarRef = database.ref('seminar');
         seminarRef.on('value', (snapshot) => {
           const data = snapshot.val();
-          setSeminarSchedules(data ? removeDuplicatesById(Object.values(data).map(normalizeSchedule)) : []);
+          setSeminarSchedules(data ? removeDuplicatesById(Object.values(data).filter(isLiveRecord).map(normalizeSchedule)) : []);
         });
 
         const asqRef = database.ref('asq');
         asqRef.on('value', (snapshot) => {
           const data = snapshot.val();
-          setAsqSchedules(data ? removeDuplicatesById(Object.values(data).map(normalizeSchedule)) : []);
+          setAsqSchedules(data ? removeDuplicatesById(Object.values(data).filter(isLiveRecord).map(normalizeSchedule)) : []);
         });
 
         const vacationRef = database.ref('vacation');
         vacationRef.on('value', (snapshot) => {
           const data = snapshot.val();
-          setVacationSchedules(data ? removeDuplicatesById(Object.values(data).map(normalizeSchedule)) : []);
+          setVacationSchedules(data ? removeDuplicatesById(Object.values(data).filter(isLiveRecord).map(normalizeSchedule)) : []);
         });
 
         const meetingRef = database.ref('meetings');
         meetingRef.on('value', (snapshot) => {
           const data = snapshot.val();
-          setMeetingSchedules(data ? Object.values(data) : []);
+          setMeetingSchedules(data ? Object.values(data).filter(isLiveRecord) : []);
         });
         
         const salesRef = database.ref('sales');
         salesRef.on('value', (snapshot) => {
           const data = snapshot.val();
-          setSalesSchedules(data ? Object.values(data) : []);
+          setSalesSchedules(data ? Object.values(data).filter(isLiveRecord) : []);
         });
 
         // 분기 정산 확인 데이터 로드
@@ -2091,11 +2092,19 @@ const SETTLEMENT_BADGE_STYLE = {
           }
           return updated;
         });
-        if (firebaseEnabled && database) {
-          const safeId = schedule.id.replace(/[.#$\/\[\]]/g, '_');
-          database.ref(`pt/${safeId}`).set({...schedule, id: safeId});
-          setLastSaved(new Date().toLocaleTimeString());
-        }
+        if (firebaseEnabled && database) writeScheduleEdit('pt', schedule);
+      };
+
+      // 수정창 저장 — 수정창이 맡은 칸만 칸 단위로(결과·정산·검증·증빙·이력은 안 씀). 통째 set 은
+      //   창을 연 뒤 다른 사람이 넣은 결과·정산을 옛 값으로 되돌렸음. 실패하면 알림(입력은 화면에 남음).
+      const writeScheduleEdit = (node, schedule) => {
+        const safeId = String(schedule.id).replace(/[.#$\/\[\]]/g, '_');
+        return database.ref(`${node}/${safeId}`).update(editableFields({ ...schedule, id: safeId }))
+          .then(() => setLastSaved(new Date().toLocaleTimeString()))
+          .catch(err => {
+            console.error(`[writeScheduleEdit] ${node}/${safeId}`, err);
+            alert(`저장하지 못했어요: ${err?.message || err}\n화면 내용은 그대로 있어요. 다시 저장해 주세요.`);
+          });
       };
 
       const updateBriefingSchedule = (schedule) => {
@@ -2113,11 +2122,7 @@ const SETTLEMENT_BADGE_STYLE = {
           }
           return updated;
         });
-        if (firebaseEnabled && database) {
-          const safeId = schedule.id.replace(/[.#$\/\[\]]/g, '_');
-          database.ref(`briefing/${safeId}`).set({...schedule, id: safeId});
-          setLastSaved(new Date().toLocaleTimeString());
-        }
+        if (firebaseEnabled && database) writeScheduleEdit('briefing', schedule);
       };
 
       const updatePersonalSchedule = (schedule) => {
@@ -2141,20 +2146,8 @@ const SETTLEMENT_BADGE_STYLE = {
           }
           return updated;
         });
-        if (firebaseEnabled && database) {
-          const safeId = String(schedule.id).replace(/[.#$\/\[\]]/g, '_');
-          // undefined 값 제거 — Firebase 가 undefined 만나면 전체 set 실패함 (조용한 실패의 주 원인)
-          const sanitized = {};
-          for (const [k, v] of Object.entries({ ...schedule, id: safeId })) {
-            if (v !== undefined) sanitized[k] = v;
-          }
-          database.ref(`personal/${safeId}`).set(sanitized)
-            .then(() => { setLastSaved(new Date().toLocaleTimeString()); })
-            .catch(err => {
-              console.error('[updatePersonalSchedule] Firebase write failed', err, { schedule, sanitized });
-              alert(`개인일정 저장 실패: ${err?.message || err}\n\n콘솔 로그(F12)에서 자세한 정보 확인 가능.`);
-            });
-        }
+        // undefined 는 editableFields 가 뺀다 (Firebase 가 undefined 를 만나면 저장 전체 실패)
+        if (firebaseEnabled && database) writeScheduleEdit('personal', schedule);
       };
 
       const updateSeminarSchedule = (schedule) => {
@@ -2172,11 +2165,7 @@ const SETTLEMENT_BADGE_STYLE = {
           }
           return updated;
         });
-        if (firebaseEnabled && database) {
-          const safeId = schedule.id.replace(/[.#$\/\[\]]/g, '_');
-          database.ref(`seminar/${safeId}`).set({...schedule, id: safeId});
-          setLastSaved(new Date().toLocaleTimeString());
-        }
+        if (firebaseEnabled && database) writeScheduleEdit('seminar', schedule);
       };
 
       const updateAsqSchedule = (schedule) => {
@@ -2194,11 +2183,7 @@ const SETTLEMENT_BADGE_STYLE = {
           }
           return updated;
         });
-        if (firebaseEnabled && database) {
-          const safeId = schedule.id.replace(/[.#$\/\[\]]/g, '_');
-          database.ref(`asq/${safeId}`).set({...schedule, id: safeId});
-          setLastSaved(new Date().toLocaleTimeString());
-        }
+        if (firebaseEnabled && database) writeScheduleEdit('asq', schedule);
       };
 
       const updateVacationSchedule = (schedule) => {
@@ -2216,10 +2201,22 @@ const SETTLEMENT_BADGE_STYLE = {
           }
           return updated;
         });
-        if (firebaseEnabled && database) {
-          const safeId = schedule.id.replace(/[.#$\/\[\]]/g, '_');
-          database.ref(`vacation/${safeId}`).set({...schedule, id: safeId});
-          setLastSaved(new Date().toLocaleTimeString());
+        if (firebaseEnabled && database) writeScheduleEdit('vacation', schedule);
+      };
+
+      // 영구 삭제 대신 숨김 삭제 — 기록은 남기고 deleted 표시(화면·집계에서 빠짐, 되살리기·감사 가능).
+      //   예전엔 원본 id 와 정리된 id 둘 다 remove 했으므로 둘 다 확인하되, 없는 경로엔 쓰지 않는다(빈 기록 생성 방지).
+      const softDeleteRecord = async (node, id) => {
+        const keys = [...new Set([String(id), String(id).replace(/[.#$\/\[\]]/g, '_')])];
+        try {
+          for (const key of keys) {
+            const ref = database.ref(`${node}/${key}`);
+            if ((await ref.once('value')).exists()) await ref.update(softDeletePatch({ by: currentUser?.name || '' }));
+          }
+          logActivity('schedule_soft_delete', { node, id: String(id) });
+        } catch (err) {
+          console.error(`[softDeleteRecord] ${node}/${id}`, err);
+          alert(`삭제하지 못했어요: ${err?.message || err}\n새로고침하면 일정이 다시 보일 수 있어요. 다시 시도해 주세요.`);
         }
       };
 
@@ -2232,10 +2229,7 @@ const SETTLEMENT_BADGE_STYLE = {
           return updated;
         });
         if (firebaseEnabled && database) {
-          // 원본 ID와 safeId 둘 다 삭제 시도
-          const safeId = id.replace(/[.#$\/\[\]]/g, '_');
-          database.ref(`pt/${id}`).remove();
-          database.ref(`pt/${safeId}`).remove();
+          softDeleteRecord('pt', id);
         }
       };
 
@@ -2248,10 +2242,7 @@ const SETTLEMENT_BADGE_STYLE = {
           return updated;
         });
         if (firebaseEnabled && database) {
-          // 원본 ID와 safeId 둘 다 삭제 시도
-          const safeId = id.replace(/[.#$\/\[\]]/g, '_');
-          database.ref(`briefing/${id}`).remove();
-          database.ref(`briefing/${safeId}`).remove();
+          softDeleteRecord('briefing', id);
         }
       };
 
@@ -2264,10 +2255,7 @@ const SETTLEMENT_BADGE_STYLE = {
           return updated;
         });
         if (firebaseEnabled && database) {
-          // 원본 ID와 safeId 둘 다 삭제 시도
-          const safeId = id.replace(/[.#$\/\[\]]/g, '_');
-          database.ref(`personal/${id}`).remove();
-          database.ref(`personal/${safeId}`).remove();
+          softDeleteRecord('personal', id);
         }
       };
 
@@ -2280,9 +2268,7 @@ const SETTLEMENT_BADGE_STYLE = {
           return updated;
         });
         if (firebaseEnabled && database) {
-          const safeId = id.replace(/[.#$\/\[\]]/g, '_');
-          database.ref(`seminar/${id}`).remove();
-          database.ref(`seminar/${safeId}`).remove();
+          softDeleteRecord('seminar', id);
         }
       };
 
@@ -2295,9 +2281,7 @@ const SETTLEMENT_BADGE_STYLE = {
           return updated;
         });
         if (firebaseEnabled && database) {
-          const safeId = id.replace(/[.#$\/\[\]]/g, '_');
-          database.ref(`asq/${id}`).remove();
-          database.ref(`asq/${safeId}`).remove();
+          softDeleteRecord('asq', id);
         }
       };
 
@@ -2310,9 +2294,7 @@ const SETTLEMENT_BADGE_STYLE = {
           return updated;
         });
         if (firebaseEnabled && database) {
-          const safeId = id.replace(/[.#$\/\[\]]/g, '_');
-          database.ref(`vacation/${id}`).remove();
-          database.ref(`vacation/${safeId}`).remove();
+          softDeleteRecord('vacation', id);
         }
       };
       
@@ -2424,7 +2406,7 @@ const SETTLEMENT_BADGE_STYLE = {
       
       const deleteMeetingSchedule = (id) => {
         if (firebaseEnabled && database) {
-          database.ref(`meetings/${id}`).remove();
+          softDeleteRecord('meetings', id); // 회의록·응답이 남도록 숨김 삭제
         } else {
           setMeetingSchedules(prev => prev.filter(m => m.id !== id));
         }
@@ -3370,7 +3352,7 @@ const SETTLEMENT_BADGE_STYLE = {
       };
 
       // 승무패 저장 (개별 담당자 결과 지원)
-      const saveResults = () => {
+      const saveResults = async () => {
         const todayStr = new Date().toISOString().split('T')[0];
         const updatedSchedules = ptSchedules.map(s => {
           // 개별 담당자 결과 처리
@@ -3420,29 +3402,31 @@ const SETTLEMENT_BADGE_STYLE = {
         
         setPtSchedules(updatedSchedules);
         
-        // Firebase 또는 로컬 저장 (결과 변경 + 정산/selfPT 변경 모두 저장)
+        // Firebase 또는 로컬 저장 (결과 변경 + 정산/selfPT/공고번호 변경)
+        //   바뀐 담당자의 결과 칸·정산 칸만 경로로 씀 — 예전엔 PT 노드를 통째로 set 해서
+        //   그 사이 다른 사람이 넣은 정산·검증·증빙·삭제 표시를 지웠음 (utils/safeWrite.js)
         if (firebaseEnabled && database) {
+          const writes = [];
           updatedSchedules.forEach(s => {
             const assignees = (s.ptAssignee || '').split(/[\/,+&]/).map(a => a.trim()).filter(a => a);
-            let shouldSave = editingResults.hasOwnProperty(s.id);
-            assignees.forEach(assignee => {
-              if (editingResults.hasOwnProperty(`${s.id}_${assignee}`)) {
-                shouldSave = true;
-              }
-            });
-            // 정산/selfPT 변경된 건도 저장
-            if (!shouldSave && dirtyScheduleIds.has(s.id)) {
-              shouldSave = true;
-            }
-            if (shouldSave) {
-              const safeId = s.id.replace(/[.#$\/\[\]]/g, '_');
-              database.ref(`pt/${safeId}`).set({...s, id: safeId});
-            }
+            const changed = assignees.filter(a => editingResults.hasOwnProperty(`${s.id}_${a}`));
+            const legacy = editingResults.hasOwnProperty(s.id);
+            const dirty = dirtyScheduleIds.has(s.id);
+            if (!changed.length && !legacy && !dirty) return;
+            const paths = resultSavePaths(s, { changed, legacy, dirty, assignees });
+            if (!Object.keys(paths).length) return;
+            const safeId = s.id.replace(/[.#$\/\[\]]/g, '_');
+            writes.push(database.ref(`pt/${safeId}`).update(paths).then(() => null, () => s.siteName || s.id));
           });
+          const failed = (await Promise.all(writes)).filter(Boolean);
+          if (failed.length) {
+            alert(`저장하지 못한 현장 ${failed.length}건: ${failed.join(', ')}\n나머지는 저장됐어요. 화면 내용은 그대로 있으니 다시 저장해 주세요.`);
+            return;
+          }
         } else {
           saveToLocal('pt_schedules', updatedSchedules);
         }
-        
+
         setEditingResults({});
         setDirtyScheduleIds(new Set());
         setHasResultChanges(false);
@@ -7689,6 +7673,12 @@ const SETTLEMENT_BADGE_STYLE = {
         
         // 유형이 변경된 경우
         if (originalType && originalType !== newType) {
+          // 결과·정산·검증·회의 응답 등 운영 기록이 붙은 일정은 유형을 못 바꾼다 —
+          //   새 기록으로 옮기면서 원래 기록을 지우는 방식이라 그 이력이 원래 자리에서 사라짐
+          if (hasOperationalRecord(updatedSchedule)) {
+            alert('결과·정산·검증 또는 응답 기록이 있는 일정은 유형을 바꿀 수 없어요.\n원래 기록을 지키기 위해서예요. 유형을 원래대로 두고 저장해 주세요.');
+            return;
+          }
           // 새 ID 생성
           const prefix = newType === 'pt' ? 'pt' : newType === 'briefing' ? 'br' : newType === 'seminar' ? 'sem' : newType === 'asq' ? 'asq' : newType === 'vacation' ? 'vac' : newType === 'meeting' ? 'mtg' : 'per';
           updatedSchedule.id = `${prefix}_${Date.now()}`;
@@ -15343,7 +15333,7 @@ tr.suppressed td.fname{color:#64748b;}
                     <input type="text" id="salesFollowUp" defaultValue={editingSales?.followUp || ''} placeholder="다음 미팅 일정 등" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', boxSizing: 'border-box' }} />
                   </div>
                   <div style={{ display: 'flex', gap: '12px' }}>
-                    {editingSales && <button onClick={async () => { if (!confirm('삭제?')) return; if (firebaseEnabled) await database.ref('sales/' + editingSales.id).remove(); setSalesSchedules(p => p.filter(s => s.id !== editingSales.id)); setShowSalesModal(false); }} style={{ padding: '14px 20px', borderRadius: '8px', border: 'none', background: '#fee2e2', color: '#dc2626', fontWeight: '600', cursor: 'pointer' }}>삭제</button>}
+                    {editingSales && <button onClick={async () => { if (!confirm('삭제?')) return; if (firebaseEnabled) await softDeleteRecord('sales', editingSales.id); setSalesSchedules(p => p.filter(s => s.id !== editingSales.id)); setShowSalesModal(false); }} style={{ padding: '14px 20px', borderRadius: '8px', border: 'none', background: '#fee2e2', color: '#dc2626', fontWeight: '600', cursor: 'pointer' }}>삭제</button>}
                     <button onClick={() => setShowSalesModal(false)} style={{ flex: 1, padding: '14px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontWeight: '600', cursor: 'pointer' }}>취소</button>
                     <button onClick={async () => {
                       const d = document.getElementById('salesDate').value;
@@ -15612,47 +15602,10 @@ tr.suppressed td.fname{color:#64748b;}
                                         {/* 데이터 초기화 - admin만 접근 가능 */}
                     {currentUser?.isAdmin && (
                     <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '2px solid #fee2e2' }}>
-                      <div style={{ fontSize: '14px', fontWeight: '700', color: '#dc2626', marginBottom: '12px' }}>데이터 초기화 (관리자 전용)</div>
-                      <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '12px' }}>Firebase에서 해당 데이터를 완전히 삭제합니다. 이 작업은 되돌릴 수 없습니다.</p>
+                      <div style={{ fontSize: '14px', fontWeight: '700', color: '#dc2626', marginBottom: '12px' }}>데이터 관리 (관리자 전용)</div>
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                        <button onClick={() => {
-                          if (confirm('정말 모든 개인일정을 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다!')) {
-                            if (firebaseEnabled && database) {
-                              database.ref('personal').remove();
-                            }
-                            setPersonalSchedules([]);
-                            saveToLocal('personal_schedules', []);
-                            alert('개인일정이 모두 삭제되었습니다.');
-                          }
-                        }} style={{ padding: '10px 16px', borderRadius: '8px', border: '2px solid #dc2626', background: '#fee2e2', color: '#dc2626', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>개인일정 전체삭제</button>
-                        <button onClick={() => {
-                          if (confirm('정말 모든 현설일정을 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다!')) {
-                            if (firebaseEnabled && database) {
-                              database.ref('briefing').remove();
-                            }
-                            setBriefingSchedules([]);
-                            saveToLocal('briefing_schedules', []);
-                            alert('현설일정이 모두 삭제되었습니다.');
-                          }
-                        }} style={{ padding: '10px 16px', borderRadius: '8px', border: '2px solid #dc2626', background: '#fee2e2', color: '#dc2626', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>현설일정 전체삭제</button>
-                        <button onClick={async () => {
-                          const confirmText = prompt('정말 모든 PT일정을 삭제하시겠습니까?\n\n삭제하려면 "전체삭제"를 입력하세요:');
-                          if (confirmText === '전체삭제') {
-                            if (confirm(`PT일정 ${ptSchedules.length}건이 영구 삭제됩니다.\n\n정말 진행하시겠습니까?`)) {
-                              console.log('=== PT 데이터 백업 (삭제 전) ===');
-                              console.log(JSON.stringify(ptSchedules, null, 2));
-                              console.log('=== 백업 끝 ===');
-                              if (firebaseEnabled && database) {
-                                await database.ref('pt').remove();
-                              }
-                              setPtSchedules([]);
-                              saveToLocal('pt_schedules', []);
-                              alert('PT일정이 모두 삭제되었습니다.');
-                            }
-                          } else if (confirmText !== null) {
-                            alert('입력이 일치하지 않습니다.');
-                          }
-                        }} style={{ padding: '10px 16px', borderRadius: '8px', border: '2px solid #dc2626', background: '#fee2e2', color: '#dc2626', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>PT일정 전체삭제</button>
+                        {/* 전체 삭제 버튼 제거 — 버튼 한 번에 pt/personal/briefing 전체가 영구 삭제됐음(백업은 콘솔 출력뿐). 지울 일정은 하나씩 숨김 삭제 */}
+                        <span style={{ fontSize: '12px', color: '#64748b' }}>전체 삭제는 없앴어요 · 일정은 하나씩 삭제하면 숨김 처리돼요(기록은 남음)</span>
                         <button onClick={() => {
                           const localData = localStorage.getItem('pt_schedules');
                           if (localData) {
@@ -21117,41 +21070,12 @@ tr.suppressed td.fname{color:#64748b;}
                         <div style={{ fontSize: 12, color: '#475569', marginBottom: 10 }}>
                           감지된 미검증 건: <strong style={{ color: '#7c3aed' }}>{candidates.length}건</strong>
                         </div>
-                        <button
-                          disabled={candidates.length === 0}
-                          onClick={async () => {
-                            if (!window.confirm(`${candidates.length}건을 메모 감지 결과로 verified 처리?\n\n각 PT 의 공사설명/메모에서 POUR/CNC/DO/DETEX/시멘트분말/특허번호 감지됨.\nFirebase 에 kaptVerified(source: 'memo-scan') 저장됩니다.`)) return;
-                            const nowISO = new Date().toISOString();
-                            let saved = 0;
-                            setPtSchedules(prev => prev.map(s => {
-                              const c = candidates.find(x => x.scheduleId === s.id);
-                              if (!c) return s;
-                              saved++;
-                              return {
-                                ...s,
-                                kaptVerified: {
-                                  status: 'verified',
-                                  matchedBy: c.matched.type,
-                                  matchedValue: c.matched.value,
-                                  source: 'memo-scan',
-                                  verifiedAt: nowISO,
-                                  verifiedBy: currentUser?.name || 'memo-scan',
-                                  matchedText: c.text,
-                                },
-                              };
-                            }));
-                            setDirtyScheduleIds(prev => {
-                              const next = new Set(prev);
-                              candidates.forEach(c => next.add(c.scheduleId));
-                              return next;
-                            });
-                            setHasResultChanges(true);
-                            alert(`✅ ${saved}건 메모 기반 verified 처리 완료\n\n상단의 [변경사항 저장] 눌러 Firebase 반영해주세요.`);
-                          }}
-                          style={{ width: '100%', padding: 12, background: candidates.length === 0 ? '#cbd5e1' : '#7c3aed', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: candidates.length === 0 ? 'not-allowed' : 'pointer' }}
-                        >
-                          📝 {candidates.length}건 메모 스캔 자동 verified 처리
-                        </button>
+                        {/* 메모 감지 → 자동 verified 처리 제거 — 메모에 'POUR' 글자만 있어도 검증 완료가 돼 자동 정산으로 이어졌음.
+                            감지 결과는 참고용으로만 보여주고, 검증은 공고문(잔디·K-APT)·관리자 승인으로 (영업운영시스템 26차와 같은 기준) */}
+                        <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f8fafc', border: '1px solid #e2e8f0', fontSize: 12.5, color: '#475569', lineHeight: 1.6 }}>
+                          메모 감지는 참고용이에요 · 검증 완료로 바꾸지 않아요.<br />
+                          공고문(잔디·K-APT)을 확인하거나 상세에서 관리자 수동 승인으로 처리해 주세요.
+                        </div>
                       </>
                     );
                   })()}
