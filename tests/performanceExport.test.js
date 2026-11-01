@@ -28,7 +28,8 @@ test('금액은 settlement.js 계산 그대로, 제외 대상은 합계에서 �
   assert.ok(summary.every(r => r.length === SUMMARY_HEADER.length));
   const jo = summary.find(r => r[0] === '조현식');
   assert.equal(jo[10], 0);
-  assert.equal(jo[12], '정산 제외 대상');
+  assert.equal(jo[15], '정산 제외 대상');
+  assert.equal(jo[13], 0, '제외 대상은 대기 금액도 0');
   const sum = summary.reduce((s, r) => s + r[10], 0);
   assert.equal(total[10], sum);
   assert.equal(total[1], 5); // 참여 토큰 기준 PT
@@ -45,4 +46,25 @@ test('분기정산 금액 — 정산요청된 건만 (분기정산 화면 기준
   assert.equal(kim[11], calculateSettlementAmount(req[0], '김성민').amount);
   assert.equal(kim[10], kim[11] * 2);
   assert.equal(total[11], kim[11]);
+});
+
+test('공고 확정 대기 — 금액 있고 공고 근거 없고 대상 아닌 건만, 분기정산 금액과 겹치지 않음', () => {
+  const rows = [
+    { id: 'r', date: '2026-07-10', siteName: '요청됨', ptAssignee: '김성민', result: '승', settlement: { 김성민: { requested: true } } },  // 대상 → 대기 아님
+    { id: 'n', date: '2026-07-11', siteName: '대기', ptAssignee: '김성민', result: '승', announcementRecheck: { reason: 'jandi_document_not_found' } },
+    { id: 'k', date: '2026-07-12', siteName: 'K확인', ptAssignee: '김성민', result: '무', kaptVerified: { status: 'verified' } },        // 근거 K-APT
+    { id: 'e', date: '2026-07-13', siteName: '잔디', ptAssignee: '정정훈', result: '승', evidenceFiles: { f: { filename: 'x' } } },     // 근거 잔디
+    { id: 'l', date: '2026-07-14', siteName: '패', ptAssignee: '정정훈', result: '패' },                                                  // 금액 0
+  ];
+  const { detail, summary, total, pending } = buildPerformanceRows(rows, '2026-Q3');
+  assert.deepEqual(pending.map(r => r[1]), ['대기']);
+  assert.equal(pending[0][9], '잔디 공고문 못 찾음');
+  // 요청된 건은 근거가 없어도 대기 목록엔 안 들어감(이미 분기정산 금액에 포함) — 칸에는 미확인으로 표시
+  assert.deepEqual(detail.map(r => r[15]), ['미확인 · 정산요청됨', '대기', 'K-APT', '잔디 공고문', '']);
+  const kim = summary.find(r => r[0] === '김성민');
+  assert.equal(kim[12], 1);
+  assert.equal(kim[13], 500000);
+  assert.equal(kim[14], kim[11] + kim[13]);
+  assert.equal(total[13], 500000);
+  assert.ok(summary.every(r => r.length === SUMMARY_HEADER.length) && detail.every(r => r.length === DETAIL_HEADER.length));
 });
