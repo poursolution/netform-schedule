@@ -90,6 +90,23 @@
 `ptAssignee` 문자열의 첫 번째 토큰 (`/`, `,`, `+`, `&` 구분자 기준).  
 예: `"한준엽/조재연"` → 주담 = 한준엽, 지원 = 조재연.
 
+### 5.1 PT 결과 예외 승인 (2026-11-01 확정)
+
+담당자가 **영업적 승리**(`tie_to_win`, 입찰은 무였으나 영업 조건으로 승) 또는 **공고문 없는 현장**(`no_bid_to_win`, 교회·일반건물 등 K-APT 공고 없음)을 신청하고 관리자가 승인하면:
+
+| 항목 | 처리 |
+|---|---|
+| 결과 | 그 담당자 결과를 **'승'으로 계산** (`exceptionRequests.{a}.status === 'approved'`). 저장된 원래 결과는 그대로 둠 — 보고서에 "원래 무" 표시 |
+| 금액 | **승 규칙 그대로** — 단독 PT 500,000원, 여러 명 PT 250,000원(승 분할 규칙) |
+| 지원자 | 지원자 본인의 예외 승인 → 주담 '무'여도 지원 인정 250,000원 (§5) |
+| 제외 우선 | 협약사 자체PT·본인영업·정산예외·취소공고는 승인돼도 0원 (§4가 먼저) |
+| 검증 | 관리자가 근거를 보고 승인한 것이므로 K-APT 검증 통과로 봄 (§7) |
+| 정산 상태 | 승인 즉시 `requested`(정산 대상) + `manualVerified` 저장. 이미 확정·지급된 건은 상태를 바꾸지 않음 |
+| 거절 | 검토 메모 필수, 원래 결과 유지 |
+| 알림 | 담당자 개인 잔디(없으면 관리자 채널) + 활동 로그 `exception_approved` / `exception_rejected` |
+
+계산 위치: 앱 `src/utils/settlement.js` `isWinExceptionApproved` · Worker `cloudflare-worker/src/index.js` `isWinExceptionApprovedWorker` (같은 규칙 — `tests/exceptions.test.js` 가 둘을 함께 검사).
+
 ---
 
 ## 6. 정산 상태 모델 (6단계)
@@ -116,6 +133,7 @@
 - **K-APT 자동 검증 성공** — `kaptVerified.status === 'verified'`
 - **잔디 공고문 파일 매칭** — `pt.evidenceFiles` 에 파일 1개 이상
 - **관리자 수동 승인** — `settlement.{a}.manualVerified === true`
+- **PT 결과 예외 승인** — `exceptionRequests.{a}.status === 'approved'` (§5.1)
 - **감리 공종** — `workType` 또는 `siteName` 에 "감리" 포함 (자동 예외)
 - **K-APT 취소공고 확인** — `kaptVerified.status === 'cancelled'` (제외로 분류)
 

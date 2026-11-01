@@ -57,15 +57,26 @@ function parseUniqueAssignees(value) {
 // ===== 결과 파생 =====
 
 /**
+ * 관리자가 승인한 PT 결과 예외(영업적 승리·공고문 없는 현장) — OPERATIONS.md §예외 승인
+ *  승인되면 그 담당자 결과는 '승'으로 본다(저장된 원래 결과는 그대로 둠 — 보고서에 "원래 무" 표시용).
+ *  관리자가 근거를 보고 승인한 것이라 K-APT 검증도 통과로 본다.
+ */
+export function isWinExceptionApproved(pt, assignee) {
+  return pt?.exceptionRequests?.[assignee]?.status === 'approved';
+}
+
+/**
  * 참여자별 실제 결과 파생 (지원 규칙 포함)
  *  - 지원자인데 주담 '패' → '패' (제외 대상)
  *  - 지원자인데 주담 '무' → '제외' (관리자 예외승인 있을 때만 '지원' 인정)
  *  - 지원자인데 주담 '승' → '지원'
  *  - 주담당자 본인은 results[주담] 그대로
+ *  - 본인 예외가 승인됐으면 '승' (지원자는 위 지원 규칙에서 예외승인 → '지원')
  */
 export function deriveAssigneeResult(pt, assignee, opts = {}) {
   if (!pt || !assignee) return null;
-  const exceptionApproved = !!opts.exceptionApproved;
+  const winApproved = isWinExceptionApproved(pt, assignee);
+  const exceptionApproved = !!opts.exceptionApproved || winApproved;
 
   // 감리 건 판별 — 감리는 승패 무관 건당 80k
   const isSupervisionPt = /감리/.test((pt.workType || '') + '|' + (pt.siteName || ''));
@@ -90,6 +101,7 @@ export function deriveAssigneeResult(pt, assignee, opts = {}) {
     return null;
   }
 
+  if (winApproved) return '승';
   return raw;
 }
 
@@ -204,7 +216,7 @@ export function getSettlementStatus(pt, assignee) {
   if (stl.confirmed || stl.status === SETTLEMENT_STATUS.CONFIRMED) return SETTLEMENT_STATUS.CONFIRMED;
 
   // K-APT 검증 상태 — needs_review 이면 검토필요
-  if (pt.kaptVerified?.status === 'needs_review' && !stl.reviewBypassedBy) {
+  if (pt.kaptVerified?.status === 'needs_review' && !stl.reviewBypassedBy && !isWinExceptionApproved(pt, assignee)) {
     // 잔디 공고문이 있으면 검토 통과로 간주
     const hasJandiEvidence = pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0;
     if (!hasJandiEvidence) return SETTLEMENT_STATUS.NEEDS_REVIEW;
@@ -244,7 +256,7 @@ export function isSettlementEligible(pt, assignee, targetMonth = null) {
   const verified = kvStatus === 'verified';
   const hasJandiEvidence = pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0;
   const stl = pt.settlement?.[assignee] || {};
-  const manualApproved = !!(stl.reviewBypassedBy || stl.manualVerified);
+  const manualApproved = !!(stl.reviewBypassedBy || stl.manualVerified || isWinExceptionApproved(pt, assignee));
   // 감리는 공고문 불필요
   const isSupervision = /감리/.test((pt.workType || '') + '|' + (pt.siteName || ''));
 
@@ -365,7 +377,7 @@ export function shouldAutoTransitionToTarget(pt, assignee) {
 
   const verified = pt.kaptVerified?.status === 'verified';
   const hasEvidence = pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0;
-  return verified || hasEvidence;
+  return verified || hasEvidence || isWinExceptionApproved(pt, assignee);
 }
 
 /**

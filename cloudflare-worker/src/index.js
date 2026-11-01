@@ -2605,9 +2605,15 @@ function getPayrollMonthByQuarterKey(quarterKey) {
   return `${y}-${String(m).padStart(2, '0')}`;
 }
 
+// 관리자 예외 승인(영업적 승리·공고문 없는 현장) → 결과 '승' (client settlement.js isWinExceptionApproved 와 같음)
+function isWinExceptionApprovedWorker(pt, assignee) {
+  return pt?.exceptionRequests?.[assignee]?.status === 'approved';
+}
+
 // pt·assignee 조합에 대한 결과 파생 (client settlement.js 와 동일한 규칙)
 export function deriveResultWorker(pt, assignee) {
   if (!pt || !assignee) return null;
+  const winApproved = isWinExceptionApprovedWorker(pt, assignee);
   let raw = null;
   if (pt.results && pt.results[assignee] !== undefined) raw = pt.results[assignee];
   else {
@@ -2621,11 +2627,12 @@ export function deriveResultWorker(pt, assignee) {
   if (raw === '지원' && main && assignee !== main) {
     const mainResult = pt.results?.[main] || pt.result;
     if (mainResult === '승') return '지원';
-    if (mainResult === '무') return '제외';
+    if (mainResult === '무') return winApproved ? '지원' : '제외';
     if (mainResult === '패') return '패';
     if (mainResult === '지원') return '지원';
     return null;
   }
+  if (winApproved) return '승';
   return raw;
 }
 
@@ -2781,7 +2788,8 @@ async function runQuarterlySettlementIfLastMonday(env, opts = {}) {
       // 검토필요: K-APT needs_review 이고 증빙 없음
       const needsReview = pt.kaptVerified?.status === 'needs_review'
         && !(pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0)
-        && stl.manualVerified !== true;
+        && stl.manualVerified !== true
+        && !isWinExceptionApprovedWorker(pt, assignee);
       if (needsReview) agg.reviewCount++;
       agg.estimatedAmount += calc.amount;
       if (calc.result === '승') agg.winCount++;
