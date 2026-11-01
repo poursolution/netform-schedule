@@ -108,7 +108,10 @@ export default function PerformanceWorkbench({
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 60000); return () => clearInterval(t); }, []);
   const today = todayKey(now);
   // 기본은 이번 분기 — 오늘 PT가 바로 보이게. 지난 분기 마감 작업은 분기정산 화면에서 그 분기로 넘어온다
-  const [quarterKey, setQuarterKey] = useState(initialQuarterKey || getQuarterKey());
+  // 보기 기간 — 기본 '전체'(전 기간 실적), 분기를 고르면 그 분기만. 정산 카드·분기정산·엑셀은 분기가 필요하므로
+  //   '전체'일 땐 이번 분기(quarterKey)를 쓴다. 분기정산 화면에서 넘어오면 그 분기로 시작.
+  const [period, setPeriod] = useState(initialQuarterKey || 'all');
+  const quarterKey = period === 'all' ? getQuarterKey() : period;
   const [tab, setTab] = useState('sites');
   const [filter, setFilter] = useState(initialFilter || 'all');
   const [who, setWho] = useState(initialWho || '전체');
@@ -146,19 +149,21 @@ export default function PerformanceWorkbench({
   const compact = listW < 720;                                 // 표 칸 대신 두 줄 행
 
   const meta = useMemo(() => quarterMeta(quarterKey), [quarterKey]);
-  const qPts = useMemo(() => quarterPts(ptSchedules || [], quarterKey), [ptSchedules, quarterKey]);
+  const qPts = useMemo(() => quarterPts(ptSchedules || [], period), [ptSchedules, period]);
+  const stlPts = useMemo(() => quarterPts(ptSchedules || [], quarterKey), [ptSchedules, quarterKey]); // 정산 카드는 늘 분기 기준
   const minuteKey = `${today} ${now.getHours()}:${now.getMinutes()}`;
   const allRows = useMemo(() => qPts.map(pt => buildRow(pt, today, now)), [qPts, minuteKey]); // eslint-disable-line react-hooks/exhaustive-deps
   // 지난 분기에서 결과 미입력·검토필요로 남은 건도 목록·처리 대기에 함께 (분기 KPI·정산 집계에는 넣지 않음)
-  const carryRows = useMemo(() => ptsBeforeQuarter(ptSchedules || [], quarterKey)
-    .map(pt => ({ ...buildRow(pt, today, now), carry: true })).filter(isCarryover), [ptSchedules, quarterKey, minuteKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // '전체'면 이전 분기 이월 없음(이미 전부 목록에 있음)
+  const carryRows = useMemo(() => (period === 'all' ? [] : ptsBeforeQuarter(ptSchedules || [], period))
+    .map(pt => ({ ...buildRow(pt, today, now), carry: true })).filter(isCarryover), [ptSchedules, period, minuteKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const listRows = useMemo(() => [...allRows, ...carryRows], [allRows, carryRows]);
   const searched = useMemo(() => listRows.filter(r => matchesSearch(r, search)), [listRows, search]);
   const byWho = useMemo(() => searched.filter(r => matchesWho(r, who)), [searched, who]);
   const [sortMode, setSortMode] = useState('date');
   const rows = useMemo(() => (sortMode === 'priority' ? sortByPriority : sortByDate)(byWho.filter(FILTERS[filter] || FILTERS.all)), [byWho, filter, sortMode]);
   const k = useMemo(() => kpis(allRows), [allRows]);
-  const targets = useMemo(() => settlementTargets(qPts), [qPts]);
+  const targets = useMemo(() => settlementTargets(stlPts), [stlPts]);
   const staff = useMemo(() => staffStats(qPts, assigneeNames || []), [qPts, assigneeNames]);
   const queueCount = {
     review: listRows.filter(FILTERS.review).length,
@@ -230,6 +235,7 @@ export default function PerformanceWorkbench({
   const filterDefs = [['all', '전체'], ['win', '승'], ['draw', '무'], ['loss', '패'], ['sup', '지원 포함'], ['pending', '미입력'], ...(carryRows.length ? [['carry', '이전 분기 미확인']] : [])];
 
   const qLabel = meta ? `Q${meta.quarter}` : '';
+  const periodLabel = period === 'all' ? '전체' : qLabel; // 목록·담당자 비교 범위
   const ddayRed = meta && meta.dday !== null && meta.dday <= 7;
 
   return (
@@ -261,10 +267,11 @@ export default function PerformanceWorkbench({
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, height: 64, padding: '0 28px', background: '#fff', borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 20 }}>
           <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, letterSpacing: '-.02em', whiteSpace: 'nowrap' }}>실적</h1>
           <label style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }} htmlFor="wb-quarter">분기</label>
-          <select id="wb-quarter" value={quarterKey} onChange={e => { setQuarterKey(e.target.value); setChecked({}); }} style={{ height: 32, padding: '0 10px', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', flex: 'none' }}>
+          <select id="wb-quarter" value={period} onChange={e => { setPeriod(e.target.value); setChecked({}); }} style={{ height: 32, padding: '0 10px', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', flex: 'none' }}>
+            <option value="all">전체</option>
             {quarterOptions().map(q => <option key={q} value={q}>{q.replace('-', ' ')}</option>)}
           </select>
-          {meta && <span style={{ fontSize: 12, color: C.text4, whiteSpace: 'nowrap' }}>마감 {meta.closingText} · <b style={{ color: ddayRed ? '#b91c1c' : C.text3, fontWeight: 700 }}>{meta.ddayText}</b></span>}
+          {meta && <span style={{ fontSize: 12, color: C.text4, whiteSpace: 'nowrap' }}>{period === 'all' ? `${quarterKey.replace('-', ' ')} ` : ''}마감 {meta.closingText} · <b style={{ color: ddayRed ? '#b91c1c' : C.text3, fontWeight: 700 }}>{meta.ddayText}</b></span>}
           <div style={{ flex: 1 }} />
           <label style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }} htmlFor="wb-search">현장·담당자 검색</label>
           <input id="wb-search" ref={searchRef} value={search} onChange={e => setSearch(e.target.value)} placeholder="현장·담당자 검색 ( / )" style={{ height: 34, width: 220, minWidth: 0, padding: '0 12px', border: `1px solid ${C.line}`, borderRadius: 8, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }} />
@@ -342,7 +349,7 @@ export default function PerformanceWorkbench({
               <button type="button" role="tab" aria-selected={tab === 'staff'} onClick={() => setTab('staff')} style={tabBtn('staff')}>담당자 비교</button>
               <button type="button" role="tab" aria-selected={tab === 'stl'} onClick={() => setTab('stl')} style={tabBtn('stl')}>정산 현황</button>
               <div style={{ flex: 1 }} />
-              <span style={{ fontSize: 12, color: C.text4, padding: '6px 0' }}>표시 {rows.length}건 · {qLabel} {allRows.length}건{carryRows.length ? ` + 이전 분기 미확인 ${carryRows.length}건` : ''}</span>
+              <span style={{ fontSize: 12, color: C.text4, padding: '6px 0' }}>표시 {rows.length}건 · {periodLabel} {allRows.length}건{carryRows.length ? ` + 이전 분기 미확인 ${carryRows.length}건` : ''}</span>
             </div>
 
             {tab === 'sites' && (
@@ -392,7 +399,7 @@ export default function PerformanceWorkbench({
             )}
             {tab === 'staff' && !compact && (
               <div style={{ display: 'grid', gridTemplateColumns: STAFF_GRID, columnGap: 8, padding: '8px 16px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}`, whiteSpace: 'nowrap' }}>
-                <span>담당자</span><span style={{ textAlign: 'right' }}>승</span><span style={{ textAlign: 'right' }}>무</span><span style={{ textAlign: 'right' }}>패</span><span style={{ textAlign: 'right' }}>진행</span><span>승률 · 승/무/패 비율</span><span style={{ textAlign: 'right' }}>검토필요</span><span style={{ textAlign: 'right' }}>{qLabel} 정산예상</span><span style={{ textAlign: 'right' }}>확인</span>
+                <span>담당자</span><span style={{ textAlign: 'right' }}>승</span><span style={{ textAlign: 'right' }}>무</span><span style={{ textAlign: 'right' }}>패</span><span style={{ textAlign: 'right' }}>진행</span><span>승률 · 승/무/패 비율</span><span style={{ textAlign: 'right' }}>검토필요</span><span style={{ textAlign: 'right' }}>{periodLabel} 정산예상</span><span style={{ textAlign: 'right' }}>확인</span>
               </div>
             )}
             </div>
@@ -426,7 +433,7 @@ export default function PerformanceWorkbench({
                 <div style={compact ? { minWidth: 680 } : undefined}>
                 {compact && (
                   <div style={{ display: 'grid', gridTemplateColumns: STAFF_GRID, columnGap: 8, padding: '8px 16px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}`, whiteSpace: 'nowrap' }}>
-                    <span>담당자</span><span style={{ textAlign: 'right' }}>승</span><span style={{ textAlign: 'right' }}>무</span><span style={{ textAlign: 'right' }}>패</span><span style={{ textAlign: 'right' }}>진행</span><span>승률 · 승/무/패 비율</span><span style={{ textAlign: 'right' }}>검토필요</span><span style={{ textAlign: 'right' }}>{qLabel} 정산예상</span><span style={{ textAlign: 'right' }}>확인</span>
+                    <span>담당자</span><span style={{ textAlign: 'right' }}>승</span><span style={{ textAlign: 'right' }}>무</span><span style={{ textAlign: 'right' }}>패</span><span style={{ textAlign: 'right' }}>진행</span><span>승률 · 승/무/패 비율</span><span style={{ textAlign: 'right' }}>검토필요</span><span style={{ textAlign: 'right' }}>{periodLabel} 정산예상</span><span style={{ textAlign: 'right' }}>확인</span>
                   </div>
                 )}
                 {staff.map(s => {
