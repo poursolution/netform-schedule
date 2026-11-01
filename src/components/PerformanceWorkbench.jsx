@@ -6,6 +6,7 @@ import {
 } from '../utils/workbench.js';
 import AppSidebar from './AppSidebar.jsx';
 import EmptyArt from './EmptyArt.jsx';
+import { downloadPerformanceXlsx } from '../utils/performanceExport.js';
 import { calculateSettlementAmount, deriveAssigneeResult, getQuarterKey } from '../utils/settlement.js';
 
 // 실적 작업대 (#2a) — 디자인 핸드오프 design_handoff_pour_sales_ops 기준.
@@ -254,7 +255,13 @@ export default function PerformanceWorkbench({
           <div style={{ position: 'relative' }}>
             <button type="button" aria-expanded={exportOpen} onClick={() => setExportOpen(o => !o)} style={secondaryBtn()}>내보내기 ▾</button>
             {exportOpen && (
-              <div role="menu" style={{ position: 'absolute', right: 0, top: 38, zIndex: 30, background: '#fff', border: `1px solid ${C.line}`, borderRadius: 10, padding: 4, minWidth: 160, boxShadow: '0 8px 24px rgba(15,23,42,.12)' }}>
+              <div role="menu" style={{ position: 'absolute', right: 0, top: 38, zIndex: 30, background: '#fff', border: `1px solid ${C.line}`, borderRadius: 10, padding: 4, minWidth: 200, boxShadow: '0 8px 24px rgba(15,23,42,.12)' }}>
+                {/* 마감 확인용 — 분기정산과 같은 계산으로 담당자별 요약·상세 2시트 */}
+                <button type="button" role="menuitem" onClick={() => { setExportOpen(false); downloadPerformanceXlsx(ptSchedules || [], quarterKey).catch(e => alert('엑셀을 만들지 못했어요: ' + e.message)); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 0, background: 'transparent', borderRadius: 7, fontSize: 13, color: C.text, cursor: 'pointer', fontFamily: 'inherit' }}>
+                  <b>엑셀 (.xlsx)</b>
+                  <span style={{ display: 'block', fontSize: 11.5, color: C.text4, marginTop: 1 }}>{quarterKey.replace('-', ' ')} 담당자별 요약 · 상세</span>
+                </button>
+                <div style={{ height: 1, background: C.line, margin: '4px 6px' }} />
                 {(exportActions || []).map(a => (
                   <button key={a.key} type="button" role="menuitem" onClick={() => { setExportOpen(false); a.onClick(quarterKey); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 0, background: 'transparent', borderRadius: 7, fontSize: 13, color: C.text, cursor: 'pointer', fontFamily: 'inherit' }}>{a.label}</button>
                 ))}

@@ -10543,8 +10543,8 @@ const SETTLEMENT_BADGE_STYLE = {
                         initialQuarterKey={perfInit.quarterKey}
                         onOpenQuarterSettlement={canSettle ? openSettlement : undefined}
                         exportActions={[
-                          { key: 'excel', label: 'Excel', onClick: q => exportQuarterlyExcel(+q.slice(0, 4), qNum(q), 'all') },
-                          { key: 'excel-noamt', label: 'Excel (금액 제외)', onClick: q => exportQuarterlyExcel(+q.slice(0, 4), qNum(q), 'all', false) },
+                          { key: 'excel', label: 'CSV (예전 보고서)', onClick: q => exportQuarterlyExcel(+q.slice(0, 4), qNum(q), 'all') },
+                          { key: 'excel-noamt', label: 'CSV (금액 제외)', onClick: q => exportQuarterlyExcel(+q.slice(0, 4), qNum(q), 'all', false) },
                           { key: 'pdf', label: 'PDF', onClick: q => exportToPDF(+q.slice(0, 4), qNum(q)) },
                           { key: 'ppt', label: 'PPT', onClick: q => exportToPPT(+q.slice(0, 4), qNum(q)) },
                         ]}
