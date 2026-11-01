@@ -28,8 +28,21 @@ test('금액은 settlement.js 계산 그대로, 제외 대상은 합계에서 �
   assert.ok(summary.every(r => r.length === SUMMARY_HEADER.length));
   const jo = summary.find(r => r[0] === '조현식');
   assert.equal(jo[10], 0);
-  assert.equal(jo[11], '정산 제외 대상');
+  assert.equal(jo[12], '정산 제외 대상');
   const sum = summary.reduce((s, r) => s + r[10], 0);
   assert.equal(total[10], sum);
   assert.equal(total[1], 5); // 참여 토큰 기준 PT
+});
+
+test('분기정산 금액 — 정산요청된 건만 (분기정산 화면 기준)', () => {
+  const req = [
+    { id: 'r', date: '2026-07-10', siteName: 'R단지', ptAssignee: '김성민', result: '승', settlement: { 김성민: { requested: true } } },
+    { id: 'n', date: '2026-07-11', siteName: 'N단지', ptAssignee: '김성민', result: '승' },
+  ];
+  const { detail, summary, total } = buildPerformanceRows(req, '2026-Q3');
+  assert.deepEqual(detail.map(r => r[14]), ['O', '']);
+  const kim = summary.find(r => r[0] === '김성민');
+  assert.equal(kim[11], calculateSettlementAmount(req[0], '김성민').amount);
+  assert.equal(kim[10], kim[11] * 2);
+  assert.equal(total[11], kim[11]);
 });
