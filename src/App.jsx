@@ -41,10 +41,15 @@ import { aggregateQuarterSettlement, isQuarterSettlementTarget, settlementRowsOf
 import { buildVerificationOnResultClick, VERIFICATION_STATUS } from './utils/verification.js';
 import { hasFullDataViewAccess } from './utils/accessControl.js';
 
+// 지금 정산하는 분기 = 오늘이 속한 분기의 바로 전 분기 (11월이면 Q3, 1월이면 Q4)
+const settlingQuarterKey = (d = new Date()) => {
+  const q = Math.floor(d.getMonth() / 3) + 1;
+  return q === 1 ? `${d.getFullYear() - 1}-Q4` : `${d.getFullYear()}-Q${q - 1}`;
+};
 const getQuarterSettlementOptions = (quarterKey) => ({
-  // 이전 분기에 정산요청됐지만 아직 지급완료되지 않은 건은
-  // 지급될 때까지 현재 분기 정산에 이월한다.
-  includeLegacyCarryover: /^\d{4}-Q[1-4]$/.test(String(quarterKey || '')),
+  // 이전 분기에 정산요청됐지만 아직 지급완료되지 않은 건은 지급될 때까지 '지금 정산하는 분기'에만 이월한다.
+  //   (예전엔 모든 뒤 분기에 이월돼 Q3 건이 진행 중인 Q4 목록에도 같이 떠서, Q4에서 완료 처리하면 Q3에서 사라졌음)
+  includeLegacyCarryover: /^\d{4}-Q[1-4]$/.test(String(quarterKey || '')) && quarterKey === settlingQuarterKey(),
 });
 
 // 운영 화면에서는 숨기되 기능 코드는 유지한다. 필요 시 한 곳만 바꿔 다시 노출 가능.
