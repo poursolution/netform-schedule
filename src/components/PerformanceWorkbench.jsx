@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildRow, FILTERS, matchesWho, matchesSearch, sortByPriority, sortByDate, kpis,
-  settlementTargets, staffStats, quarterPts, quarterMeta, formatWon, mmdd, todayKey,
+  settlementTargets, staffStats, quarterPts, quarterMeta, formatWon, todayKey,
   settlementStep, SETTLEMENT_STEPS, kaptCandidateText, ptsBeforeQuarter, isCarryover, quarterLabelOf,
 } from '../utils/workbench.js';
 import AppSidebar from './AppSidebar.jsx';
@@ -60,8 +60,8 @@ const card = { background: '#fff', border: `1px solid ${C.line}`, borderRadius: 
 const dot = (bg, r = '50%') => ({ width: 7, height: 7, borderRadius: r, background: bg, flex: 'none' });
 
 // 넓은 화면에선 현장 칸만 늘지 않도록 남는 폭을 오른쪽 칸들에도 나눈다
-const GRID = '24px 52px minmax(180px, 2.6fr) minmax(84px, 1fr) minmax(56px, .8fr) minmax(76px, 1fr) minmax(76px, 1fr) minmax(78px, 1fr)';
-const GRID_COMPACT = '24px 44px minmax(0, 1fr) 56px auto';
+const GRID = '24px 80px minmax(180px, 2.6fr) minmax(84px, 1fr) minmax(56px, .8fr) minmax(76px, 1fr) minmax(76px, 1fr) minmax(78px, 1fr)';
+const GRID_COMPACT = '24px 60px minmax(0, 1fr) 56px auto';
 const STAFF_GRID ='68px 40px 40px 40px 44px minmax(120px,1fr) 64px 92px 76px';
 
 
@@ -554,7 +554,7 @@ function SiteRow({ r, compact, selected, checked, today, onSelect, onCheck }) {
       <div onClick={onSelect} style={{ display: 'grid', gridTemplateColumns: GRID_COMPACT, columnGap: 12, alignItems: 'center', padding: '9px 14px', borderBottom: `1px solid ${C.line2}`, cursor: 'pointer', background: selected ? C.active : checked ? C.muted : '#fff', boxShadow: selected ? `inset 3px 0 0 ${C.brand}` : 'none' }}>
         <input type="checkbox" aria-label={`${pt.siteName || ''} 선택`} checked={checked} onClick={e => e.stopPropagation()} onChange={onCheck} style={{ margin: 0, width: 14, height: 14 }} />
         <span style={{ fontSize: 12, color: C.text3 }}>
-          {mmdd(r.date)}
+          {ymd(r.date, true)}
           {r.carry && <span title="지난 분기 PT — 아직 확인이 안 끝남" style={{ display: 'block', width: 'fit-content', marginTop: 2, padding: '0 4px', borderRadius: 4, background: '#fef3c7', color: '#b45309', fontSize: 11, fontWeight: 700 }}>{quarterLabelOf(r.date)}</span>}
         </span>
         <div style={{ minWidth: 0 }}>
@@ -576,7 +576,7 @@ function SiteRow({ r, compact, selected, checked, today, onSelect, onCheck }) {
     <div onClick={onSelect} style={{ display: 'grid', gridTemplateColumns: GRID, columnGap: 12, alignItems: 'center', padding: '9px 14px', borderBottom: `1px solid ${C.line2}`, cursor: 'pointer', background: selected ? C.active : checked ? C.muted : '#fff', boxShadow: selected ? `inset 3px 0 0 ${C.brand}` : 'none' }}>
       <input type="checkbox" aria-label={`${pt.siteName || ''} 선택`} checked={checked} onClick={e => e.stopPropagation()} onChange={onCheck} style={{ margin: 0, width: 14, height: 14 }} />
       <span style={{ fontSize: 12, color: C.text3 }}>
-        {mmdd(r.date)}
+        {ymd(r.date)}
         {r.carry && <span title="지난 분기 PT — 아직 확인이 안 끝남" style={{ display: 'block', width: 'fit-content', marginTop: 2, padding: '0 4px', borderRadius: 4, background: '#fef3c7', color: '#b45309', fontSize: 11, fontWeight: 700 }}>{quarterLabelOf(r.date)}</span>}
       </span>
       <div style={{ minWidth: 0, paddingRight: 10 }}>
@@ -623,7 +623,7 @@ function DetailPanel({ panelRef, stacked, row, memo, setMemo, memoSaved, canMemo
   const stepIdx = settlementStep(row);
   const steps = SETTLEMENT_STEPS.map((label, i) => {
     const done = i < stepIdx, cur = i === stepIdx, warn = cur && i === 1 && row.isReview;
-    const metaText = done && i === 0 ? mmdd(String(pt.resultConfirmDate?.[row.main] || row.date).slice(0, 10))
+    const metaText = done && i === 0 ? ymd(String(pt.resultConfirmDate?.[row.main] || row.date).slice(0, 10), true)
       : warn ? '처리 필요' : cur && i === 2 ? '담당자 체크 대기' : '';
     return { label, done, cur, warn, metaText };
   });
@@ -720,7 +720,7 @@ function DetailPanel({ panelRef, stacked, row, memo, setMemo, memoSaved, canMemo
             <div style={{ fontSize: 12, fontWeight: 600, color: C.text3, marginBottom: 6 }}>활동 로그</div>
             {logs.map((lg, i) => (
               <div key={i} style={{ display: 'flex', gap: 10, fontSize: 12, padding: '4px 0' }}>
-                <span style={{ color: C.text4, flex: 'none', width: 84 }}>{lg.t}</span>
+                <span style={{ color: C.text4, flex: 'none', width: 104 }}>{lg.t}</span>
                 <span style={{ flex: 1 }}>{lg.what}</span>
                 <span style={{ color: C.text4 }}>{lg.by}</span>
               </div>
@@ -748,10 +748,17 @@ function DetailPanel({ panelRef, stacked, row, memo, setMemo, memoSaved, canMemo
   );
 }
 
+// 연도까지 — 지난 분기·지난 해 PT가 섞여 보이므로 일자에 연도를 붙인다. short 면 2자리 연도.
+function ymd(date, short = false) {
+  const s = String(date || '');
+  if (!/^\d{4}-\d{2}-\d{2}/.test(s)) return s;
+  return `${short ? s.slice(2, 4) : s.slice(0, 4)}.${s.slice(5, 7)}.${s.slice(8, 10)}`;
+}
+
 function fmtTs(iso) {
   if (!iso) return '';
   const s = String(iso);
-  const d = s.slice(5, 10).replace('-', '/');
+  const d = ymd(s.slice(0, 10), true);
   const t = s.length > 11 ? s.slice(11, 16) : '';
   return `${d} ${t}`.trim();
 }
