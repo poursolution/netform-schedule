@@ -236,8 +236,9 @@ export default function SettlementPage({
                       {menuFor === a && (
                         <span role="menu" style={{ position: 'absolute', right: 0, top: 32, zIndex: 30, background: '#fff', border: `1px solid ${C.line}`, borderRadius: 10, padding: 4, minWidth: 170, boxShadow: '0 8px 24px rgba(15,23,42,.12)', display: 'flex', flexDirection: 'column' }}>
                           {(r.status || 'draft') === 'draft' && <button type="button" role="menuitem" onClick={() => { setMenuFor(null); updateRowStatus(a, 'confirmed'); }} style={{ ...link, padding: '8px 10px', textAlign: 'left', fontSize: 13 }}>확정 처리</button>}
-                          {r.status === 'confirmed' && <button type="button" role="menuitem" onClick={() => { setMenuFor(null); updateRowStatus(a, 'completed'); }} style={{ ...link, padding: '8px 10px', textAlign: 'left', fontSize: 13 }}>완료 처리</button>}
-                          {r.status === 'completed' && <button type="button" role="menuitem" onClick={() => { setMenuFor(null); if (window.confirm('완료 상태를 다시 확정으로 되돌립니다. 진행?')) updateRowStatus(a, 'confirmed'); }} style={{ ...link, padding: '8px 10px', textAlign: 'left', fontSize: 13 }}>확정으로 되돌리기</button>}
+                          {r.status === 'confirmed' && !(r.items || []).every(it => ptById[it.ptId]?.settlement?.[a]?.completed === true) && <button type="button" role="menuitem" onClick={() => { setMenuFor(null); updateRowStatus(a, 'completed'); }} style={{ ...link, padding: '8px 10px', textAlign: 'left', fontSize: 13 }}>완료 처리</button>}
+                          {/* 상태 칸이 초안이어도 이 분기에 완료된 PT가 있으면 되돌릴 수 있게 — 되돌리면 PT 날짜 분기(지금 정산 분기)로 돌아감 */}
+                          {(r.status === 'completed' || (r.items || []).some(it => ptById[it.ptId]?.settlement?.[a]?.completed === true)) && <button type="button" role="menuitem" onClick={() => { setMenuFor(null); if (window.confirm(`${a} — 이 분기에 완료 처리된 건을 되돌립니다.\n되돌리면 미지급(확정) 상태로 돌아가 원래 분기 정산에 다시 보여요. 진행?`)) updateRowStatus(a, 'confirmed'); }} style={{ ...link, padding: '8px 10px', textAlign: 'left', fontSize: 13 }}>완료 되돌리기</button>}
                           <button type="button" role="menuitem" onClick={() => { setMenuFor(null); onGoAssignee(a, 'all'); }} style={{ ...link, padding: '8px 10px', textAlign: 'left', fontSize: 13 }}>실적 전체 보기</button>
                         </span>
                       )}
