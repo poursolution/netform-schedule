@@ -6355,7 +6355,8 @@ const SETTLEMENT_BADGE_STYLE = {
       };
 
       // ===== 새 화면 공통 셸(사이드바) — 실적 작업대·일정 화면 =====
-      const showScheduleWorkbench = !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && !useLegacySchedule;
+      // 담당자 계정도 같은 새 일정 화면(사이드바만 담당자용) — 예전엔 관리자·전체조회만이라 담당자는 이전 화면이 떴음
+      const showScheduleWorkbench = !isMobile && isLoggedIn && !!currentUser && !useLegacySchedule;
       const showMeetingsPage = showMeetingView && !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && !useLegacyMeetings;
       const showMainWorkbench = !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && !useLegacyMain;
       const shellSidebarProps = (active, onOpenLegacy) => {
@@ -9255,7 +9256,10 @@ const SETTLEMENT_BADGE_STYLE = {
                 roster={['조재연', '한준엽', '이필선', '정정훈', '김성민', '황윤선']}
                 assigneeOptions={assigneeList}
                 workTypeOptions={allWorkTypes}
-                sidebar={shellSidebarProps('schedule', () => setUseLegacySchedule(true))}
+                sidebar={hasFullDataViewAccess(currentUser)
+                  ? shellSidebarProps('schedule', () => setUseLegacySchedule(true))
+                  : (sp => ({ ...sp, nav: sp.nav.map(n => ({ ...n, active: n.key === 'schedule' })), onOpenLegacy: () => setUseLegacySchedule(true) }))(staffSidebarProps())}
+                initialWho={hasFullDataViewAccess(currentUser) ? 'all' : (assigneeList.includes(currentUser?.name) ? currentUser.name : 'all')}
                 initialView={scheduleInit.view || 'month'}
                 initialListFilter={scheduleInit.listFilter || 'upcoming'}
                 initialSearch={scheduleInit.search || ''}
@@ -9266,7 +9270,7 @@ const SETTLEMENT_BADGE_STYLE = {
                 me={currentUser?.name}
                 onOpen={handleEditClick}
                 briefDayCount={Math.min(7, Math.max(1, +morningBriefConfig.days || 2))}
-                onSendBrief={sendMorningBrief}
+                onSendBrief={hasFullDataViewAccess(currentUser) ? sendMorningBrief : undefined}
                 autoSend={!!morningBriefConfig.autoSend}
                 onToggleAutoSend={currentUser?.isAdmin ? toggleMorningBriefAuto : undefined}
               />
@@ -9280,7 +9284,7 @@ const SETTLEMENT_BADGE_STYLE = {
                   <button onClick={() => setUseLegacyMobileSchedule(false)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#0F4C75', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>새 일정 화면</button>
                 </div>
               )}
-              {useLegacySchedule && !isMobile && isLoggedIn && hasFullDataViewAccess(currentUser) && (
+              {useLegacySchedule && !isMobile && isLoggedIn && !!currentUser && (
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
                   <button onClick={() => setUseLegacySchedule(false)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#0F4C75', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>새 일정 화면</button>
                 </div>
