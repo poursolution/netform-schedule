@@ -148,8 +148,8 @@ test('다음 검토 건 — 다음 검토필요 행, 끝이면 처음, 혼자면
   assert.equal(nextReviewId(rows, 'y'), 'x');
   assert.equal(nextReviewId([{ id: 'x', isReview: true }], 'x'), null);
 });
-test('검토필요라도 정산요청을 걸면 검토필요 목록에서 빠지고 정산요청으로 잡힌다', () => {
-  const pt = { id: 'x', date: '2026-10-26', ptAssignee: '정정훈', results: { 정정훈: '승' }, kaptVerified: { status: 'needs_review' }, settlement: { 정정훈: { requested: true } } };
+test('검토필요라도 수동 승인 후 정산요청을 걸면 검토필요 목록에서 빠지고 정산요청으로 잡힌다', () => {
+  const pt = { id: 'x', date: '2026-10-26', ptAssignee: '정정훈', results: { 정정훈: '승' }, kaptVerified: { status: 'needs_review' }, settlement: { 정정훈: { requested: true, manualVerified: true } } };
   const row = buildRow(pt, TODAY);
   assert.equal(row.isReview, false);
   assert.equal(row.isRequested, true);
@@ -159,6 +159,18 @@ test('검토필요라도 정산요청을 걸면 검토필요 목록에서 빠지
   assert.equal(staffStats([pt], ['정정훈'])[0].review, 0);
   const plain = buildRow({ ...pt, settlement: {} }, TODAY);
   assert.equal(plain.isReview, true);
+});
+
+test('근거 없이 정산요청된 무 건은 검토필요로, 잔디 공고·수동 승인이 있으면 정산요청으로', () => {
+  const pt = { id: 'm', date: '2026-07-21', ptAssignee: '조재연', results: { 조재연: '무' }, settlement: { 조재연: { requested: true, status: 'requested' } } };
+  const row = buildRow(pt, TODAY);
+  assert.equal(row.isReview, true);
+  assert.equal(row.isRequested, false);
+  assert.equal(buildRow({ ...pt, evidenceFiles: { f1: { filename: 'a.hwp' } } }, TODAY).isRequested, true);
+  assert.equal(buildRow({ ...pt, settlement: { 조재연: { requested: true, manualVerified: true } } }, TODAY).isRequested, true);
+  assert.equal(buildRow({ ...pt, workType: '감리' }, TODAY).isReview, false, '감리는 근거 불필요');
+  assert.equal(buildRow({ ...pt, settlement: { 조재연: { requested: true } }, kaptVerified: { status: 'needs_review' } }, TODAY).isReview, true, '수동 승인 없이 정산요청만 걸면 검토필요');
+  assert.equal(buildRow({ ...pt, settlement: {} }, TODAY).isReview, false, '정산요청 전이면 미정산 그대로');
 });
 
 test('중복대체 건은 검토필요·정산요청에서 빠지고 제외 · 0원으로 보인다', () => {

@@ -3176,12 +3176,13 @@ const SETTLEMENT_BADGE_STYLE = {
           } catch (e) { console.warn('[verification] auto progress failed', e); }
         }
 
-        // === 결과 = 승 → 정산 프로세스 (스펙 #9, #10) ===
+        // === 결과 = 승·무 → 정산 프로세스 (스펙 #9, #10) ===
+        //   무도 25만 정산 대상이라 분기정산 검증 게이트(OPERATIONS §7)와 같게 공고 확인을 거친다
         //   #9 calculatedAmount 자동 저장 — 금액 · 제외사유 영구 기록
         //   #10 미검증 차단 — 검증 안 됐으면 requested 자동 세팅 skip, needs_review 유지
         //   감리/잔디증빙/K-APT verified 면 자동 requested 허용 (Q1·Q2 공통)
         //   K-APT 검증은 비동기 — 성공 시 콜백에서 자동 정산대상 전환
-        if (result === '승' && targetAssignee) {
+        if ((result === '승' || result === '무') && targetAssignee) {
           const combined = (updatedSchedule.workType || '') + '|' + (updatedSchedule.siteName || '');
           const isSupervisionPt = /감리/.test(combined);
           const hasJandiEvidence = updatedSchedule.evidenceFiles && Object.keys(updatedSchedule.evidenceFiles).length > 0;
@@ -3286,45 +3287,7 @@ const SETTLEMENT_BADGE_STYLE = {
           database.ref().update(deferredPt).catch(() => {});
         }
 
-        // === 무 결과 → 정산요청 confirm (스펙 #9 calculatedAmount 저장 추가) ===
-        if (result === '무' && targetAssignee) {
-          // #9 calculatedAmount 저장은 confirm 무관하게 항상
-          if (firebaseEnabled && database) {
-            database.ref(`pt/${scheduleId}/settlement/${targetAssignee}/calculatedAmount`).set(250000).catch(() => {});
-          }
-          setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), calculatedAmount: 250000 } } } : s));
-          setTimeout(() => {
-            if (window.confirm(`"${targetAssignee}" 정산요청하시겠습니까?`)) {
-              const nowISO = new Date().toISOString();
-              const settlementUpdate = {
-                [`settlement/${targetAssignee}/requested`]: true,
-                [`settlement/${targetAssignee}/requestedAt`]: nowISO,
-                [`settlement/${targetAssignee}/status`]: 'requested',
-              };
-              if (firebaseEnabled && database) {
-                database.ref(`pt/${scheduleId}`).update(settlementUpdate);
-              }
-              setPtSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, settlement: { ...(s.settlement || {}), [targetAssignee]: { ...(s.settlement?.[targetAssignee] || {}), requested: true, requestedAt: nowISO, status: 'requested' } } } : s));
-              notifySettlementRequest({
-                assignee: targetAssignee,
-                siteName: updatedSchedule.siteName,
-                bidNo: updatedSchedule.bidNo,
-                result: '무',
-                amount: 250000,
-                by: currentUser?.name,
-              });
-              // 송보람(정산 검토자) 개인 채널에도 동시 발송
-              notifySettlementReviewer({
-                assignee: targetAssignee,
-                siteName: updatedSchedule.siteName,
-                bidNo: updatedSchedule.bidNo,
-                result: '무',
-                amount: 250000,
-                by: currentUser?.name,
-              });
-            }
-          }, 300);
-        }
+        // 무도 위 승·무 공통 흐름에서 근거 확인 후 자동 정산요청 / 검토필요로 간다 (근거 없이 정산요청 묻던 confirm 제거)
       };
 
       // 관리자 크로스체크 메모 저장
