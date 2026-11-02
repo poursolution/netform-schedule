@@ -17,6 +17,7 @@ import {
   setKaptVerifyConfig,
   verifyKaptForPt,
   searchKaptCandidates,
+  kaptBidSearchUrl,
 } from './utils/kaptVerify.js';
 import {
   OUR_TECHNOLOGIES,
@@ -3993,7 +3994,7 @@ const SETTLEMENT_BADGE_STYLE = {
         }
         setKaptVerifyBidInput(pt.bidNo || '');
         setKaptVerifyModal({ stage: 'candidates-loading', scheduleId: pt.id, manager: main, siteName: pt.siteName, workType: pt.workType, date: pt.date, currentBidNo: pt.bidNo || '', candidates: [] });
-        const openKaptSearch = () => window.open(`https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(pt.siteName || '')}`, '_blank');
+        const openKaptSearch = () => window.open(kaptBidSearchUrl(pt.siteName, pt.date), '_blank');
         searchKaptCandidates({ siteName: pt.siteName, ptDate: pt.date, aliasMap: apartmentAliasMap })
           .then(({ candidates }) => {
             setKaptVerifyModal(m => m && m.scheduleId === pt.id ? ({ ...m, stage: (candidates && candidates.length > 0) ? 'candidates' : 'input', candidates: candidates || [] }) : m);
@@ -12321,14 +12322,12 @@ tr.suppressed td.fname{color:#64748b;}
                                                         }) : m);
                                                         // 후보 없을 때만 K-APT 새 탭 자동 오픈 (있으면 선택 후 건너뜀)
                                                         if (!candidates || candidates.length === 0) {
-                                                          const kaptSearchUrl = `https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(card.siteName || '')}`;
-                                                          window.open(kaptSearchUrl, '_blank');
+                                                          window.open(kaptBidSearchUrl(card.siteName, card.date), '_blank');
                                                         }
                                                       })
                                                       .catch(() => {
                                                         setKaptVerifyModal(m => m && m.scheduleId === card.id ? ({ ...m, stage: 'input', candidates: [] }) : m);
-                                                        const kaptSearchUrl = `https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(card.siteName || '')}`;
-                                                        window.open(kaptSearchUrl, '_blank');
+                                                        window.open(kaptBidSearchUrl(card.siteName, card.date), '_blank');
                                                       });
                                                   }}
                                                   style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px', background: busy ? '#e5e7eb' : isVerified ? '#dcfce7' : '#f1f5f9', color: busy ? '#6b7280' : isVerified ? '#166534' : '#475569', border: '1px solid ' + (isVerified ? '#86efac' : '#cbd5e1'), cursor: busy ? 'wait' : 'pointer' }}
@@ -16995,7 +16994,7 @@ tr.suppressed td.fname{color:#64748b;}
             const kvPt = ptSchedules.find(ps => ps.id === kaptVerifyModal.scheduleId);
             const kvBusy = kaptVerifyModal.stage === 'verifying' || kaptVerifyModal.stage === 'candidates-loading';
             const closeKaptVerify = () => { setKaptVerifyModal(null); setKaptVerifyBidInput(''); };
-            const kaptSearchUrl = `https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(kaptVerifyModal.siteName || '')}`;
+            const kaptSearchUrl = kaptBidSearchUrl(kaptVerifyModal.siteName, kaptVerifyModal.date);
             // 공고번호(추출 끝난 값)로 Worker 판정 — 번호 모드 [공고 조회 → 판정]
             const runKaptBidVerify = async (input) => {
               setKaptVerifyModal(m => ({ ...m, stage: 'verifying', verifyMethod: 'bidno', bidNum: input }));
@@ -17440,7 +17439,7 @@ tr.suppressed td.fname{color:#64748b;}
                                   onClick={() => {
                                     setKaptVerifyBidInput('');
                                     setKaptVerifyModal(m => ({ ...m, stage: 'input', result: null }));
-                                    window.open(`https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(kaptVerifyModal.siteName || '')}`, '_blank');
+                                    window.open(kaptBidSearchUrl(kaptVerifyModal.siteName, kaptVerifyModal.date), '_blank');
                                   }}
                                   style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid #3282B8', background: 'white', color: '#0F4C75', fontSize: '12px', fontWeight: '700', cursor: 'pointer', textAlign: 'left' }}
                                 >K-APT 공고번호 직접 입력 — 복사/붙여넣기</button>

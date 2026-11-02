@@ -77,6 +77,17 @@ export async function verifyKaptForPt(args) {
 }
 
 // K-APT 후보 검색 — 모달 자동 추천용.
+// K-APT 사이트 "사업자 선정 결과" 검색 링크 — 기간을 안 주면 사이트가 최근 1개월만 보여 줘서 지난 PT 공고가 안 나왔다.
+// PT일 기준 6개월 전 ~ 2개월 후 (PT일 없으면 오늘 기준 1년 전 ~ 오늘)
+export function kaptBidSearchUrl(siteName, ptDate) {
+  const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const base = /^\d{4}-\d{2}-\d{2}$/.test(String(ptDate || '')) ? new Date(`${ptDate}T00:00:00`) : null;
+  const ref = base || new Date();
+  const start = new Date(ref.getFullYear(), ref.getMonth() - (base ? 6 : 12), ref.getDate());
+  const end = base ? new Date(ref.getFullYear(), ref.getMonth() + 2, ref.getDate()) : ref;
+  return `https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(siteName || '')}&searchDateGb=reg&dateStart=${ymd(start)}&dateEnd=${ymd(end)}`;
+}
+
 // siteName 으로 Firebase 에 수집된 bids 중 유사한 공고 top 5 반환.
 // Worker 미설정·미배포 시에는 빈 배열 반환 (→ 수동 입력 flow fallback)
 //

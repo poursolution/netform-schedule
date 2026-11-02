@@ -624,6 +624,8 @@ function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, 
     : row.verify === 'cancelled' ? ['취소공고 확인됨', '발주처 취소 · 정산 제외 · 재공고 대기', '#fef2f2', '#b91c1c', '#fecaca']
     : row.verify === 'needs_review' ? ['K-APT 공고 미매칭', kaptCandidateText(pt),'#fef3c7', '#b45309', '#fde68a']
     : ['K-APT 검증 전', '아직 조회 기록이 없습니다', C.muted, C.text3, C.line];
+  // 검토필요인데 K-APT 조회 기록이 없는 건(근거 없이 정산요청된 무 등)도 승 검토필요와 같은 처리 버튼으로
+  const reviewFlow = row.has && (row.verify === 'needs_review' || (row.isReview && !row.verify));
   const stepIdx = settlementStep(row);
   const steps = SETTLEMENT_STEPS.map((label, i) => {
     const done = i < stepIdx, cur = i === stepIdx, warn = cur && i === 1 && row.isReview;
@@ -689,7 +691,7 @@ function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, 
         <div style={{ padding: '10px 12px', borderRadius: 10, background: kapt[2], border: `1px solid ${kapt[4]}` }}>
           <div style={{ fontSize: 12.5, fontWeight: 700, color: kapt[3] }}>{kapt[0]}</div>
           <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>{kapt[1]}</div>
-          {row.has && row.verify === 'needs_review' && (
+          {reviewFlow && (
             <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
               {onOpenKaptCandidates && <button type="button" onClick={() => onOpenKaptCandidates(pt)} style={inlineBtn('primary')}>후보 공고 확인</button>}
               {onKaptReverify && <button type="button" onClick={() => onKaptReverify(pt)} style={inlineBtn('neutral')}>재검증</button>}
@@ -697,7 +699,7 @@ function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, 
               {onKaptCancel && <button type="button" onClick={() => onKaptCancel(pt)} style={inlineBtn('danger')}>취소공고</button>}
             </div>
           )}
-          {row.has && !row.verify && onKaptReverify && (
+          {row.has && !row.verify && !reviewFlow && onKaptReverify && (
             <div style={{ marginTop: 10 }}><button type="button" onClick={() => onKaptReverify(pt)} style={inlineBtn('neutral')}>K-APT 검증</button></div>
           )}
         </div>
