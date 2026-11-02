@@ -65,7 +65,8 @@ export default function SettlementPage({
   const reported = n > 0 && rows.every(r => r.reportedToPayroll);
   const pct = reliability.reliabilityPct;
   const pctTone = pct >= 90 ? '#15803d' : pct >= 70 ? '#b45309' : '#b91c1c';
-  const canClose = allFinal && reported && !isQuarterClosed;
+  // 담당자 확인을 앱 밖(구두·잔디)에서 끝낸 경우도 있어 마감은 언제든 — 미완 항목은 마감 때 경고 창으로 한 번 더 확인
+  const canClose = n > 0 && !isQuarterClosed;
   const checkedNames = rows.filter(r => chk[r.assignee]).map(r => r.assignee);
 
   const steps = [
@@ -132,7 +133,7 @@ export default function SettlementPage({
               </div>
             )}
           </div>
-          <button type="button" disabled={!canClose || loading} title={isQuarterClosed ? '이미 마감됨 — 해제는 아래 표 푸터에서' : canClose ? '' : '전원 최종확정 + 발송 후 가능'} onClick={toggleQuarterClose} style={{ ...btn('primary'), ...(!canClose ? disabledBtn : {}) }}>분기 마감</button>
+          <button type="button" disabled={!canClose || loading} title={isQuarterClosed ? '이미 마감됨 — 해제는 아래 표 푸터에서' : canClose ? (allFinal && reported ? '' : '미완 항목이 있으면 마감 전에 경고 창이 떠요') : '정산 대상이 없어요'} onClick={toggleQuarterClose} style={{ ...btn('primary'), ...(!canClose ? disabledBtn : {}) }}>분기 마감</button>
         </div>
 
         <div style={{ padding: '18px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>

@@ -67,7 +67,9 @@ export function isQuarterSettlementTarget(pt, assignee, quarterKey, opts = {}) {
   // 예외 승인은 승인 시점에 requested·manualVerified 를 같이 저장한다(utils/exceptions.js) — 승인만으로 대상이 되진 않음
   //   (예전에 승인만 되고 정산요청 안 된 지난 분기 건이 이월로 갑자기 급여에 들어가지 않게)
   if (!(stl.requested === true || stl.manualVerified === true)) return false;
-  if (stl.completed === true || stl.status === 'completed') return false;
+  // 완료(지급)된 건은 다음 분기부터 빠지되, 완료 처리한 그 분기 목록에는 '완료'로 남긴다
+  //   (예전엔 완료 처리하자마자 그 담당자 행이 분기정산 목록에서 통째로 사라졌음)
+  if ((stl.completed === true || stl.status === 'completed') && stl.completedQuarter !== quarterKey) return false;
   if (stl.superseded === true || stl.status === 'superseded') return false;
   const calc = calculateSettlementAmount(pt, assignee);
   if (!calc.result || EXCLUDED_REASONS.has(calc.reason)) return false;
