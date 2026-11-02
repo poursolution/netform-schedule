@@ -220,6 +220,16 @@ export default function PerformanceWorkbench({
   const checkedRows = listRows.filter(r => checked[r.id]);
   const nChecked = checkedRows.length;
   const goQueue = f => { setTab('sites'); setFilter(f); };
+  // 같은 단지 전체 내역에서 다른 건을 누르면 그 건을 연다 — 지금 필터·기간 밖이면 풀어서 보이게
+  const openSiteRow = id => {
+    if (!id) return;
+    setTab('sites');
+    setSearch('');
+    setFilter('all');
+    setWho('전체');
+    if (!listRows.some(r => r.id === id)) setPeriod('all');
+    setSelectedId(id);
+  };
   const nextReview = () => {
     const list = rows.filter(r => r.isReview);
     if (!list.length) return;
@@ -531,6 +541,7 @@ export default function PerformanceWorkbench({
             canMemo={!!onSaveMemo}
             onSaveMemo={async () => { if (!selected || !onSaveMemo) return; const msg = await onSaveMemo(selected.pt, selected.main, memo); setMemoSaved(msg || '저장됨'); }}
             onNextReview={nextReview}
+            onOpenSiteRow={openSiteRow}
             onResult={key => setResult(selected, key)}
             onToggleSettlementFlag={onToggleSettlementFlag}
             onToggleSelfPT={onToggleSelfPT}
@@ -605,7 +616,7 @@ function methodsOf(pt) {
   return [];
 }
 
-function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, memoSaved, canMemo, onSaveMemo, onNextReview, onResult,
+function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, memoSaved, canMemo, onSaveMemo, onNextReview, onOpenSiteRow, onResult,
   onToggleSettlementFlag, onToggleSelfPT, onKaptReverify, onKaptManualApprove, onKaptCancel, onOpenKaptCandidates, onOpenExceptions }) {
   // 1열이면 목록 위(order -1)에 고정 없이 — 헤더(64px)에 가리지 않게 scrollMargin
   const place = stacked ? { order: -1, scrollMarginTop: 80 } : { position: 'sticky', top: 80, maxHeight: 'calc(100vh - 96px)' };
@@ -718,16 +729,25 @@ function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, 
                   같은 담당·같은 공종으로 이미 정산된 건이 {dup}건 있어요. 같은 공고면 아래 <b>정산예외</b>로 빼 주세요.
                 </div>
               )}
-              {siteHistory.map(h => (
-                <div key={h.id + '_' + h.assignee} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '5px 8px', borderRadius: 7, background: h.isTarget ? '#eff6ff' : h.duplicateSuspect ? '#fff7f7' : 'transparent' }}>
-                  <span style={{ color: C.text3, flex: 'none', width: 60, fontVariantNumeric: 'tabular-nums' }}>{ymd(h.date, true)}</span>
-                  <span title={`${h.workType} · ${h.siteName}`} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {h.isTarget && <b style={{ color: C.brand }}>이 건 · </b>}{h.workType || h.mainCategory || '공종 미입력'}
-                    <span style={{ color: C.text4 }}> · {h.assignee} {h.result}{h.amount ? ` · ${formatWon(h.amount)}` : ''}</span>
-                  </span>
-                  <span style={h.duplicateSuspect ? chip('#fee2e2', '#b91c1c') : chip(C.muted, C.text3)}>{h.duplicateSuspect ? `중복 의심 · ${h.statusLabel}` : h.statusLabel}</span>
-                </div>
-              ))}
+              {siteHistory.map(h => {
+                // 다른 건은 눌러서 그 건 상세로 이동 (이 건은 그대로)
+                const go = !h.isTarget && onOpenSiteRow;
+                return (
+                  <div key={h.id + '_' + h.assignee} role={go ? 'button' : undefined} tabIndex={go ? 0 : undefined}
+                    onClick={go ? () => onOpenSiteRow(h.id) : undefined}
+                    onKeyDown={go ? e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenSiteRow(h.id); } } : undefined}
+                    title={go ? `${ymd(h.date)} ${h.siteName} 열기` : undefined}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '5px 8px', borderRadius: 7, background: h.isTarget ? '#eff6ff' : h.duplicateSuspect ? '#fff7f7' : 'transparent', cursor: go ? 'pointer' : 'default' }}>
+                    <span style={{ color: C.text3, flex: 'none', width: 60, fontVariantNumeric: 'tabular-nums' }}>{ymd(h.date, true)}</span>
+                    <span title={`${h.workType} · ${h.siteName}`} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {h.isTarget && <b style={{ color: C.brand }}>이 건 · </b>}{h.workType || h.mainCategory || '공종 미입력'}
+                      <span style={{ color: C.text4 }}> · {h.assignee} {h.result}{h.amount ? ` · ${formatWon(h.amount)}` : ''}</span>
+                    </span>
+                    <span style={h.duplicateSuspect ? chip('#fee2e2', '#b91c1c') : chip(C.muted, C.text3)}>{h.duplicateSuspect ? `중복 의심 · ${h.statusLabel}` : h.statusLabel}</span>
+                    {go && <span aria-hidden="true" style={{ color: C.text4, flex: 'none' }}>›</span>}
+                  </div>
+                );
+              })}
             </div>
           );
         })()}
