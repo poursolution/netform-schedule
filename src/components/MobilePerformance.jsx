@@ -20,7 +20,9 @@ const VERIFY = { verified: ['K-APT 검증', '#dcfce7', '#15803d'], needs_review:
 const STL = {
   unsettled: ['미정산', '#f1f5f9', '#475569'], needs_review: ['검토필요', '#fef3c7', '#b45309'], requested: ['정산요청', '#dbeafe', '#0F4C75'],
   confirmed: ['정산확정', '#BBE1FA', '#0F4C75'], completed: ['정산완료', '#dcfce7', '#15803d'], excluded: ['제외', '#f8fafc', '#94a3b8'],
+  superseded: ['중복대체', '#f8fafc', '#94a3b8'],
 };
+const stlKey = r => (r.superseded ? 'superseded' : r.stl);
 const RESULT_KEYS = ['승', '무', '패', '지원'];
 const CHIPS = [['all', '전체'], ['review', '검토필요'], ['pending', '미입력'], ['requested', '정산요청'], ['win', '승'], ['loss', '패']];
 const pill = (bg, fg) => ({ display: 'inline-block', padding: '3px 7px', borderRadius: 999, background: bg, color: fg, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' });
@@ -143,7 +145,7 @@ export default function MobilePerformance({
           {rows.map(r => {
             const res = r.result ? RES[r.result] : null;
             const v = r.verify ? VERIFY[r.verify] : null;
-            const st = r.stl ? STL[r.stl] : null;
+            const st = r.stl ? STL[stlKey(r)] : null;
             return (
               <button key={r.id} type="button" onClick={() => setSelectedId(r.id)} style={{ display: 'block', width: '100%', textAlign: 'left', fontFamily: 'inherit', cursor: 'pointer', color: C.ink, padding: '12px 14px', borderRadius: 14, background: r.isReview ? '#fffbeb' : '#fff', border: `1px solid ${r.isReview ? '#fde68a' : C.line}` }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: C.text3 }}>
@@ -211,7 +213,7 @@ export default function MobilePerformance({
 function DetailSheet({ row, onClose, onNextReview, onSetResult, onToggleSettlementFlag, onOpenKaptCandidates, onKaptManualApprove, onKaptCancel }) {
   const pt = row.pt;
   const v = row.verify ? VERIFY[row.verify] : null;
-  const st = row.stl ? STL[row.stl] : null;
+  const st = row.stl ? STL[stlKey(row)] : null;
   const stl = pt.settlement?.[row.main] || {};
   const stepIdx = settlementStep(row);
   const kapt = !row.has ? ['결과 입력 후 자동 검증', '승/무/패 입력 시 K-APT 자동 조회', C.muted, C.text3, C.line]

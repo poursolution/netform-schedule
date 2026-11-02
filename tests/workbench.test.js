@@ -160,3 +160,15 @@ test('검토필요라도 정산요청을 걸면 검토필요 목록에서 빠지
   const plain = buildRow({ ...pt, settlement: {} }, TODAY);
   assert.equal(plain.isReview, true);
 });
+
+test('중복대체 건은 검토필요·정산요청에서 빠지고 제외 · 0원으로 보인다', () => {
+  const pt = { id: 's', date: '2025-07-30', ptAssignee: '조재연', results: { 조재연: '승' }, kaptVerified: { status: 'needs_review' }, settlement: { 조재연: { superseded: true, status: 'superseded', requested: true, calculatedAmount: 0 } } };
+  const row = buildRow(pt, TODAY);
+  assert.equal(row.isReview, false);
+  assert.equal(row.isRequested, false);
+  assert.equal(row.stl, 'excluded');
+  assert.equal(row.superseded, true);
+  assert.equal(row.amount, 0);
+  assert.equal(settlementTargets([pt]).amount, 0);
+  assert.equal(staffStats([pt], ['조재연'])[0].est, 0);
+});

@@ -36,7 +36,9 @@ const STL = {
   confirmed: ['정산확정', '#BBE1FA', '#0F4C75'],
   completed: ['정산완료', '#dcfce7', '#15803d'],
   excluded: ['제외', '#f8fafc', '#94a3b8'],
+  superseded: ['중복대체', '#f8fafc', '#94a3b8'],
 };
+const stlKey = r => (r.superseded ? 'superseded' : r.stl);
 const RESULT_KEYS = ['승', '무', '패', '지원'];
 
 const chip = (bg, fg) => ({ display: 'inline-block', padding: '3px 7px', borderRadius: 999, background: bg, color: fg, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' });
@@ -548,7 +550,7 @@ function SiteRow({ r, compact, selected, checked, today, onSelect, onCheck }) {
   const pt = r.pt;
   const methods = methodsOf(pt);
   const v = r.verify ? VERIFY[r.verify] : null;
-  const st = r.stl ? STL[r.stl] : null;
+  const st = r.stl ? STL[stlKey(r)] : null;
   const c = r.has ? RES[r.result] : null;
   if (compact) {
     // 두 줄 행 — 위: 현장 / 아래: 담당 · 공종, K-APT는 칩으로. 오른쪽: 정산 칩 위 · 금액 아래
@@ -613,7 +615,7 @@ function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, 
   const pt = row.pt;
   const methods = methodsOf(pt);
   const v = row.verify ? VERIFY[row.verify] : null;
-  const st = row.stl ? STL[row.stl] : null;
+  const st = row.stl ? STL[stlKey(row)] : null;
   const stl = pt.settlement?.[row.main] || {};
   const xReq = pt.exceptionRequests?.[row.main];
   const xLabel = xReq?.type === 'no_bid_to_win' ? '공고문 없는 현장 신청됨' : '영업적 승리 신청됨';
