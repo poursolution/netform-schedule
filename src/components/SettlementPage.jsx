@@ -86,7 +86,8 @@ export default function SettlementPage({
     { label: '최종확정 (2R)', meta: `${finalConfirmedCount} / ${n}`, done: allFinal,
       action: <button type="button" disabled={!canRequestFinal || loading} title={canRequestFinal ? '' : '전원 1R 확인 + 수정요청 처리 후 가능'} onClick={requestFinalConfirmation} style={{ ...btn('secondary', 30), ...(!canRequestFinal ? disabledBtn : {}) }}>최종확정 요청 발송</button> },
     { label: '김유림 발송', meta: reported ? '발송 완료' : '전원 확정 후', done: reported,
-      action: <button type="button" disabled={!allFinal} title={allFinal ? '' : '전원 최종확정 후 가능'} onClick={onOpenReport} style={{ ...btn('secondary', 30), ...(!allFinal ? disabledBtn : {}) }}>PDF + Excel 발송</button> },
+      // 담당자 확정을 앱 밖에서 끝내고 분기 마감한 경우도 있어, 마감됐으면 발송 가능
+      action: <button type="button" disabled={!(allFinal || isQuarterClosed)} title={allFinal || isQuarterClosed ? '' : '전원 최종확정 또는 분기 마감 후 가능'} onClick={onOpenReport} style={{ ...btn('secondary', 30), ...(!(allFinal || isQuarterClosed) ? disabledBtn : {}) }}>PDF + Excel 발송</button> },
   ];
   const current = steps.findIndex(s => !s.done);
 
