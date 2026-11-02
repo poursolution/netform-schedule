@@ -142,6 +142,27 @@ function isWeekendPt(s) {
   return day === 0 || day === 6;
 }
 
+// 주말출근 목록 — 엑셀(P:S)과 분기정산 화면이 같은 기준을 쓰도록 한 곳에서.
+//   PT 진행일이 분기 안·토/일, 정산 대상 담당자, 자체PT·취소공고·본인영업 제외, 결과 무관
+export function weekendWorkItems(ptSchedules, range) {
+  const items = [];
+  (ptSchedules || []).forEach(s => {
+    if (!s?.date || s.selfPT || s.kaptVerified?.status === 'cancelled') return;
+    if (!isWeekendPt(s) || !inRange(s.date, range)) return;
+    parseAssignees(s.ptAssignee).forEach(wa => {
+      if (!SETTLEMENT_ASSIGNEES_SET.has(wa) || isSelfSales(s, wa)) return;
+      items.push({
+        date: s.date,
+        dayOfWeek: ['일','월','화','수','목','금','토'][new Date(parseInt(s.date.slice(0,4)), parseInt(s.date.slice(5,7))-1, parseInt(s.date.slice(8,10))).getDay()],
+        siteName: s.siteName || '',
+        assignee: wa,
+        result: getPtResult(s, wa) || '미입력',
+      });
+    });
+  });
+  return items;
+}
+
 function getSettlementAmount(s, assignee, overrideResult = null) {
   if (s.selfPT) return 0;
   if (isSelfSales(s, assignee)) return 0;
@@ -247,7 +268,7 @@ export function aggregateQuarterlyReport(allData, year, quarter, opts = {}) {
   //   범위: PT 진행일(s.date)이 분기 안에 있으면 카운트.
   //   조건: SETTLEMENT_ASSIGNEES 중, ptAssignee 토큰에 들어 있는 사람만.
   //         취소공고 제외, 자체PT 제외 (실제 출근 의미 약함).
-  const weekendItems = [];
+  const weekendItems = weekendWorkItems(ptSchedules, range);
 
   let debugStats = {
     totalSchedules: ptSchedules.length,
@@ -263,7 +284,7 @@ export function aggregateQuarterlyReport(allData, year, quarter, opts = {}) {
     skippedExcludedByCalc: 0,
     includedVerified: 0,
     includedUnverified: 0,
-    weekendItems: 0,
+    weekendItems: weekendItems.length,
   };
 
   ptSchedules.forEach(s => {
@@ -280,23 +301,6 @@ export function aggregateQuarterlyReport(allData, year, quarter, opts = {}) {
       return;
     }
 
-    // 분기정산 모달과 동일: pt.date 기준 분기 귀속 + grace 룰
-    // 주말출근 — PT 진행일 in range, 결과/requested 무관 (취소공고는 제외)
-    if (!s.selfPT && s.kaptVerified?.status !== 'cancelled' && isWeekendPt(s) && inRange(s.date, range)) {
-      const wAssignees = parseAssignees(s.ptAssignee);
-      wAssignees.forEach(wa => {
-        if (!SETTLEMENT_ASSIGNEES_SET.has(wa)) return;
-        if (isSelfSales(s, wa)) return;
-        weekendItems.push({
-          date: s.date,
-          dayOfWeek: ['일','월','화','수','목','금','토'][new Date(parseInt(s.date.slice(0,4)), parseInt(s.date.slice(5,7))-1, parseInt(s.date.slice(8,10))).getDay()],
-          siteName: s.siteName || '',
-          assignee: wa,
-          result: getPtResult(s, wa) || '미입력',
-        });
-        debugStats.weekendItems++;
-      });
-    }
 
     const assignees = parseAssignees(s.ptAssignee);
     assignees.forEach(a => {

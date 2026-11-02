@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import AppSidebar from './AppSidebar.jsx';
 import { quarterMeta, formatWon, mmdd } from '../utils/workbench.js';
+import { weekendWorkItems, getQuarterRange } from '../utils/quarterlyReport.js';
 
 // 분기정산 (#8a) — 사이드바 "정산" 전용 페이지.
 // 수치·동작은 기존 분기정산 모달과 같은 buildQuarterSettlementCtx() 를 그대로 쓴다 (OPERATIONS §8 룰 변경 없음).
@@ -20,7 +21,7 @@ const btn = (kind, h = 34) => ({
 });
 const disabledBtn = { background: C.strong, borderColor: C.strong, color: '#fff', cursor: 'not-allowed' };
 const link = { padding: 0, border: 0, background: 'none', fontFamily: 'inherit', fontSize: 12, cursor: 'pointer' };
-const ROW_GRID = '28px 110px 56px 96px 120px 84px 100px 92px minmax(0, 1fr)';
+const ROW_GRID = '28px 110px 56px 96px 118px 120px 84px 100px 92px minmax(0, 1fr)';
 const ITEM_GRID = '48px minmax(0, 1fr) 56px 100px 110px 230px';
 const RESULT_TONE = { 승: ['#dcfce7', '#15803d'], 무: ['#fef3c7', '#b45309'], 패: ['#fef2f2', '#b91c1c'], 지원: ['#dbeafe', C.brand], 감리: ['#f1f5f9', C.text2] };
 const STATUS = { draft: ['초안', '#f1f5f9', C.text2], confirmed: ['확정', '#dbeafe', C.brand], completed: ['완료', '#dcfce7', '#15803d'] };
@@ -55,6 +56,12 @@ export default function SettlementPage({
   const [menuFor, setMenuFor] = useState(null);
 
   const ptById = useMemo(() => Object.fromEntries((ptSchedules || []).map(p => [p.id, p])), [ptSchedules]);
+  // 주말출근 — 엑셀과 같은 기준(PT 진행일 토/일, 결과 무관), 주말 1회 = 연차 1.5일
+  const weekendList = useMemo(() => {
+    const m = String(month || '').match(/^(\d{4})-Q([1-4])$/);
+    return m ? weekendWorkItems(ptSchedules, getQuarterRange(+m[1], +m[2])) : [];
+  }, [ptSchedules, month]);
+  const weekendBy = useMemo(() => weekendList.reduce((acc, w) => ({ ...acc, [w.assignee]: (acc[w.assignee] || 0) + 1 }), {}), [weekendList]);
   const n = rows.length;
   const sum = (k) => rows.reduce((s, r) => s + (r[k] || 0), 0);
   const reviewTotal = sum('reviewCount');
@@ -211,7 +218,7 @@ export default function SettlementPage({
             {sent && <div style={{ padding: '8px 18px', background: '#f0fdf4', borderBottom: '1px solid #bbf7d0', fontSize: 12.5, color: '#15803d' }}>✓ {sent}</div>}
             <div style={{ display: 'grid', gridTemplateColumns: ROW_GRID, gap: 8, padding: '7px 18px', fontSize: 11, fontWeight: 600, color: C.text4, borderBottom: `1px solid ${C.line2}`, alignItems: 'center' }}>
               <input type="checkbox" aria-label="전체 선택" checked={n > 0 && checkedNames.length === n} onChange={e => setChk(e.target.checked ? Object.fromEntries(rows.map(r => [r.assignee, true])) : {})} />
-              <span>담당자</span><span style={{ textAlign: 'right' }}>건수</span><span>승 / 무 / 지원</span><span style={{ textAlign: 'right' }}>예상금액</span><span>검토</span><span>1R 확인</span><span>최종확정</span><span />
+              <span>담당자</span><span style={{ textAlign: 'right' }}>건수</span><span>승 / 무 / 지원</span><span>주말출근 · 연차</span><span style={{ textAlign: 'right' }}>예상금액</span><span>검토</span><span>1R 확인</span><span>최종확정</span><span />
             </div>
             </div>
             {rows.map(r => {
@@ -227,6 +234,7 @@ export default function SettlementPage({
                     <span style={{ fontWeight: 700 }}>{a} <span style={{ ...pill(st[1], st[2]), marginLeft: 4, fontSize: 10.5, padding: '1px 6px' }}>{st[0]}</span></span>
                     <span style={{ textAlign: 'right' }}>{r.totalCount}</span>
                     <span style={{ color: C.text3 }}><b style={{ color: '#15803d' }}>{r.winCount || 0}</b> / <b style={{ color: '#b45309' }}>{r.drawCount || 0}</b> / <b style={{ color: C.brand }}>{r.supportCount || 0}</b></span>
+                    <span style={{ color: weekendBy[a] ? C.ink : C.text4 }} title={(weekendList.filter(w => w.assignee === a).map(w => `${w.date}(${w.dayOfWeek}) ${w.siteName}`).join('\n')) || ''}>{weekendBy[a] || 0}회 · {(weekendBy[a] || 0) * 1.5}일</span>
                     <b style={{ textAlign: 'right' }}>{formatWon(r.estimatedAmount || 0)}</b>
                     <span>{r.reviewCount ? <span style={pill('#fef3c7', '#b45309')}>{r.reviewCount}건</span> : <span style={pill('#dcfce7', '#15803d')}>완료</span>}</span>
                     <span>{conf.confirmed ? <span style={pill('#dcfce7', '#15803d')}>이상없음 ✓</span> : <span style={pill('#f1f5f9', C.text3)}>대기</span>}{r._openReviewCount ? <span style={{ ...pill('#fef3c7', '#b45309'), marginLeft: 4 }}>요청 {r._openReviewCount}</span> : null}</span>
@@ -298,7 +306,7 @@ export default function SettlementPage({
                   : '이 분기 정산 대상이 없어요 · 실적에서 승·무·지원 결과를 입력하면 여기에 모여요'}
             </div>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 18px', fontSize: 12, color: C.text4, flexWrap: 'wrap' }}>
-              <span>합계 {targetCount}건 · {amount.toLocaleString('ko-KR')}원</span>
+              <span>합계 {targetCount}건 · {amount.toLocaleString('ko-KR')}원 · 주말출근 {weekendList.length}회(연차 {weekendList.length * 1.5}일)</span>
               <div style={{ flex: 1 }} />
               {onOpenActivityLog && <button type="button" onClick={onOpenActivityLog} style={{ ...link, color: C.text3 }}>활동 로그</button>}
               {onBackfill && <button type="button" disabled={loading || isQuarterClosed} onClick={onBackfill} style={{ ...link, color: isQuarterClosed ? C.strong : C.text3 }}>과거 데이터 보정</button>}
