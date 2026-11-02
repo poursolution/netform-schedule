@@ -100,6 +100,12 @@ test('completed status alone prevents a record from returning to a quarter', () 
   assert.equal(isQuarterSettlementTarget(pt, '한준엽', '2026-Q2'), false);
 });
 
+test('완료 처리한 그 분기 목록에는 남고, 다음 분기부터 빠진다', () => {
+  const pt = makePt({ settlement: { 한준엽: { requested: true, completed: true, status: 'completed', completedQuarter: '2026-Q2' } } });
+  assert.equal(isQuarterSettlementTarget(pt, '한준엽', '2026-Q2'), true);
+  assert.equal(isQuarterSettlementTarget(pt, '한준엽', '2026-Q3', { includeLegacyCarryover: true }), false);
+});
+
 test('quarter attribution is based on PT date, not request date', () => {
   const pt = makePt({
     date: '2026-03-15',

@@ -65,7 +65,8 @@ export default function SettlementPage({
   const reported = n > 0 && rows.every(r => r.reportedToPayroll);
   const pct = reliability.reliabilityPct;
   const pctTone = pct >= 90 ? '#15803d' : pct >= 70 ? '#b45309' : '#b91c1c';
-  const canClose = allFinal && reported && !isQuarterClosed;
+  // 담당자 확인을 앱 밖(구두·잔디)에서 끝낸 경우도 있어 마감은 언제든 — 미완 항목은 마감 때 경고 창으로 한 번 더 확인
+  const canClose = n > 0 && !isQuarterClosed;
   const checkedNames = rows.filter(r => chk[r.assignee]).map(r => r.assignee);
 
   const steps = [
@@ -127,12 +128,12 @@ export default function SettlementPage({
             <button type="button" aria-expanded={exportOpen} onClick={() => setExportOpen(o => !o)} style={btn('secondary')}>내보내기 ▾</button>
             {exportOpen && (
               <div role="menu" style={{ position: 'absolute', right: 0, top: 38, zIndex: 30, background: '#fff', border: `1px solid ${C.line}`, borderRadius: 10, padding: 4, minWidth: 200, boxShadow: '0 8px 24px rgba(15,23,42,.12)' }}>
-                <button type="button" role="menuitem" disabled={!isQuarterClosed} title={isQuarterClosed ? '' : '분기 마감 후 가능'} onClick={() => { setExportOpen(false); downloadQuarterClosingExcel(); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 0, borderRadius: 6, background: 'none', fontSize: 13, fontFamily: 'inherit', cursor: isQuarterClosed ? 'pointer' : 'not-allowed', color: isQuarterClosed ? C.ink : C.text4 }}>마감 엑셀 (PT·주말)</button>
+                <button type="button" role="menuitem" title={isQuarterClosed ? '' : '마감 전 — 지금 기준 내용'} onClick={() => { setExportOpen(false); downloadQuarterClosingExcel(); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 0, borderRadius: 6, background: 'none', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', color: C.ink }}>산정내역서 엑셀 (PT·주말){isQuarterClosed ? '' : ' · 마감 전'}</button>
                 <button type="button" role="menuitem" onClick={() => { setExportOpen(false); onOpenReport(); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 0, borderRadius: 6, background: 'none', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', color: C.ink }}>김유림 보고서 (미리보기·다운로드)</button>
               </div>
             )}
           </div>
-          <button type="button" disabled={!canClose || loading} title={isQuarterClosed ? '이미 마감됨 — 해제는 아래 표 푸터에서' : canClose ? '' : '전원 최종확정 + 발송 후 가능'} onClick={toggleQuarterClose} style={{ ...btn('primary'), ...(!canClose ? disabledBtn : {}) }}>분기 마감</button>
+          <button type="button" disabled={!canClose || loading} title={isQuarterClosed ? '이미 마감됨 — 해제는 아래 표 푸터에서' : canClose ? (allFinal && reported ? '' : '미완 항목이 있으면 마감 전에 경고 창이 떠요') : '정산 대상이 없어요'} onClick={toggleQuarterClose} style={{ ...btn('primary'), ...(!canClose ? disabledBtn : {}) }}>분기 마감</button>
         </div>
 
         <div style={{ padding: '18px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
