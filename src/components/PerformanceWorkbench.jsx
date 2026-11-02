@@ -99,6 +99,7 @@ export default function PerformanceWorkbench({
   onOpenKaptCandidates, // (pt) => void
   onOpenExceptions,     // () => void — 예외 승인 큐(#11a), 관리자만
   onRevokeException,    // (pt, assignee) => void — 승인된 예외 취소, 관리자만
+  onSaveSupervisionAmount, // (pt, assignee, amount) => void — 감리 금액 입력, 관리자·한준엽만
   onSaveMemo,           // (pt, assignee, text) => Promise<string 결과 문구>
   onBulkRequest,        // (pts) => void
   onBulkManualApprove,  // (pts) => void
@@ -384,6 +385,7 @@ export default function PerformanceWorkbench({
                   <span style={{ width: 1, height: 16, background: C.line, margin: '0 6px' }} />
                   <button type="button" aria-pressed={filter === 'review'} onClick={() => setFilter('review')} style={filterBtn(filter === 'review', true)}>검토필요 {filterCount('review')}</button>
                   {filter === 'requested' && <button type="button" aria-pressed="true" onClick={() => setFilter('all')} style={filterBtn(true)}>정산요청 {filterCount('requested')} ✕</button>}
+                  {filter === 'supervision' && <button type="button" aria-pressed="true" onClick={() => setFilter('all')} style={filterBtn(true)}>감리 금액 입력 대기 {filterCount('supervision')} ✕</button>}
                   <div style={{ flex: 1 }} />
                   <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: C.text4 }}>
                     정렬
@@ -551,6 +553,7 @@ export default function PerformanceWorkbench({
             onOpenKaptCandidates={onOpenKaptCandidates}
             onOpenExceptions={onOpenExceptions}
             onRevokeException={onRevokeException}
+            onSaveSupervisionAmount={onSaveSupervisionAmount}
           />
         </div>
       </main>
@@ -618,7 +621,11 @@ function methodsOf(pt) {
 }
 
 function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, memoSaved, canMemo, onSaveMemo, onNextReview, onOpenSiteRow, onResult,
-  onToggleSettlementFlag, onToggleSelfPT, onKaptReverify, onKaptManualApprove, onKaptCancel, onOpenKaptCandidates, onOpenExceptions, onRevokeException }) {
+  onToggleSettlementFlag, onToggleSelfPT, onKaptReverify, onKaptManualApprove, onKaptCancel, onOpenKaptCandidates, onOpenExceptions, onRevokeException, onSaveSupervisionAmount }) {
+  // 감리 금액 입력 칸 — 고른 현장이 바뀌면 저장된 값으로 다시 채운다
+  const savedSupAmt = row?.pt?.settlement?.[row?.main]?.manualAmount;
+  const [supAmt, setSupAmt] = useState('');
+  useEffect(() => { setSupAmt(typeof savedSupAmt === 'number' ? String(savedSupAmt) : ''); }, [row?.id, row?.main, savedSupAmt]);
   // 1열이면 목록 위(order -1)에 고정 없이 — 헤더(64px)에 가리지 않게 scrollMargin
   const place = stacked ? { order: -1, scrollMarginTop: 80 } : { position: 'sticky', top: 80, maxHeight: 'calc(100vh - 96px)' };
   if (!row) {
@@ -630,6 +637,7 @@ function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, 
   const st = row.stl ? STL[stlKey(row)] : null;
   const stl = pt.settlement?.[row.main] || {};
   const xReq = pt.exceptionRequests?.[row.main];
+  const isSupervision = /감리/.test(`${pt.workType || ''}|${pt.siteName || ''}`);
   const xLabel = xReq?.type === 'no_bid_to_win' ? '공고문 없는 현장 신청됨' : '영업적 승리 신청됨';
   // 잔디 검증 칸 — 근거: 잔디 공고문 연결 / 관리자 승인 / 예외 승인
   const jandiFiles = Object.values(pt.evidenceFiles || {}).filter(f => f && !f.suppressed);
@@ -699,6 +707,17 @@ function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, 
             <span>정산 예상 <b style={{ color: C.text, fontSize: 13 }}>{formatWon(row.amount)}</b></span>
             <span style={{ marginLeft: 'auto' }}>귀속 {row.date ? `${row.date.slice(0, 4)} Q${Math.ceil(+row.date.slice(5, 7) / 3)}` : '—'}</span>
           </div>
+          {isSupervision && onSaveSupervisionAmount && (
+            <form onSubmit={e => { e.preventDefault(); const v = parseInt(String(supAmt).replace(/[^0-9]/g, '') || '', 10); if (Number.isFinite(v)) onSaveSupervisionAmount(pt, row.main, v); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, padding: '8px 10px', borderRadius: 9, background: row.supervisionPending ? '#fffbeb' : C.muted, border: `1px solid ${row.supervisionPending ? '#fde68a' : C.line}`, fontSize: 12.5 }}>
+              <label htmlFor="sup-amt" style={{ fontWeight: 600, color: C.text2 }}>감리 금액</label>
+              <input id="sup-amt" inputMode="numeric" value={supAmt === '' ? '' : Number(String(supAmt).replace(/[^0-9]/g, '') || 0).toLocaleString('ko-KR')} placeholder="입력 대기"
+                onChange={e => setSupAmt(e.target.value.replace(/[^0-9]/g, ''))}
+                style={{ width: 120, height: 30, padding: '0 8px', border: `1px solid ${C.line}`, borderRadius: 7, textAlign: 'right', fontFamily: 'inherit', fontSize: 13, fontWeight: 700 }} />
+              <span>원</span>
+              <button type="submit" disabled={supAmt === '' || Number(supAmt) === stl.manualAmount} style={{ ...inlineBtn('primary'), marginLeft: 'auto', opacity: supAmt === '' || Number(supAmt) === stl.manualAmount ? .5 : 1 }}>저장</button>
+            </form>
+          )}
           {sups.map(s => (
             <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, padding: '9px 11px', borderRadius: 9, background: C.muted, border: `1px dashed ${C.strong}`, fontSize: 12.5 }}>
               <span style={{ width: 22, height: 22, borderRadius: '50%', background: C.accent, color: C.brand, fontSize: 11, fontWeight: 700, display: 'grid', placeItems: 'center', flex: 'none' }}>지</span>

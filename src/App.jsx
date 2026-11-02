@@ -4023,6 +4023,19 @@ const SETTLEMENT_BADGE_STYLE = {
         } catch (e) { alert('저장 실패: ' + e.message); }
       };
 
+      // 감리 금액 입력 — 새 실적 화면에서 (예전엔 이전 실적 화면 카드에서만 됐음)
+      const workbenchSaveSupervisionAmount = async (pt, a, amount) => {
+        if (!(currentUser?.isAdmin || currentUser?.name === '한준엽')) { alert('감리 금액은 한준엽·관리자만 입력할 수 있습니다.'); return; }
+        if (!Number.isFinite(amount) || amount < 0) { alert('숫자만 입력 가능합니다.'); return; }
+        try {
+          await writeWorkbenchPatch(pt, {
+            [`settlement/${a}/manualAmount`]: amount,
+            [`settlement/${a}/manualAmountAt`]: new Date().toISOString(),
+            [`settlement/${a}/manualAmountBy`]: currentUser?.name || 'admin',
+          }, [a]);
+        } catch (e) { alert('저장 실패: ' + e.message); }
+      };
+
       const workbenchToggleSelfPT = async (pt, checked) => {
         try { await writeWorkbenchPatch(pt, { selfPT: checked }, workbenchAssignees(pt)); }
         catch (e) { alert('저장 실패: ' + e.message); }
@@ -10576,6 +10589,7 @@ const SETTLEMENT_BADGE_STYLE = {
                         onKaptCancel={workbenchKaptCancel}
                         onOpenExceptions={currentUser?.isAdmin ? () => setShowExceptionQueueModal(true) : undefined}
                         onRevokeException={currentUser?.isAdmin ? workbenchRevokeException : undefined}
+                        onSaveSupervisionAmount={(currentUser?.isAdmin || currentUser?.name === '한준엽') ? workbenchSaveSupervisionAmount : undefined}
                         onSaveMemo={currentUser?.isAdmin ? workbenchSaveMemo : undefined}
                         onBulkRequest={workbenchBulkRequest}
                         onBulkManualApprove={canFinalizeSettlementReview() ? workbenchBulkManualApprove : undefined}
@@ -13826,7 +13840,7 @@ tr.suppressed td.fname{color:#64748b;}
                   onOpenReport={() => { const m = qKey.match(/^(\d{4})-Q([1-4])$/); if (m) { setQuarterReportYear(+m[1]); setQuarterReportQuarter(+m[2]); } setShowQuarterReportModal(true); }}
                   onGoReview={() => goPerfView({ filter: 'review' })}
                   onGoAssignee={(a, mode) => goPerfView({ who: a, filter: mode === 'review' ? 'review' : 'all' })}
-                  onGoSupervision={() => { setUseLegacyPerformance(true); goPerfView({}); }}
+                  onGoSupervision={() => goPerfView({ filter: 'supervision' })}
                   onKaptCandidates={workbenchOpenKaptVerify}
                   onManualApprove={workbenchOpenReview}
                   onKaptCancel={workbenchKaptCancel}
@@ -21353,7 +21367,9 @@ tr.suppressed td.fname{color:#64748b;}
             const confMap = quarterConfirmations[reportQKey] || {};
             const finalConfirmedNames = activeAssignees.filter(n => confMap[n]?.finalConfirmed === true);
             const missingFinalConfirm = activeAssignees.filter(n => !confMap[n]?.finalConfirmed);
-            const allFinalConfirmed = activeAssignees.length > 0 && missingFinalConfirm.length === 0;
+            // 분기 마감됐으면 담당자 확인을 다 받은 것으로 본다(앱 밖에서 확인한 경우)
+            const reportQuarterClosed = monthlySettlementMonth === reportQKey && monthlySettlementData?.totals?.closed === true;
+            const allFinalConfirmed = activeAssignees.length > 0 && (missingFinalConfirm.length === 0 || reportQuarterClosed);
             const hasSettlementData = activeAssignees.length > 0;
 
             const handleDownloadExcel = async () => {
