@@ -52,7 +52,7 @@ export default function MobileMain({
     .sort((a, b) => a.date.localeCompare(b.date) || String(a.time || '').localeCompare(String(b.time || ''))), [ptSchedules, todayStr, tomorrow]);
 
   const queue = [
-    { key: 'review', label: '검토필요', n: review.total, sub: review.carry ? `Q${quarterMeta(qKey, today)?.quarter} ${review.cur} + 이전 ${review.carry}` : 'K-APT 미매칭', tone: review.total ? 'warn' : null, onClick: onGoReview },
+    { key: 'review', label: '검토필요', n: review.total, sub: review.carry ? `Q${quarterMeta(qKey, today)?.quarter} ${review.cur} + 이전 ${review.carry}` : '잔디 미확인', tone: review.total ? 'warn' : null, onClick: onGoReview },
     { key: 'un', label: '담당 미배정 PT', n: unassigned, sub: '일정에서 배정', tone: unassigned ? 'red' : null, onClick: onGoUnassigned },
     { key: 'exc', label: '예외 승인 대기', n: exceptionCount, sub: '검토', tone: exceptionCount ? 'warn' : null, onClick: onGoExceptions },
   ];

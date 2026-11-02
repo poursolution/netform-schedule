@@ -25,7 +25,7 @@ const RES = {
   지원: ['#dbeafe', '#0F4C75', '#93c5fd'],
 };
 const VERIFY = {
-  verified: ['K-APT 검증', '#dcfce7', '#15803d'],
+  verified: ['잔디 검증', '#dcfce7', '#15803d'],
   needs_review: ['검토필요', '#fef3c7', '#b45309'],
   cancelled: ['취소공고', '#fef2f2', '#b91c1c'],
 };
@@ -98,6 +98,7 @@ export default function PerformanceWorkbench({
   onKaptCancel,         // (pt) => void
   onOpenKaptCandidates, // (pt) => void
   onOpenExceptions,     // () => void — 예외 승인 큐(#11a), 관리자만
+  onRevokeException,    // (pt, assignee) => void — 승인된 예외 취소, 관리자만
   onSaveMemo,           // (pt, assignee, text) => Promise<string 결과 문구>
   onBulkRequest,        // (pts) => void
   onBulkManualApprove,  // (pts) => void
@@ -330,7 +331,7 @@ export default function PerformanceWorkbench({
         {/* 큐 카드 */}
         <div style={{ display: 'grid', gridTemplateColumns: stacked ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))', gap: 12, padding: '12px 24px 0' }}>
           {[
-            { key: 'review', label: '검토필요 · K-APT 미매칭', dot: '#d97706', color: '#b45309', action: '처리 →' },
+            { key: 'review', label: '검토필요 · 잔디 미확인', dot: '#d97706', color: '#b45309', action: '처리 →' },
             { key: 'pending', label: '결과 미입력 · 지난 PT', dot: C.strong, color: C.text3, action: '입력 →' },
             { key: 'requested', label: '정산요청 · 확정 대기', dot: C.brand2, color: C.brand, action: '확정 →' },
           ].map(q => (
@@ -397,7 +398,6 @@ export default function PerformanceWorkbench({
                     <b style={{ color: C.brand }}>{nChecked}건 선택</b>
                     <button type="button" onClick={() => onBulkRequest && onBulkRequest(checkedRows.map(r => r.pt))} style={inlineBtn('outline')}>일괄 정산요청</button>
                     <button type="button" onClick={() => onBulkManualApprove && onBulkManualApprove(checkedRows.map(r => r.pt))} style={inlineBtn('outline')}>수동 승인</button>
-                    <button type="button" onClick={() => onBulkReverify && onBulkReverify(checkedRows.map(r => r.pt))} style={inlineBtn('secondary')}>K-APT 재검증</button>
                     <div style={{ flex: 1 }} />
                     <button type="button" onClick={() => setChecked({})} style={{ border: 0, background: 'transparent', color: C.text3, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>선택 해제</button>
                   </div>
@@ -406,7 +406,7 @@ export default function PerformanceWorkbench({
                   <input type="checkbox" aria-label="표시된 행 전체 선택" checked={rows.length > 0 && rows.every(r => checked[r.id])} onChange={e => setChecked(e.target.checked ? Object.fromEntries(rows.map(r => [r.id, true])) : {})} style={{ margin: 0, width: 14, height: 14 }} />
                   {compact
                     ? <><span>일자</span><span>현장 · 담당</span><span style={{ textAlign: 'center' }}>결과</span><span style={{ textAlign: 'right' }}>정산 · 금액</span></>
-                    : <><span>일자</span><span>현장 · 공종 · 공법</span><span>담당</span><span style={{ textAlign: 'center' }}>결과</span><span style={{ textAlign: 'center' }}>K-APT 검증</span><span style={{ textAlign: 'center' }}>정산</span><span style={{ textAlign: 'right' }}>금액</span></>}
+                    : <><span>일자</span><span>현장 · 공종 · 공법</span><span>담당</span><span style={{ textAlign: 'center' }}>결과</span><span style={{ textAlign: 'center' }}>잔디 검증</span><span style={{ textAlign: 'center' }}>정산</span><span style={{ textAlign: 'right' }}>금액</span></>}
                 </div>
               </>
             )}
@@ -482,7 +482,7 @@ export default function PerformanceWorkbench({
                 <div style={{ display: 'grid', gridTemplateColumns: compact ? 'repeat(3, minmax(0, 1fr))' : 'repeat(6, minmax(0, 1fr))', border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden' }}>
                   {[
                     ['unsettled', '미정산', C.text3, C.text, '결과 O · 요청 전'],
-                    ['needs_review', '검토필요', '#b45309', '#b45309', 'K-APT 미매칭', '#fffbeb'],
+                    ['needs_review', '검토필요', '#b45309', '#b45309', '잔디 미확인', '#fffbeb'],
                     ['requested', '정산요청', C.brand, C.brand, '담당자 체크 · 자동전환'],
                     ['confirmed', '정산확정', C.brand, C.brand, '관리자 확정'],
                     ['completed', '정산완료', '#15803d', '#15803d', '지급 완료'],
@@ -550,6 +550,7 @@ export default function PerformanceWorkbench({
             onKaptCancel={onKaptCancel}
             onOpenKaptCandidates={onOpenKaptCandidates}
             onOpenExceptions={onOpenExceptions}
+            onRevokeException={onRevokeException}
           />
         </div>
       </main>
@@ -617,7 +618,7 @@ function methodsOf(pt) {
 }
 
 function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, memoSaved, canMemo, onSaveMemo, onNextReview, onOpenSiteRow, onResult,
-  onToggleSettlementFlag, onToggleSelfPT, onKaptReverify, onKaptManualApprove, onKaptCancel, onOpenKaptCandidates, onOpenExceptions }) {
+  onToggleSettlementFlag, onToggleSelfPT, onKaptReverify, onKaptManualApprove, onKaptCancel, onOpenKaptCandidates, onOpenExceptions, onRevokeException }) {
   // 1열이면 목록 위(order -1)에 고정 없이 — 헤더(64px)에 가리지 않게 scrollMargin
   const place = stacked ? { order: -1, scrollMarginTop: 80 } : { position: 'sticky', top: 80, maxHeight: 'calc(100vh - 96px)' };
   if (!row) {
@@ -630,13 +631,18 @@ function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, 
   const stl = pt.settlement?.[row.main] || {};
   const xReq = pt.exceptionRequests?.[row.main];
   const xLabel = xReq?.type === 'no_bid_to_win' ? '공고문 없는 현장 신청됨' : '영업적 승리 신청됨';
-  const kapt = !row.has ? ['결과 입력 후 자동 검증', '승/무/패 입력 시 K-APT(data.go.kr) 자동 조회', C.muted, C.text3, C.line]
-    : row.verify === 'verified' ? ['K-APT 검증 완료', '공고 매칭 · 정산 대상 자동 전환', '#dcfce7', '#15803d', '#bbf7d0']
+  // 잔디 검증 칸 — 근거: 잔디 공고문 연결 / 관리자 승인 / 예외 승인
+  const jandiFiles = Object.values(pt.evidenceFiles || {}).filter(f => f && !f.suppressed);
+  const jandiBasis = jandiFiles.length ? `잔디 공고 · ${jandiFiles[0].filename || '연결됨'}${jandiFiles.length > 1 ? ` 외 ${jandiFiles.length - 1}건` : ''}`
+    : xReq?.status === 'approved' ? '예외 승인'
+    : (stl.manualVerified || stl.reviewBypassedBy) ? `관리자 승인${stl.reviewBypassedBy ? ` · ${stl.reviewBypassedBy}` : ''}`
+    : '공고 확인됨';
+  const kapt = !row.has ? ['결과 입력 후 잔디 검증', '승·무 입력 후 잔디 공고로 확인해요', C.muted, C.text3, C.line]
+    : row.verify === 'verified' ? ['잔디 검증 완료', jandiBasis, '#dcfce7', '#15803d', '#bbf7d0']
     : row.verify === 'cancelled' ? ['취소공고 확인됨', '발주처 취소 · 정산 제외 · 재공고 대기', '#fef2f2', '#b91c1c', '#fecaca']
-    : row.verify === 'needs_review' ? ['K-APT 공고 미매칭', kaptCandidateText(pt),'#fef3c7', '#b45309', '#fde68a']
-    : ['K-APT 검증 전', '아직 조회 기록이 없습니다', C.muted, C.text3, C.line];
-  // 검토필요인데 K-APT 조회 기록이 없는 건(근거 없이 정산요청된 무 등)도 승 검토필요와 같은 처리 버튼으로
-  const reviewFlow = row.has && (row.verify === 'needs_review' || (row.isReview && !row.verify));
+    : row.verify === 'needs_review' ? ['잔디 공고 확인 필요', '잔디 공고를 연결하거나 관리자 승인이 필요해요', '#fef3c7', '#b45309', '#fde68a']
+    : ['잔디 검증 전', '정산요청하면 잔디 공고로 확인해요', C.muted, C.text3, C.line];
+  const reviewFlow = row.has && row.verify === 'needs_review';
   const stepIdx = settlementStep(row);
   const steps = SETTLEMENT_STEPS.map((label, i) => {
     const done = i < stepIdx, cur = i === stepIdx, warn = cur && i === 1 && row.isReview;
@@ -667,6 +673,9 @@ function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, 
           {xReq?.status === 'pending' && (onOpenExceptions
             ? <button type="button" onClick={onOpenExceptions} title="예외 승인 큐 열기" style={{ ...chip('#dbeafe', C.brand), border: 0, cursor: 'pointer', fontFamily: 'inherit' }}>{xLabel} ›</button>
             : <span style={chip('#dbeafe', C.brand)}>{xLabel}</span>)}
+          {xReq?.status === 'approved' && onRevokeException && (
+            <button type="button" onClick={() => onRevokeException(pt, row.main)} title="예외 승인을 취소하면 원래 결과(무 등) 금액으로 돌아가요" style={{ ...chip('#f1f5f9', C.text2), border: `1px solid ${C.line}`, cursor: 'pointer', fontFamily: 'inherit' }}>{xReq.type === 'no_bid_to_win' ? '공고문 없는 현장' : '영업적 승리'} 승인됨 · 취소</button>
+          )}
           <button type="button" onClick={onNextReview} style={{ marginLeft: 'auto', height: 26, padding: '0 9px', border: `1px solid ${C.line}`, borderRadius: 7, background: '#fff', color: C.text2, fontSize: 11.5, cursor: 'pointer', fontFamily: 'inherit' }}>다음 검토 건 →</button>
         </div>
         <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-.02em', lineHeight: 1.3 }}>{pt.siteName}</div>
@@ -704,16 +713,13 @@ function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, 
           <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>{kapt[1]}</div>
           {reviewFlow && (
             <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-              {/* 공고 확인은 잔디 공고문(검색·연결·승인 패널)으로 — K-APT 사이트 검색은 재검증에서 */}
-              {onKaptManualApprove
-                ? <button type="button" onClick={() => onKaptManualApprove(pt, row.main)} style={inlineBtn('primary')}>잔디 공고 확인</button>
-                : onOpenKaptCandidates && <button type="button" onClick={() => onOpenKaptCandidates(pt)} style={inlineBtn('primary')}>후보 공고 확인</button>}
-              {onKaptReverify && <button type="button" onClick={() => onKaptReverify(pt)} style={inlineBtn('neutral')}>K-APT 재검증</button>}
+              {/* 공고 확인은 잔디 공고문(검색·연결·승인 패널)으로 */}
+              {onKaptManualApprove && <button type="button" onClick={() => onKaptManualApprove(pt, row.main)} style={inlineBtn('primary')}>잔디 공고 확인</button>}
               {onKaptCancel && <button type="button" onClick={() => onKaptCancel(pt)} style={inlineBtn('danger')}>취소공고</button>}
             </div>
           )}
-          {row.has && !row.verify && !reviewFlow && onKaptReverify && (
-            <div style={{ marginTop: 10 }}><button type="button" onClick={() => onKaptReverify(pt)} style={inlineBtn('neutral')}>K-APT 검증</button></div>
+          {row.has && !row.verify && onKaptManualApprove && row.result !== '패' && (
+            <div style={{ marginTop: 10 }}><button type="button" onClick={() => onKaptManualApprove(pt, row.main)} style={inlineBtn('neutral')}>잔디 공고 확인</button></div>
           )}
         </div>
         {siteHistory.length > 1 && (() => {
@@ -767,6 +773,9 @@ function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, 
             {onToggleSettlementFlag && flag('selfSales', '본인영업', stl.selfSales, c => onToggleSettlementFlag(pt, row.main, 'selfSales', c))}
             {onToggleSelfPT && flag('selfPT', '협약사 자체PT', pt.selfPT, c => onToggleSelfPT(pt, c))}
             {onToggleSettlementFlag && flag('settlementExcluded', '정산예외', stl.settlementExcluded, c => onToggleSettlementFlag(pt, row.main, 'settlementExcluded', c))}
+            {/* 정산완료는 분기정산 '완료 처리'로만 켜고, 여기서는 잘못 찍힌 완료를 끄기만 — 끄면 이번 분기 정산으로 이월 */}
+            {onToggleSettlementFlag && (stl.completed === true || stl.status === 'completed')
+              && flag('completed', '정산완료', true, c => { if (!c) onToggleSettlementFlag(pt, row.main, 'completed', false); })}
           </div>
         )}
         {logs.length > 0 && (

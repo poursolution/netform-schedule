@@ -86,7 +86,7 @@ export default function SettlementPage({
   const isReviewPt = (pt, a) => pt && pt.kaptVerified?.status === 'needs_review' && !Object.keys(pt.evidenceFiles || {}).length && !pt.settlement?.[a]?.manualVerified;
   const verifyPill = pt => {
     const st = pt?.kaptVerified?.status;
-    if (Object.keys(pt?.evidenceFiles || {}).length || st === 'verified') return <span style={pill('#dcfce7', '#15803d')}>K-APT 검증</span>;
+    if (Object.keys(pt?.evidenceFiles || {}).length || st === 'verified') return <span style={pill('#dcfce7', '#15803d')}>잔디 검증</span>;
     if (st === 'cancelled') return <span style={pill('#fef2f2', '#b91c1c')}>취소공고</span>;
     if (st === 'needs_review') return <span style={pill('#fef3c7', '#b45309')}>검토필요</span>;
     if (st === 'pending-admin-review') return <span style={pill('#dbeafe', C.brand)}>관리자 확인 대기</span>;
