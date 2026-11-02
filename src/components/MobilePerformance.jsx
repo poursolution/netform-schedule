@@ -16,7 +16,7 @@ const C = {
   text2: '#475569', text3: '#64748b', text4: '#94a3b8', red: '#b91c1c',
 };
 const RES = { 승: ['#dcfce7', '#15803d', '#86efac'], 무: ['#fef3c7', '#b45309', '#fcd34d'], 패: ['#fef2f2', '#b91c1c', '#fca5a5'], 지원: ['#dbeafe', '#0F4C75', '#93c5fd'] };
-const VERIFY = { verified: ['K-APT 검증', '#dcfce7', '#15803d'], needs_review: ['검토필요', '#fef3c7', '#b45309'], cancelled: ['취소공고', '#fef2f2', '#b91c1c'] };
+const VERIFY = { verified: ['잔디 검증', '#dcfce7', '#15803d'], needs_review: ['검토필요', '#fef3c7', '#b45309'], cancelled: ['취소공고', '#fef2f2', '#b91c1c'] };
 const STL = {
   unsettled: ['미정산', '#f1f5f9', '#475569'], needs_review: ['검토필요', '#fef3c7', '#b45309'], requested: ['정산요청', '#dbeafe', '#0F4C75'],
   confirmed: ['정산확정', '#BBE1FA', '#0F4C75'], completed: ['정산완료', '#dcfce7', '#15803d'], excluded: ['제외', '#f8fafc', '#94a3b8'],
@@ -216,14 +216,13 @@ function DetailSheet({ row, onClose, onNextReview, onSetResult, onToggleSettleme
   const st = row.stl ? STL[stlKey(row)] : null;
   const stl = pt.settlement?.[row.main] || {};
   const stepIdx = settlementStep(row);
-  const kapt = !row.has ? ['결과 입력 후 자동 검증', '승/무/패 입력 시 K-APT 자동 조회', C.muted, C.text3, C.line]
-    : row.verify === 'verified' ? ['K-APT 검증 완료', '공고 매칭 · 정산 대상 자동 전환', '#dcfce7', '#15803d', '#bbf7d0']
+  const kapt = !row.has ? ['결과 입력 후 잔디 검증', '승·무 입력 후 잔디 공고로 확인해요', C.muted, C.text3, C.line]
+    : row.verify === 'verified' ? ['잔디 검증 완료', '잔디 공고 · 관리자 승인으로 확인됨', '#dcfce7', '#15803d', '#bbf7d0']
     : row.verify === 'cancelled' ? ['취소공고 확인됨', '발주처 취소 · 정산 제외', '#fef2f2', '#b91c1c', '#fecaca']
-    : row.verify === 'needs_review' ? ['K-APT 공고 미매칭', kaptCandidateText(pt), '#fef3c7', '#b45309', '#fde68a']
-    : ['K-APT 검증 전', '아직 조회 기록이 없습니다', C.muted, C.text3, C.line];
-  // 검토필요인데 K-APT 조회 기록이 없는 건(근거 없이 정산요청된 무 등)도 승 검토필요와 같은 처리 버튼으로
-  const kaptBtns = row.has && (row.verify === 'needs_review' || (row.isReview && !row.verify))
-    ? [onKaptManualApprove ? ['잔디 공고 확인', () => onKaptManualApprove(pt, row.main), 'primary'] : onOpenKaptCandidates && ['후보 확인', () => onOpenKaptCandidates(pt), 'primary'], onKaptManualApprove && onOpenKaptCandidates && ['K-APT 재검증', () => onOpenKaptCandidates(pt), 'neutral'], onKaptCancel && ['취소공고', () => onKaptCancel(pt), 'danger']].filter(Boolean)
+    : row.verify === 'needs_review' ? ['잔디 공고 확인 필요', '잔디 공고를 연결하거나 관리자 승인이 필요해요', '#fef3c7', '#b45309', '#fde68a']
+    : ['잔디 검증 전', '정산요청하면 잔디 공고로 확인해요', C.muted, C.text3, C.line];
+  const kaptBtns = row.has && row.verify === 'needs_review'
+    ? [onKaptManualApprove && ['잔디 공고 확인', () => onKaptManualApprove(pt, row.main), 'primary'], onKaptCancel && ['취소공고', () => onKaptCancel(pt), 'danger']].filter(Boolean)
     : [];
   const btnTone = t => t === 'primary' ? { border: 0, background: C.brand, color: '#fff', fontWeight: 700 }
     : t === 'danger' ? { border: '1px solid #fecaca', background: '#fff', color: C.red, fontWeight: 600 }

@@ -114,15 +114,29 @@ export function listSettlementStatus(pt, assignee) {
   return hasSettlementEvidence(pt, assignee) ? SETTLEMENT_STATUS.REQUESTED : SETTLEMENT_STATUS.NEEDS_REVIEW;
 }
 
+// 잔디 검증 — 화면의 검증 칸 기준. 잔디 공고문 연결 · 관리자 승인 · 예외 승인이면 확인됨(K-APT 조회 결과는 근거로만 남김).
+export function jandiVerified(pt, assignee) {
+  if (!pt) return false;
+  if (pt.evidenceFiles && Object.values(pt.evidenceFiles).some(f => f && !f.suppressed)) return true;
+  const s = pt.settlement?.[assignee] || {};
+  if (s.manualVerified === true || s.reviewBypassedBy) return true;
+  if (isExceptionApproved(pt, assignee)) return true;
+  return pt.kaptVerified?.status === 'verified';
+}
+
 export function buildRow(pt, today = todayKey(), now = null) {
   const tokens = parseAssignees(pt.ptAssignee);
   const main = tokens[0] || '';
   const sups = tokens.slice(1);
   const result = (main && pt.results?.[main]) || pt.result || null;
   const has = !!result;
-  const kapt = pt.kaptVerified?.status || null;
-  const verify = has ? kapt : null;
   const stl = has && main ? listSettlementStatus(pt, main) : null;
+  // 검증 칸: 취소공고 > 잔디 검증 완료 > 검토필요(잔디 공고 확인 필요) > 없음
+  const verify = !has ? null
+    : pt.kaptVerified?.status === 'cancelled' ? 'cancelled'
+    : jandiVerified(pt, main) ? 'verified'
+    : (stl === SETTLEMENT_STATUS.NEEDS_REVIEW || pt.kaptVerified?.status === 'needs_review') ? 'needs_review'
+    : null;
   const calc = has && main ? calculateSettlementAmount(pt, main) : null;
   const superseded = has && !!main && stl === SETTLEMENT_STATUS.EXCLUDED && isSupersededStl(pt, main);
   const date = pt.date || '';
@@ -147,8 +161,8 @@ export function buildRow(pt, today = todayKey(), now = null) {
   };
 }
 
-// 정산 단계 0~5 (결과 입력 / K-APT 검증 / 정산요청 / 정산확정 / 정산완료 / 끝) — 상세 패널·모바일 시트 공통
-export const SETTLEMENT_STEPS = ['결과 입력', 'K-APT 검증', '정산요청', '정산확정', '정산완료'];
+// 정산 단계 0~5 (결과 입력 / 잔디 검증 / 정산요청 / 정산확정 / 정산완료 / 끝) — 상세 패널·모바일 시트 공통
+export const SETTLEMENT_STEPS = ['결과 입력', '잔디 검증', '정산요청', '정산확정', '정산완료'];
 export function settlementStep(row) {
   if (!row?.has) return 0;
   if (row.stl === 'excluded') return 1;

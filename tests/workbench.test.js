@@ -153,7 +153,7 @@ test('검토필요라도 수동 승인 후 정산요청을 걸면 검토필요 �
   const row = buildRow(pt, TODAY);
   assert.equal(row.isReview, false);
   assert.equal(row.isRequested, true);
-  assert.equal(row.verify, 'needs_review');
+  assert.equal(row.verify, 'verified', '관리자 승인이면 잔디 검증 완료로 보인다');
   assert.equal(FILTERS.review(row), false);
   assert.equal(settlementTargets([pt]).byStatus.needs_review, 0);
   assert.equal(staffStats([pt], ['정정훈'])[0].review, 0);

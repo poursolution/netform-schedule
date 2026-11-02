@@ -209,7 +209,7 @@ export default function MainDashboard({
       {/* 처리할 것 4 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
         <button type="button" onClick={onGoReview} style={queueBtn(review.total > 0 ? '#fffbeb' : '#fff', review.total > 0 ? '#fde68a' : C.line)}>
-          <span style={qTitle('#b45309')}>{dot('#d97706')}검토필요 · K-APT 미매칭</span>
+          <span style={qTitle('#b45309')}>{dot('#d97706')}검토필요 · 잔디 미확인</span>
           <span style={{ display: 'flex', alignItems: 'baseline', width: '100%' }}>{queueNum(review.total)}<span style={go}>실적에서 처리 →</span></span>
           <span style={{ fontSize: 11.5, color: C.text3 }}>Q{reviewQ} {review.cur}{review.carry ? ` + 이전 분기 ${review.carry}` : ''}</span>
         </button>

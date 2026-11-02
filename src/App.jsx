@@ -3966,6 +3966,19 @@ const SETTLEMENT_BADGE_STYLE = {
             if (!window.confirm(`✅ 정산예외 해제\n\n현장: ${pt.siteName || '-'}\n담당: ${a}\n사유: ${cur.settlementExcludedReason || '-'}\n\n해제 시 다시 정산 대상에 포함됩니다. 진행?`)) return;
             patch = { [`${base}/settlementExcluded`]: false, [`${base}/settlementExcludedAt`]: null, [`${base}/settlementExcludedBy`]: null, [`${base}/settlementExcludedReason`]: null };
           }
+        } else if (flag === 'completed' && !checked) {
+          // 실제로 지급 안 됐는데 정산완료가 찍힌 건 — 완료를 풀고 정산요청으로 되돌려 이번 분기 정산에 이월
+          if (!canManageSettlement()) { alert('정산완료 해제는 관리자 또는 한준엽만 할 수 있습니다.'); return; }
+          if (cur.completedQuarter) { alert(`${cur.completedQuarter} 분기정산에서 완료 처리된 건입니다.\n분기정산 화면의 '확정으로 되돌리기'로 풀어 주세요.`); return; }
+          const input = window.prompt(`↩ 정산완료 해제\n\n현장: ${pt.siteName || '-'}\n담당: ${a}\n완료 표시: ${String(cur.completedAt || '').slice(0, 10)} ${cur.completedBy || ''}\n\n해제하면 정산요청 상태로 돌아가 이번 분기 정산에 들어갑니다.\n사유를 입력해 주세요 (필수):`, '실제 지급 안 됨');
+          if (input === null) return;
+          reasonText = (input || '').trim();
+          if (!reasonText) { alert('사유 미입력 — 정산완료 해제 취소'); return; }
+          patch = {
+            [`${base}/completed`]: false, [`${base}/completedAt`]: null, [`${base}/completedBy`]: null, [`${base}/completedQuarter`]: null,
+            [`${base}/status`]: 'requested', [`${base}/requested`]: true,
+            [`${base}/completionUndoneAt`]: nowISO, [`${base}/completionUndoneBy`]: by, [`${base}/completionUndoneReason`]: reasonText,
+          };
         } else return;
         try {
           await writeWorkbenchPatch(pt, patch, [a]);
@@ -3975,6 +3988,33 @@ const SETTLEMENT_BADGE_STYLE = {
           if (flag === 'settlementExcluded') {
             try { logActivity('settlement_excluded_toggle', { ptId: pt.id, assignee: a, on: checked, reason: reasonText, by }); } catch {}
           }
+          if (flag === 'completed') {
+            try { logActivity('settlement_completed_undo', { ptId: pt.id, assignee: a, reason: reasonText, by }); } catch {}
+          }
+        } catch (e) { alert('저장 실패: ' + e.message); }
+      };
+
+      // 승인된 예외(영업적 승리 등) 취소 — 예외 승인 창의 [되돌리기]는 창이 열려 있을 때만 돼서, 나중에 바로잡을 길이 없었음
+      const workbenchRevokeException = async (pt, a) => {
+        const req = pt.exceptionRequests?.[a];
+        if (!req || req.status !== 'approved') return;
+        const label = req.type === 'no_bid_to_win' ? '공고문 없는 현장' : '영업적 승리';
+        const stl = pt.settlement?.[a] || {};
+        if (stl.completed === true || stl.status === 'completed') { alert('정산완료된 건은 먼저 정산완료를 해제해 주세요.'); return; }
+        const input = window.prompt(`↩ ${label} 승인 취소\n\n현장: ${pt.siteName || '-'}\n담당: ${a}\n\n취소하면 원래 결과(${pt.results?.[a] || pt.result || '-'}) 금액으로 정산돼요.\n사유를 입력해 주세요 (필수):`, '');
+        if (input === null) return;
+        const reason = (input || '').trim();
+        if (!reason) { alert('사유 미입력 — 취소하지 않았어요'); return; }
+        const nowISO = new Date().toISOString();
+        const by = currentUser?.name || 'admin';
+        try {
+          await writeWorkbenchPatch(pt, {
+            [`exceptionRequests/${a}/status`]: 'rejected',
+            [`exceptionRequests/${a}/reviewNote`]: `승인 취소: ${reason}`,
+            [`exceptionRequests/${a}/reviewedAt`]: nowISO,
+            [`exceptionRequests/${a}/reviewedBy`]: by,
+          }, [a]);
+          try { logActivity('exception_revoked', { ptId: pt.id, assignee: a, type: req.type, reason, by }); } catch {}
         } catch (e) { alert('저장 실패: ' + e.message); }
       };
 
@@ -10530,6 +10570,7 @@ const SETTLEMENT_BADGE_STYLE = {
                         onKaptManualApprove={canFinalizeSettlementReview() ? workbenchOpenReview : undefined}
                         onKaptCancel={workbenchKaptCancel}
                         onOpenExceptions={currentUser?.isAdmin ? () => setShowExceptionQueueModal(true) : undefined}
+                        onRevokeException={currentUser?.isAdmin ? workbenchRevokeException : undefined}
                         onSaveMemo={currentUser?.isAdmin ? workbenchSaveMemo : undefined}
                         onBulkRequest={workbenchBulkRequest}
                         onBulkManualApprove={canFinalizeSettlementReview() ? workbenchBulkManualApprove : undefined}
