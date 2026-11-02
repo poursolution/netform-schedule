@@ -3659,6 +3659,21 @@ const SETTLEMENT_BADGE_STYLE = {
           const cachedExpiresAt = Number(file.signedReadUrlExpiresAt || 0);
           let fileUrl = cachedUrl && cachedExpiresAt > Date.now() + 60_000 ? cachedUrl : '';
 
+          // 1순위: Storage SDK 로 바로 (VPS 를 거치지 않음)
+          if (!fileUrl && storage) {
+            try {
+              let storagePath = file.storagePath || '';
+              if (!storagePath && database) {
+                storagePath = (await database.ref(`evidence/${fileId}/storagePath`).once('value')).val() || '';
+              }
+              if (String(storagePath).startsWith('evidence/jandi/')) {
+                fileUrl = await storage.ref(storagePath).getDownloadURL();
+              }
+            } catch (sdkError) {
+              console.warn('[jandi-evidence] storage SDK 실패 → Worker 로 재시도', sdkError?.message);
+            }
+          }
+
           if (!fileUrl) {
             if (!kaptWorkerUrl) throw new Error('K-APT Worker URL이 설정되어 있지 않습니다.');
             const response = await fetch(`${kaptWorkerUrl.replace(/\/$/, '')}/jandi-evidence-url`, {
@@ -3668,7 +3683,7 @@ const SETTLEMENT_BADGE_STYLE = {
             });
             const result = await response.json().catch(() => ({}));
             if (!response.ok || result.status !== 'ok' || !result.url) {
-              throw new Error(result.error || `HTTP ${response.status}`);
+              throw new Error(response.status === 404 ? '원문 파일을 찾지 못했습니다.' : (result.error || `HTTP ${response.status}`));
             }
             fileUrl = result.url;
           }
