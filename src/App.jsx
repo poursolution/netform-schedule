@@ -3756,6 +3756,34 @@ const SETTLEMENT_BADGE_STYLE = {
         }
       };
 
+      // 잘못 연결한 잔디 공고문 연결 해제 — 파일(evidence)은 그대로 두고 이 실적과의 연결만 끊는다. 누가 언제 끊었는지 evidence 쪽에 남긴다.
+      const unlinkSettlementJandiEvidence = async (fileId, file = {}) => {
+        const panel = settlementReviewPanel;
+        if (!panel?.ptId || !fileId || !database) return;
+        if (!canFinalizeSettlementReview()) {
+          alert('잔디 공고문 연결 해제는 한준엽 또는 관리자만 가능합니다.');
+          return;
+        }
+        if (!window.confirm(`이 공고문 연결을 해제할까요?\n\n${file.filename || fileId}\n\n파일은 지워지지 않고, 이 실적(${panel.siteName})과의 연결만 끊깁니다. 필요하면 후보에서 다시 [파일 연결]할 수 있어요.`)) return;
+        setSettlementReviewBusy(true);
+        try {
+          const nowISO = new Date().toISOString();
+          await database.ref().update({
+            [`pt/${panel.ptId}/evidenceFiles/${fileId}`]: null,
+            [`evidence/${fileId}/matchedPtIds/${panel.ptId}`]: null,
+            [`evidence/${fileId}/unlinkedPtIds/${panel.ptId}`]: { by: currentUser?.name || 'admin', at: nowISO },
+          });
+          const dropFile = (files) => { const next = { ...(files || {}) }; delete next[fileId]; return next; };
+          setPtSchedules(prev => prev.map(pt => pt.id === panel.ptId ? ({ ...pt, evidenceFiles: dropFile(pt.evidenceFiles) }) : pt));
+          setSettlementReviewPanel(prev => prev ? ({ ...prev, rawData: { ...prev.rawData, evidenceFiles: dropFile(prev.rawData?.evidenceFiles) } }) : prev);
+          setSettlementReviewCandidates(prev => prev.map(item => item.fileId === fileId ? ({ ...item, alreadyLinked: false }) : item));
+        } catch (error) {
+          alert('연결 해제 실패: ' + error.message);
+        } finally {
+          setSettlementReviewBusy(false);
+        }
+      };
+
       const refreshJandiEvidence = async () => {
         if (!canFinalizeSettlementReview()) {
           alert('최신 잔디 공고 수집은 한준엽 또는 관리자만 가능합니다.');
@@ -18622,13 +18650,19 @@ tr.suppressed td.fname{color:#64748b;}
 
                       {evidenceFiles.length > 0 && (
                         <div style={{ marginBottom: 10, padding: '8px 10px', borderRadius: 8, background: '#f0fdf4', border: '1px solid #bbf7d0' }}>
-                          {evidenceFiles.slice(0, 3).map(([fileId, file]) => (
+                          {evidenceFiles.map(([fileId, file]) => (
                             <div key={fileId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
                               <div title={file.filename || fileId} style={{ flex: 1, minWidth: 0, fontSize: 11, color: '#166534', lineHeight: 1.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>• {file.filename || fileId}</div>
                               <button onClick={() => openSettlementJandiEvidence(fileId, file)} disabled={settlementReviewOpeningFileId === fileId}
                                 style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid #86efac', background: '#fff', color: '#15803d', fontSize: 10, fontWeight: 850, cursor: settlementReviewOpeningFileId === fileId ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
                                 {settlementReviewOpeningFileId === fileId ? '여는 중…' : '원문 보기'}
                               </button>
+                              {canFinalize && (
+                                <button onClick={() => unlinkSettlementJandiEvidence(fileId, file)} disabled={settlementReviewBusy}
+                                  style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid #fecaca', background: '#fff', color: '#b91c1c', fontSize: 10, fontWeight: 850, cursor: settlementReviewBusy ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
+                                  연결 해제
+                                </button>
+                              )}
                             </div>
                           ))}
                         </div>
