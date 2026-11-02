@@ -298,14 +298,15 @@ export default function PerformanceWorkbench({
                   <b>엑셀 (.xlsx)</b>
                   <span style={{ display: 'block', fontSize: 11.5, color: C.text4, marginTop: 1 }}>{quarterKey.replace('-', ' ')} 담당자별 요약 · 상세</span>
                 </button>
-                <div style={{ height: 1, background: C.line, margin: '4px 6px' }} />
+                {(exportActions || []).length > 0 && <div style={{ height: 1, background: C.line, margin: '4px 6px' }} />}
                 {(exportActions || []).map(a => (
                   <button key={a.key} type="button" role="menuitem" onClick={() => { setExportOpen(false); a.onClick(quarterKey); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 0, background: 'transparent', borderRadius: 7, fontSize: 13, color: C.text, cursor: 'pointer', fontFamily: 'inherit' }}>{a.label}</button>
                 ))}
               </div>
             )}
           </div>
-          <button type="button" onClick={() => onOpenQuarterSettlement && onOpenQuarterSettlement(quarterKey)} style={primaryBtn()}>분기정산</button>
+          {/* 분기정산은 관리자·한준엽만 — 담당자 계정은 버튼 없음 */}
+          {onOpenQuarterSettlement && <button type="button" onClick={() => onOpenQuarterSettlement(quarterKey)} style={primaryBtn()}>분기정산</button>}
         </div>
 
         {/* KPI 바 */}

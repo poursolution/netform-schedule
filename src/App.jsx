@@ -132,7 +132,7 @@ import ResultRecordModal from './components/ResultRecordModal.jsx';
 import MyPage from './components/MyPage.jsx';
 import ScheduleEditModal from './components/ScheduleEditModal.jsx';
 import SettlementPage from './components/SettlementPage.jsx';
-import { quarterMeta } from './utils/workbench.js';
+import { quarterMeta, parseAssignees } from './utils/workbench.js';
 import { finalConfirmBlockers, todoItems } from './utils/staffHome.js';
 import { buildBriefJandiMessage, briefRecipients, unassignedUpcoming } from './utils/morningBrief.js';
 import { planImport, undoUpdates } from './utils/importPlan.js';
@@ -10544,24 +10544,27 @@ const SETTLEMENT_BADGE_STYLE = {
                   <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '24px' }}>실적관리는 로그인 후 이용 가능합니다.</p>
                   <button onClick={() => setShowLoginModal(true)} style={{ padding: '14px 32px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', fontSize: '15px', fontWeight: '600', cursor: 'pointer' }}>로그인하기</button>
                 </div>
-              ) : (!isMobile && hasFullDataViewAccess(currentUser) && !useLegacyPerformance) ? (
-                // 실적 작업대(#2a) — 관리자·전체조회 계정 데스크톱 전용. 기존 헤더 위를 덮는 전체 화면.
+              ) : (!isMobile && !useLegacyPerformance) ? (
+                // 실적 작업대(#2a) — 데스크톱 전체 화면. 담당자 계정은 본인이 들어간 PT만, 사이드바는 담당자용.
                 <div style={{ position: 'fixed', inset: 0, zIndex: 500, overflow: 'auto', background: '#f8fafc', fontFamily: '"Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif' }}>
                   {(() => {
                     const canSettle = currentUser?.isAdmin || currentUser?.name === '한준엽';
+                    const full = hasFullDataViewAccess(currentUser);
+                    const me = currentUser?.name;
                     const qNum = q => `${q.slice(-1)}분기`;
+                    const staffSidebar = sp => ({ ...sp, nav: sp.nav.map(n => ({ ...n, active: n.key === 'perf' })), onOpenLegacy: () => setUseLegacyPerformance(true) });
                     return (
                       <PerformanceWorkbench
-                        ptSchedules={ptSchedules}
-                        assigneeNames={assigneeList}
+                        ptSchedules={full ? ptSchedules : ptSchedules.filter(pt => parseAssignees(pt.ptAssignee).includes(me) || pt.results?.[me] != null)}
+                        assigneeNames={full ? assigneeList : [me]}
                         currentUser={currentUser}
                         confirmStateOf={workbenchConfirmState}
-                        {...shellSidebarProps('perf', () => setUseLegacyPerformance(true))}
+                        {...(full ? shellSidebarProps('perf', () => setUseLegacyPerformance(true)) : staffSidebar(staffSidebarProps()))}
                         initialFilter={perfInit.filter}
-                        initialWho={perfInit.who}
+                        initialWho={full ? perfInit.who : me}
                         initialQuarterKey={perfInit.quarterKey}
                         onOpenQuarterSettlement={canSettle ? openSettlement : undefined}
-                        exportActions={[
+                        exportActions={!full ? [] : [
                           { key: 'excel', label: 'CSV (예전 보고서)', onClick: q => exportQuarterlyExcel(+q.slice(0, 4), qNum(q), 'all') },
                           { key: 'excel-noamt', label: 'CSV (금액 제외)', onClick: q => exportQuarterlyExcel(+q.slice(0, 4), qNum(q), 'all', false) },
                           { key: 'pdf', label: 'PDF', onClick: q => exportToPDF(+q.slice(0, 4), qNum(q)) },
@@ -10573,7 +10576,7 @@ const SETTLEMENT_BADGE_STYLE = {
                         onKaptReverify={kaptWorkerUrl ? workbenchOpenKaptVerify : undefined}
                         onOpenKaptCandidates={kaptWorkerUrl ? workbenchOpenKaptVerify : undefined}
                         onKaptManualApprove={canFinalizeSettlementReview() ? workbenchOpenReview : undefined}
-                        onKaptCancel={workbenchKaptCancel}
+                        onKaptCancel={canSettle ? workbenchKaptCancel : undefined}
                         onOpenExceptions={currentUser?.isAdmin ? () => setShowExceptionQueueModal(true) : undefined}
                         onRevokeException={currentUser?.isAdmin ? workbenchRevokeException : undefined}
                         onSaveMemo={currentUser?.isAdmin ? workbenchSaveMemo : undefined}
@@ -10597,7 +10600,7 @@ const SETTLEMENT_BADGE_STYLE = {
                   로그인: <strong>{currentUser.name}</strong>님
                 </span>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                  {useLegacyPerformance && !isMobile && hasFullDataViewAccess(currentUser) && (
+                  {useLegacyPerformance && !isMobile && (
                     <button onClick={() => setUseLegacyPerformance(false)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#0F4C75', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>새 실적 작업대</button>
                   )}
                   {('Notification' in window) && (/Android/i.test(navigator.userAgent) || window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches) && (
