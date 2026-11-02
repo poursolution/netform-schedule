@@ -42,7 +42,8 @@ export default function ScheduleWorkbench({
   initialView = 'month',
   initialListFilter = 'upcoming',
   initialSearch = '',
-  sidebar,              // AppSidebar props
+  initialWho = 'all',   // 담당자 계정은 본인부터
+  sidebar,             // AppSidebar props
   onAdd,                // (dateStr|null) => void
   onAddKind,            // (dateStr, kind) => void — #14a 팝오버에서 종류를 고르면 입력 창
   onQuickAdd,           // ({ type, date, title, assignees, time }) => Promise<id> — 개인·휴가 바로 저장
@@ -59,7 +60,7 @@ export default function ScheduleWorkbench({
   const [selDate, setSelDate] = useState(todayStr);
   const [typeFilter, setTypeFilter] = useState('all');
   const [search, setSearch] = useState(initialSearch);
-  const [who, setWho] = useState('all');
+  const [who, setWho] = useState(initialWho);
   const [wt, setWt] = useState('all');
   const [listFilter, setListFilter] = useState(initialListFilter);
   const [listYear, setListYear] = useState('all');
