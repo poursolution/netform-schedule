@@ -61,9 +61,11 @@ export function isQuarterSettlementTarget(pt, assignee, quarterKey, opts = {}) {
   const includeLegacyCarryover = opts.includeLegacyCarryover === true
     && pt.date < bounds.start
     && !carryoverExcluded.has(assignee);
-  if (!inRange && !includeLegacyCarryover) return false;
-
   const stl = pt.settlement?.[assignee] || {};
+  // 이 분기에 완료 처리된 건은 PT 날짜와 무관하게 이 분기 목록에 남는다(되돌리기도 여기서)
+  const completedHere = stl.completedQuarter === quarterKey && (stl.completed === true || stl.status === 'completed');
+  if (!inRange && !includeLegacyCarryover && !completedHere) return false;
+
   // 예외 승인은 승인 시점에 requested·manualVerified 를 같이 저장한다(utils/exceptions.js) — 승인만으로 대상이 되진 않음
   //   (예전에 승인만 되고 정산요청 안 된 지난 분기 건이 이월로 갑자기 급여에 들어가지 않게)
   if (!(stl.requested === true || stl.manualVerified === true)) return false;

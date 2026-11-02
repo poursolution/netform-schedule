@@ -106,6 +106,12 @@ test('완료 처리한 그 분기 목록에는 남고, 다음 분기부터 빠�
   assert.equal(isQuarterSettlementTarget(pt, '한준엽', '2026-Q3', { includeLegacyCarryover: true }), false);
 });
 
+test('앞 분기 PT를 이 분기에 완료 처리했으면 이월이 꺼져 있어도 이 분기 목록에 남는다', () => {
+  const pt = makePt({ date: '2026-09-03', settlement: { 한준엽: { requested: true, completed: true, status: 'completed', completedQuarter: '2026-Q4' } } });
+  assert.equal(isQuarterSettlementTarget(pt, '한준엽', '2026-Q4'), true);
+  assert.equal(isQuarterSettlementTarget(pt, '한준엽', '2026-Q3'), false);
+});
+
 test('quarter attribution is based on PT date, not request date', () => {
   const pt = makePt({
     date: '2026-03-15',
