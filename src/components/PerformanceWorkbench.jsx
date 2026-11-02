@@ -693,9 +693,11 @@ function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, 
           <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>{kapt[1]}</div>
           {reviewFlow && (
             <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-              {onOpenKaptCandidates && <button type="button" onClick={() => onOpenKaptCandidates(pt)} style={inlineBtn('primary')}>후보 공고 확인</button>}
-              {onKaptReverify && <button type="button" onClick={() => onKaptReverify(pt)} style={inlineBtn('neutral')}>재검증</button>}
-              {onKaptManualApprove && <button type="button" onClick={() => onKaptManualApprove(pt, row.main)} style={inlineBtn('neutral')}>수동 승인</button>}
+              {/* 공고 확인은 잔디 공고문(검색·연결·승인 패널)으로 — K-APT 사이트 검색은 재검증에서 */}
+              {onKaptManualApprove
+                ? <button type="button" onClick={() => onKaptManualApprove(pt, row.main)} style={inlineBtn('primary')}>잔디 공고 확인</button>
+                : onOpenKaptCandidates && <button type="button" onClick={() => onOpenKaptCandidates(pt)} style={inlineBtn('primary')}>후보 공고 확인</button>}
+              {onKaptReverify && <button type="button" onClick={() => onKaptReverify(pt)} style={inlineBtn('neutral')}>K-APT 재검증</button>}
               {onKaptCancel && <button type="button" onClick={() => onKaptCancel(pt)} style={inlineBtn('danger')}>취소공고</button>}
             </div>
           )}

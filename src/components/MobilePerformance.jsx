@@ -223,7 +223,7 @@ function DetailSheet({ row, onClose, onNextReview, onSetResult, onToggleSettleme
     : ['K-APT 검증 전', '아직 조회 기록이 없습니다', C.muted, C.text3, C.line];
   // 검토필요인데 K-APT 조회 기록이 없는 건(근거 없이 정산요청된 무 등)도 승 검토필요와 같은 처리 버튼으로
   const kaptBtns = row.has && (row.verify === 'needs_review' || (row.isReview && !row.verify))
-    ? [onOpenKaptCandidates && ['후보 확인', () => onOpenKaptCandidates(pt), 'primary'], onKaptManualApprove && ['수동 승인', () => onKaptManualApprove(pt, row.main), 'neutral'], onKaptCancel && ['취소공고', () => onKaptCancel(pt), 'danger']].filter(Boolean)
+    ? [onKaptManualApprove ? ['잔디 공고 확인', () => onKaptManualApprove(pt, row.main), 'primary'] : onOpenKaptCandidates && ['후보 확인', () => onOpenKaptCandidates(pt), 'primary'], onKaptManualApprove && onOpenKaptCandidates && ['K-APT 재검증', () => onOpenKaptCandidates(pt), 'neutral'], onKaptCancel && ['취소공고', () => onKaptCancel(pt), 'danger']].filter(Boolean)
     : [];
   const btnTone = t => t === 'primary' ? { border: 0, background: C.brand, color: '#fff', fontWeight: 700 }
     : t === 'danger' ? { border: '1px solid #fecaca', background: '#fff', color: C.red, fontWeight: 600 }
