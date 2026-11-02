@@ -35,6 +35,7 @@ import {
 } from './utils/exceptions.js';
 import { sendJandiNotification } from './utils/jandi.js';
 import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculateSettlementAmount, EXCLUSION_REASONS, shouldAutoTransitionToTarget, buildAutoTransitionPatch, AUTO_TRANSITION_START } from './utils/settlement.js';
+import { buildSiteHistory } from './utils/siteHistory.js';
 import { aggregateQuarterSettlement, isQuarterSettlementTarget, settlementRowsOf, quarterSettlementSummary, SETTLEMENT_EXCLUDED_NAMES } from './utils/quarterlySettlementCore.js';
 import { buildVerificationOnResultClick, VERIFICATION_STATUS } from './utils/verification.js';
 import { hasFullDataViewAccess } from './utils/accessControl.js';
@@ -18618,6 +18619,13 @@ tr.suppressed td.fname{color:#64748b;}
             const syncStale = !syncTime || Date.now() - syncTime > 6 * 60 * 60 * 1000;
             const canFinalize = canFinalizeSettlementReview();
             const sectionStyle = { border: '1px solid #e2e8f0', borderRadius: 12, padding: 14, background: '#fff' };
+            const siteHistory = buildSiteHistory(ptSchedules, { ...panel.rawData, id: panel.ptId }, panel.assignee);
+            const dupSuspects = siteHistory.filter(r => r.duplicateSuspect);
+            const historyPill = (r) => r.duplicateSuspect ? ['#fee2e2', '#b91c1c', `중복 의심 · ${r.statusLabel}`]
+              : r.statusKey === 'completed' || r.statusKey === 'confirmed' ? ['#dcfce7', '#166534', r.statusLabel]
+              : r.statusKey === 'requested' ? ['#dbeafe', '#1d4ed8', r.statusLabel]
+              : r.statusKey === 'needs_review' ? ['#fef3c7', '#92400e', r.statusLabel]
+              : ['#f1f5f9', '#64748b', r.statusLabel];
             return (
               <div
                 role="presentation"
@@ -18649,6 +18657,42 @@ tr.suppressed td.fname{color:#64748b;}
                         </div>
                       ))}
                     </div>
+
+                    {/* 같은 단지 전체 내역 — 이미 받은 건이 있는지(중복 정산) 확인용 */}
+                    <section style={{ ...sectionStyle, borderColor: dupSuspects.length ? '#fca5a5' : '#e2e8f0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 850, color: '#0f172a' }}>같은 단지 전체 내역</div>
+                          <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>주소가 같거나 단지명이 겹치는 PT · 담당자별</div>
+                        </div>
+                        <span style={{ padding: '4px 9px', borderRadius: 999, fontSize: 10, fontWeight: 800, background: '#f1f5f9', color: '#475569' }}>{siteHistory.length}건</span>
+                      </div>
+                      {dupSuspects.length > 0 && (
+                        <div role="alert" style={{ marginBottom: 8, padding: '8px 10px', borderRadius: 8, background: '#fef2f2', border: '1px solid #fecaca', fontSize: 11, color: '#991b1b', lineHeight: 1.5 }}>
+                          같은 담당자·같은 공종으로 이미 정산된 건이 {dupSuspects.length}건 있어요. 같은 공고면 이 건은 <b>정산예외</b>로 빼 주세요.
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {siteHistory.map(r => {
+                          const [pbg, pfg, plabel] = historyPill(r);
+                          return (
+                            <div key={r.id + '_' + r.assignee}
+                              style={{ display: 'grid', gridTemplateColumns: '64px 1fr auto', alignItems: 'center', gap: 8, padding: '7px 9px', borderRadius: 8, background: r.isTarget ? '#eff6ff' : r.duplicateSuspect ? '#fff7f7' : '#f8fafc', border: `1px solid ${r.isTarget ? '#bfdbfe' : r.duplicateSuspect ? '#fecaca' : 'transparent'}` }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: '#334155', fontVariantNumeric: 'tabular-nums' }}>{(r.date || '-').slice(2).replace(/-/g, '.')}</div>
+                              <div style={{ minWidth: 0 }}>
+                                <div title={r.workType} style={{ fontSize: 11.5, fontWeight: 700, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {r.isTarget && <span style={{ color: '#1d4ed8' }}>이 건 · </span>}{r.workType || r.mainCategory || '공종 미입력'}
+                                </div>
+                                <div title={r.siteName} style={{ fontSize: 10, color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {r.assignee} · {r.result || '결과 없음'}{r.amount ? ` · ${Number(r.amount).toLocaleString('ko-KR')}원` : ''} · {r.siteName}
+                                </div>
+                              </div>
+                              <span style={{ padding: '3px 8px', borderRadius: 999, fontSize: 10, fontWeight: 800, background: pbg, color: pfg, whiteSpace: 'nowrap' }}>{plabel}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
 
                     <section style={sectionStyle}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
