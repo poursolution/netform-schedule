@@ -127,7 +127,7 @@ export default function SettlementPage({
             <button type="button" aria-expanded={exportOpen} onClick={() => setExportOpen(o => !o)} style={btn('secondary')}>내보내기 ▾</button>
             {exportOpen && (
               <div role="menu" style={{ position: 'absolute', right: 0, top: 38, zIndex: 30, background: '#fff', border: `1px solid ${C.line}`, borderRadius: 10, padding: 4, minWidth: 200, boxShadow: '0 8px 24px rgba(15,23,42,.12)' }}>
-                <button type="button" role="menuitem" disabled={!isQuarterClosed} title={isQuarterClosed ? '' : '분기 마감 후 가능'} onClick={() => { setExportOpen(false); downloadQuarterClosingExcel(); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 0, borderRadius: 6, background: 'none', fontSize: 13, fontFamily: 'inherit', cursor: isQuarterClosed ? 'pointer' : 'not-allowed', color: isQuarterClosed ? C.ink : C.text4 }}>마감 엑셀 (PT·주말)</button>
+                <button type="button" role="menuitem" title={isQuarterClosed ? '' : '마감 전 — 지금 기준 내용'} onClick={() => { setExportOpen(false); downloadQuarterClosingExcel(); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 0, borderRadius: 6, background: 'none', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', color: C.ink }}>산정내역서 엑셀 (PT·주말){isQuarterClosed ? '' : ' · 마감 전'}</button>
                 <button type="button" role="menuitem" onClick={() => { setExportOpen(false); onOpenReport(); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 0, borderRadius: 6, background: 'none', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', color: C.ink }}>김유림 보고서 (미리보기·다운로드)</button>
               </div>
             )}

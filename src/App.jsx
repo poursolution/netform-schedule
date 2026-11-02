@@ -6725,11 +6725,8 @@ const SETTLEMENT_BADGE_STYLE = {
         const quarterClosedBy = totals?.closedBy;
 
         // 마감 후 김유림 급여 반영용 표준 Excel 다운로드
+        // 산정내역서 엑셀(1분기 양식: A:H PT · J:N 담당자 요약 · P:S 주말출근) — 마감 전에도 받아 볼 수 있게, 파일명에 '마감전' 표시
         const downloadQuarterClosingExcel = async () => {
-          if (!isQuarterClosed) {
-            alert('분기 마감 후 엑셀을 다운로드할 수 있습니다.');
-            return;
-          }
           const match = String(monthlySettlementMonth || '').match(/^(\d{4})-Q([1-4])$/);
           if (!match) {
             alert('분기 형식이 올바르지 않습니다.');
@@ -6747,7 +6744,7 @@ const SETTLEMENT_BADGE_STYLE = {
               getQuarterSettlementOptions(monthlySettlementMonth),
             );
             const blob = await generateExcelBlob(report);
-            downloadBlob(blob, `POUR_분기보고서_${year}_${quarter}분기.xlsx`);
+            downloadBlob(blob, `${String(year).slice(2)}년_${quarter}분기_PT및_연차_산정내역서${isQuarterClosed ? '' : '_마감전'}.xlsx`);
           } catch (e) {
             alert('마감 엑셀 생성 실패: ' + e.message);
           } finally {
