@@ -125,6 +125,7 @@ export default function SettlementPage({
           <div style={{ flex: 1 }} />
           <button type="button" onClick={loadData} disabled={loading} style={btn('secondary')}>{loading ? '불러오는 중…' : '새로고침'}</button>
           <div style={{ position: 'relative' }}>
+            <button type="button" onClick={downloadQuarterClosingExcel} title="1분기 산정내역서와 같은 양식 (PT·담당자 요약·주말출근)" style={{ ...btn('secondary'), marginRight: 8 }}>엑셀 다운로드</button>
             <button type="button" aria-expanded={exportOpen} onClick={() => setExportOpen(o => !o)} style={btn('secondary')}>내보내기 ▾</button>
             {exportOpen && (
               <div role="menu" style={{ position: 'absolute', right: 0, top: 38, zIndex: 30, background: '#fff', border: `1px solid ${C.line}`, borderRadius: 10, padding: 4, minWidth: 200, boxShadow: '0 8px 24px rgba(15,23,42,.12)' }}>
