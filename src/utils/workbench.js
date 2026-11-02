@@ -81,8 +81,15 @@ export function isPtOver(pt, today = todayKey(), now = null) {
  */
 // 목록용 정산 상태 — 검토필요라도 담당자/관리자가 정산요청을 걸었으면(수동 정산 연결) 검토필요 목록에서 빼고 정산요청으로 본다.
 // K-APT 미매칭 자체는 검증 pill(verify)에 그대로 남는다. 정산 대상 판정(settlement.js)은 바꾸지 않는다.
+// 중복대체(다른 PT 로 이미 정산 — superseded)는 분기정산에서 빠지므로(quarterlySettlementCore) 목록에서도 제외로 본다.
+export const isSupersededStl = (pt, assignee) => {
+  const s = pt?.settlement?.[assignee];
+  return !!s && (s.superseded === true || s.status === 'superseded');
+};
+
 export function listSettlementStatus(pt, assignee) {
   const st = getSettlementStatus(pt, assignee);
+  if (isSupersededStl(pt, assignee) && st !== SETTLEMENT_STATUS.UNSETTLED) return SETTLEMENT_STATUS.EXCLUDED;
   if (st !== SETTLEMENT_STATUS.NEEDS_REVIEW) return st;
   const s = pt?.settlement?.[assignee] || {};
   return s.requested === true || s.status === SETTLEMENT_STATUS.REQUESTED ? SETTLEMENT_STATUS.REQUESTED : st;
@@ -98,6 +105,7 @@ export function buildRow(pt, today = todayKey(), now = null) {
   const verify = has ? kapt : null;
   const stl = has && main ? listSettlementStatus(pt, main) : null;
   const calc = has && main ? calculateSettlementAmount(pt, main) : null;
+  const superseded = has && !!main && stl === SETTLEMENT_STATUS.EXCLUDED && isSupersededStl(pt, main);
   const date = pt.date || '';
   return {
     id: pt.id,
@@ -111,7 +119,8 @@ export function buildRow(pt, today = todayKey(), now = null) {
     has,
     verify,
     stl,
-    amount: calc ? calc.amount : null,
+    superseded,
+    amount: calc ? (superseded ? 0 : calc.amount) : null,
     isPending: !has && isPtOver(pt, today, now),
     isFuture: !has && !!date && !isPtOver(pt, today, now),
     isReview: stl === SETTLEMENT_STATUS.NEEDS_REVIEW,

@@ -8,6 +8,7 @@ import AppSidebar from './AppSidebar.jsx';
 import EmptyArt from './EmptyArt.jsx';
 import { downloadPerformanceXlsx } from '../utils/performanceExport.js';
 import { calculateSettlementAmount, deriveAssigneeResult, getQuarterKey } from '../utils/settlement.js';
+import { buildSiteHistory } from '../utils/siteHistory.js';
 
 // 실적 작업대 (#2a) — 디자인 핸드오프 design_handoff_pour_sales_ops 기준.
 // 데이터 저장·정산 계산은 전부 App 이 넘겨준 콜백과 settlement.js 에서 처리한다.
@@ -35,7 +36,9 @@ const STL = {
   confirmed: ['정산확정', '#BBE1FA', '#0F4C75'],
   completed: ['정산완료', '#dcfce7', '#15803d'],
   excluded: ['제외', '#f8fafc', '#94a3b8'],
+  superseded: ['중복대체', '#f8fafc', '#94a3b8'],
 };
+const stlKey = r => (r.superseded ? 'superseded' : r.stl);
 const RESULT_KEYS = ['승', '무', '패', '지원'];
 
 const chip = (bg, fg) => ({ display: 'inline-block', padding: '3px 7px', borderRadius: 999, background: bg, color: fg, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' });
@@ -521,6 +524,7 @@ export default function PerformanceWorkbench({
             panelRef={detailRef}
             stacked={stacked}
             row={selected}
+            siteHistory={selected ? buildSiteHistory(ptSchedules, selected.pt, selected.main) : []}
             memo={memo}
             setMemo={v => { setMemo(v); setMemoSaved(''); }}
             memoSaved={memoSaved}
@@ -546,7 +550,7 @@ function SiteRow({ r, compact, selected, checked, today, onSelect, onCheck }) {
   const pt = r.pt;
   const methods = methodsOf(pt);
   const v = r.verify ? VERIFY[r.verify] : null;
-  const st = r.stl ? STL[r.stl] : null;
+  const st = r.stl ? STL[stlKey(r)] : null;
   const c = r.has ? RES[r.result] : null;
   if (compact) {
     // 두 줄 행 — 위: 현장 / 아래: 담당 · 공종, K-APT는 칩으로. 오른쪽: 정산 칩 위 · 금액 아래
@@ -601,7 +605,7 @@ function methodsOf(pt) {
   return [];
 }
 
-function DetailPanel({ panelRef, stacked, row, memo, setMemo, memoSaved, canMemo, onSaveMemo, onNextReview, onResult,
+function DetailPanel({ panelRef, stacked, row, siteHistory = [], memo, setMemo, memoSaved, canMemo, onSaveMemo, onNextReview, onResult,
   onToggleSettlementFlag, onToggleSelfPT, onKaptReverify, onKaptManualApprove, onKaptCancel, onOpenKaptCandidates, onOpenExceptions }) {
   // 1열이면 목록 위(order -1)에 고정 없이 — 헤더(64px)에 가리지 않게 scrollMargin
   const place = stacked ? { order: -1, scrollMarginTop: 80 } : { position: 'sticky', top: 80, maxHeight: 'calc(100vh - 96px)' };
@@ -611,7 +615,7 @@ function DetailPanel({ panelRef, stacked, row, memo, setMemo, memoSaved, canMemo
   const pt = row.pt;
   const methods = methodsOf(pt);
   const v = row.verify ? VERIFY[row.verify] : null;
-  const st = row.stl ? STL[row.stl] : null;
+  const st = row.stl ? STL[stlKey(row)] : null;
   const stl = pt.settlement?.[row.main] || {};
   const xReq = pt.exceptionRequests?.[row.main];
   const xLabel = xReq?.type === 'no_bid_to_win' ? '공고문 없는 현장 신청됨' : '영업적 승리 신청됨';
@@ -697,6 +701,32 @@ function DetailPanel({ panelRef, stacked, row, memo, setMemo, memoSaved, canMemo
             <div style={{ marginTop: 10 }}><button type="button" onClick={() => onKaptReverify(pt)} style={inlineBtn('neutral')}>K-APT 검증</button></div>
           )}
         </div>
+        {siteHistory.length > 1 && (() => {
+          const dup = siteHistory.filter(h => h.duplicateSuspect).length;
+          return (
+            <div style={{ borderTop: `1px solid ${C.line2}`, paddingTop: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.text3 }}>같은 단지 전체 내역</span>
+                <span style={{ marginLeft: 'auto', fontSize: 11, color: C.text4 }}>{siteHistory.length}건</span>
+              </div>
+              {dup > 0 && (
+                <div role="alert" style={{ marginBottom: 6, padding: '8px 10px', borderRadius: 8, background: '#fef2f2', border: '1px solid #fecaca', fontSize: 12, color: '#991b1b', lineHeight: 1.5 }}>
+                  같은 담당·같은 공종으로 이미 정산된 건이 {dup}건 있어요. 같은 공고면 아래 <b>정산예외</b>로 빼 주세요.
+                </div>
+              )}
+              {siteHistory.map(h => (
+                <div key={h.id + '_' + h.assignee} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '5px 8px', borderRadius: 7, background: h.isTarget ? '#eff6ff' : h.duplicateSuspect ? '#fff7f7' : 'transparent' }}>
+                  <span style={{ color: C.text3, flex: 'none', width: 60, fontVariantNumeric: 'tabular-nums' }}>{ymd(h.date, true)}</span>
+                  <span title={`${h.workType} · ${h.siteName}`} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {h.isTarget && <b style={{ color: C.brand }}>이 건 · </b>}{h.workType || h.mainCategory || '공종 미입력'}
+                    <span style={{ color: C.text4 }}> · {h.assignee} {h.result}{h.amount ? ` · ${formatWon(h.amount)}` : ''}</span>
+                  </span>
+                  <span style={h.duplicateSuspect ? chip('#fee2e2', '#b91c1c') : chip(C.muted, C.text3)}>{h.duplicateSuspect ? `중복 의심 · ${h.statusLabel}` : h.statusLabel}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         <div style={{ display: 'flex', flexDirection: 'column', borderTop: `1px solid ${C.line2}`, paddingTop: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: C.text3, marginBottom: 4 }}>정산 단계</div>
           {steps.map(s => (
