@@ -79,6 +79,15 @@ export function isPtOver(pt, today = todayKey(), now = null) {
 /**
  * PT 1건 → 작업대 행. 담당 기준은 주담당(첫 토큰).
  */
+// 목록용 정산 상태 — 검토필요라도 담당자/관리자가 정산요청을 걸었으면(수동 정산 연결) 검토필요 목록에서 빼고 정산요청으로 본다.
+// K-APT 미매칭 자체는 검증 pill(verify)에 그대로 남는다. 정산 대상 판정(settlement.js)은 바꾸지 않는다.
+export function listSettlementStatus(pt, assignee) {
+  const st = getSettlementStatus(pt, assignee);
+  if (st !== SETTLEMENT_STATUS.NEEDS_REVIEW) return st;
+  const s = pt?.settlement?.[assignee] || {};
+  return s.requested === true || s.status === SETTLEMENT_STATUS.REQUESTED ? SETTLEMENT_STATUS.REQUESTED : st;
+}
+
 export function buildRow(pt, today = todayKey(), now = null) {
   const tokens = parseAssignees(pt.ptAssignee);
   const main = tokens[0] || '';
@@ -87,7 +96,7 @@ export function buildRow(pt, today = todayKey(), now = null) {
   const has = !!result;
   const kapt = pt.kaptVerified?.status || null;
   const verify = has ? kapt : null;
-  const stl = has && main ? getSettlementStatus(pt, main) : null;
+  const stl = has && main ? listSettlementStatus(pt, main) : null;
   const calc = has && main ? calculateSettlementAmount(pt, main) : null;
   const date = pt.date || '';
   return {
@@ -193,7 +202,7 @@ export function settlementTargets(pts) {
   for (const pt of pts) {
     for (const a of parseAssignees(pt.ptAssignee)) {
       if (!(pt.results?.[a] || pt.result)) continue;
-      const st = getSettlementStatus(pt, a);
+      const st = listSettlementStatus(pt, a);
       byStatus[st] = (byStatus[st] || 0) + 1;
       if (st === SETTLEMENT_STATUS.EXCLUDED || st === SETTLEMENT_STATUS.COMPLETED) continue;
       const amt = calculateSettlementAmount(pt, a).amount;
@@ -213,7 +222,7 @@ export function staffStats(pts, names) {
       if (res === '승') w += 1;
       else if (res === '무') d += 1;
       else if (res === '패') l += 1;
-      const st = getSettlementStatus(pt, name);
+      const st = listSettlementStatus(pt, name);
       if (st === SETTLEMENT_STATUS.NEEDS_REVIEW) review += 1;
       if (st !== SETTLEMENT_STATUS.EXCLUDED) est += calculateSettlementAmount(pt, name).amount;
     }

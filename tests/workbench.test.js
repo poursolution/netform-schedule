@@ -148,3 +148,15 @@ test('다음 검토 건 — 다음 검토필요 행, 끝이면 처음, 혼자면
   assert.equal(nextReviewId(rows, 'y'), 'x');
   assert.equal(nextReviewId([{ id: 'x', isReview: true }], 'x'), null);
 });
+test('검토필요라도 정산요청을 걸면 검토필요 목록에서 빠지고 정산요청으로 잡힌다', () => {
+  const pt = { id: 'x', date: '2026-10-26', ptAssignee: '정정훈', results: { 정정훈: '승' }, kaptVerified: { status: 'needs_review' }, settlement: { 정정훈: { requested: true } } };
+  const row = buildRow(pt, TODAY);
+  assert.equal(row.isReview, false);
+  assert.equal(row.isRequested, true);
+  assert.equal(row.verify, 'needs_review');
+  assert.equal(FILTERS.review(row), false);
+  assert.equal(settlementTargets([pt]).byStatus.needs_review, 0);
+  assert.equal(staffStats([pt], ['정정훈'])[0].review, 0);
+  const plain = buildRow({ ...pt, settlement: {} }, TODAY);
+  assert.equal(plain.isReview, true);
+});
