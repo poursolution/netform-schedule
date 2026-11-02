@@ -11,6 +11,7 @@ import {
   getQuarterClosingDate,
   getPayrollMonthByQuarterKey,
 } from './settlement.js';
+import { isExceptionApproved } from './exceptions.js';
 
 export function parseAssignees(value) {
   return [...new Set(
@@ -87,12 +88,30 @@ export const isSupersededStl = (pt, assignee) => {
   return !!s && (s.superseded === true || s.status === 'superseded');
 };
 
+// 정산 근거 — 분기정산 검증 게이트(quarterlyReport isPtVerified, OPERATIONS.md §7)와 같은 기준.
+// 감리·자체PT·패는 근거 불필요, 나머지(승·무·지원)는 K-APT 검증 / 수동 승인 / 잔디 공고 / 공고번호 / 예외 승인 중 하나.
+export function hasSettlementEvidence(pt, assignee) {
+  if (!pt) return false;
+  if (pt.selfPT) return true;
+  if (/감리/.test(`${pt.workType || ''}|${pt.siteName || ''}`)) return true;
+  if ((pt.results?.[assignee] || pt.result) === '패') return true;
+  if (isExceptionApproved(pt, assignee)) return true;
+  if (pt.kaptVerified?.status === 'verified') return true;
+  const s = pt.settlement?.[assignee] || {};
+  if (s.manualVerified === true || s.reviewBypassedBy) return true;
+  if (pt.evidenceFiles && Object.keys(pt.evidenceFiles).length > 0) return true;
+  return !!String(pt.bidNo || '').trim();
+}
+
 export function listSettlementStatus(pt, assignee) {
   const st = getSettlementStatus(pt, assignee);
   if (isSupersededStl(pt, assignee) && st !== SETTLEMENT_STATUS.UNSETTLED) return SETTLEMENT_STATUS.EXCLUDED;
-  if (st !== SETTLEMENT_STATUS.NEEDS_REVIEW) return st;
   const s = pt?.settlement?.[assignee] || {};
-  return s.requested === true || s.status === SETTLEMENT_STATUS.REQUESTED ? SETTLEMENT_STATUS.REQUESTED : st;
+  const requested = st === SETTLEMENT_STATUS.REQUESTED
+    || (st === SETTLEMENT_STATUS.NEEDS_REVIEW && (s.requested === true || s.status === SETTLEMENT_STATUS.REQUESTED));
+  if (!requested) return st;
+  // 정산요청이 걸렸어도 근거가 없으면 검토필요 — 무처럼 K-APT 조회를 안 거친 건이 그대로 정산대기로 가지 않게
+  return hasSettlementEvidence(pt, assignee) ? SETTLEMENT_STATUS.REQUESTED : SETTLEMENT_STATUS.NEEDS_REVIEW;
 }
 
 export function buildRow(pt, today = todayKey(), now = null) {
