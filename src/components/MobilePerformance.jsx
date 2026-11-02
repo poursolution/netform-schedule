@@ -221,7 +221,8 @@ function DetailSheet({ row, onClose, onNextReview, onSetResult, onToggleSettleme
     : row.verify === 'cancelled' ? ['취소공고 확인됨', '발주처 취소 · 정산 제외', '#fef2f2', '#b91c1c', '#fecaca']
     : row.verify === 'needs_review' ? ['K-APT 공고 미매칭', kaptCandidateText(pt), '#fef3c7', '#b45309', '#fde68a']
     : ['K-APT 검증 전', '아직 조회 기록이 없습니다', C.muted, C.text3, C.line];
-  const kaptBtns = row.has && row.verify === 'needs_review'
+  // 검토필요인데 K-APT 조회 기록이 없는 건(근거 없이 정산요청된 무 등)도 승 검토필요와 같은 처리 버튼으로
+  const kaptBtns = row.has && (row.verify === 'needs_review' || (row.isReview && !row.verify))
     ? [onOpenKaptCandidates && ['후보 확인', () => onOpenKaptCandidates(pt), 'primary'], onKaptManualApprove && ['수동 승인', () => onKaptManualApprove(pt, row.main), 'neutral'], onKaptCancel && ['취소공고', () => onKaptCancel(pt), 'danger']].filter(Boolean)
     : [];
   const btnTone = t => t === 'primary' ? { border: 0, background: C.brand, color: '#fff', fontWeight: 700 }

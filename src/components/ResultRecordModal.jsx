@@ -4,6 +4,7 @@ import MethodChips from './MethodChips.jsx';
 import { judgeResultByMethods } from '../utils/technologies.js';
 import { calculateSettlementAmount, getQuarterKeyByConfirmDate } from '../utils/settlement.js';
 import { parseAssignees } from '../utils/workbench.js';
+import { kaptBidSearchUrl } from '../utils/kaptVerify.js';
 
 // 결과 기록 모달 (#10a) · 모바일 시트 (#10b) — 기존 승리/무승부/패배 사유 입력 3개 모달을 하나로.
 // 저장은 기존 saveResultWithReason 그대로 (필드 동일: 공고번호·공고문 공법·원인분석·경쟁사·예외 신청).
@@ -111,7 +112,7 @@ export default function ResultRecordModal({ data, setData, pt, onSave, onClose, 
             <div style={{ fontSize: 13, fontWeight: 700, color: '#15803d' }}>✓ K-APT 공고 자동 매칭</div>
             <div style={{ fontSize: 12.5, color: C.text2, marginTop: 4 }}>{[bidNo && `공고 ${bidNo}`, kv.matchedSite || kv.extractedSite || pt.siteName, pt.workType].filter(Boolean).join(' · ')}</div>
             <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr 1fr' : 'auto auto', justifyContent: mobile ? 'stretch' : 'start', gap: 6, marginTop: 8 }}>
-              <a href={`https://www.k-apt.go.kr/bid/bidList.do?type=3&aptName=${encodeURIComponent(pt.siteName || '')}`} target="_blank" rel="noreferrer" style={{ ...smallBtn(false), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>공고 열기</a>
+              <a href={kaptBidSearchUrl(pt.siteName, pt.date)} target="_blank" rel="noreferrer" style={{ ...smallBtn(false), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>공고 열기</a>
               <button type="button" onClick={() => onKaptSearch(pt)} style={smallBtn(false)}>다른 공고</button>
             </div>
           </div>
