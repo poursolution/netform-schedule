@@ -245,8 +245,11 @@ export default function ScheduleWorkbench({
                 <div ref={gridRef} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gridAutoRows: 'minmax(104px, 1fr)', flex: 1, gap: 1, background: C.line2, borderBottom: `1px solid ${C.line2}` }}>
                   {cells.map((ds, i) => {
                     if (!ds) return <div key={`b${i}`} style={{ minHeight: 104, background: C.blank }} />;
-                    const items = byDate[ds] || [];
+                    // 칸 안 순서: 미배정 PT → PT → 나머지(휴가 등) — 시간순이면 저녁 PT가 "+N건 더" 안에 묻혀 미배정이 안 보였음
+                    const dayAll = byDate[ds] || [];
+                    const items = [...dayAll.filter(isUn), ...dayAll.filter(s => s.type === 'pt' && !isUn(s)), ...dayAll.filter(s => s.type !== 'pt' && !isUn(s))];
                     const shown = items.length <= fitAll ? items.length : fitMore;
+                    const hiddenUn = items.slice(shown).filter(isUn).length;
                     const dow = i % 7, isToday = ds === todayStr, isSel = ds === selDate, isPop = pop?.date === ds;
                     const hol = holidayName ? holidayName(ds) : null;
                     const red = dow === 0 || !!hol;
@@ -265,7 +268,7 @@ export default function ScheduleWorkbench({
                             </button>
                           );
                         })}
-                        {items.length > shown && <button type="button" onClick={e => { e.stopPropagation(); setSelDate(ds); }} style={{ alignSelf: 'flex-start', padding: '0 5px', border: 0, background: 'none', fontSize: 11, color: C.text3, cursor: 'pointer', fontFamily: 'inherit' }}>+{items.length - shown}건 더</button>}
+                        {items.length > shown && <button type="button" onClick={e => { e.stopPropagation(); setSelDate(ds); }} style={{ alignSelf: 'flex-start', padding: '0 5px', border: 0, background: 'none', fontSize: 11, color: hiddenUn ? '#b91c1c' : C.text3, fontWeight: hiddenUn ? 700 : 400, cursor: 'pointer', fontFamily: 'inherit' }}>+{items.length - shown}건 더{hiddenUn ? ` · 미배정 ${hiddenUn}` : ''}</button>}
                       </div>
                     );
                   })}
