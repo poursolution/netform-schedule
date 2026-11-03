@@ -48,3 +48,5 @@ e2e/results/
 # Claude Code 로컬 설정 (프로젝트 스킬은 공유)
 .claude/*
 !.claude/skills/
+!.claude/settings.json
+!.claude/hooks/
