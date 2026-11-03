@@ -156,6 +156,7 @@ export function buildRow(pt, today = todayKey(), now = null) {
     amount: calc ? (superseded ? 0 : calc.amount) : null,
     isPending: !has && isPtOver(pt, today, now),
     isFuture: !has && !!date && !isPtOver(pt, today, now),
+    supervisionPending: calc?.reason === 'supervision_pending_input', // 감리 — 금액 입력 대기
     isReview: stl === SETTLEMENT_STATUS.NEEDS_REVIEW,
     isRequested: stl === SETTLEMENT_STATUS.REQUESTED,
   };
@@ -195,6 +196,7 @@ export const FILTERS = {
   review: r => r.isReview,
   requested: r => r.isRequested,
   carry: r => !!r.carry,
+  supervision: r => r.supervisionPending,
 };
 
 // who: '전체' | 담당자 이름 | { label, names } (메인 팀별 현황에서 팀 단위로 넘어올 때)

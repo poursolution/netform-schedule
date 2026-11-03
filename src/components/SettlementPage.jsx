@@ -79,14 +79,21 @@ export default function SettlementPage({
   const steps = [
     { label: '분기정산 생성', meta: totals?.generatedAt ? `${fmtAt(totals.generatedAt)} · ${totals.generatedBy || ''}` : '아직 생성 전', done: !!totals?.generatedAt,
       action: <button type="button" disabled={loading} onClick={triggerGenerate} style={btn('secondary', 30)}>{totals?.generatedAt ? '정산 갱신' : '정산 생성'}</button> },
-    { label: '담당자 1R 확인', meta: `${confirmedCount} / ${n} 이상없음`, done: n > 0 && confirmedCount === n,
+    // 분기 마감 = 담당자 확인을 (앱 밖에서라도) 다 받았다는 뜻 — 1R·2R 단계를 완료로 본다
+    { label: '담당자 1R 확인', meta: isQuarterClosed && confirmedCount < n ? '마감 — 확인 완료' : `${confirmedCount} / ${n} 이상없음`, done: (n > 0 && confirmedCount === n) || isQuarterClosed,
       action: <button type="button" disabled={!unconfirmed.length || loading} onClick={async () => { const k = await onRemind(unconfirmed); if (k !== null) setSent(`미확인 ${unconfirmed.length}명에게 잔디 리마인드 ${k}건 발송됨 · 활동 로그 기록`); }} style={{ ...btn('outline', 30), ...(!unconfirmed.length ? disabledBtn : {}) }}>미확인 {unconfirmed.length}명 리마인드</button> },
     { label: '검증요청 처리', meta: `검토필요 ${reviewTotal}건${totalOpenReviews ? ` · 수정요청 ${totalOpenReviews}건` : ''}`, done: reviewTotal === 0 && totalOpenReviews === 0,
       action: <button type="button" disabled={!reviewTotal} onClick={onGoReview} style={{ ...btn('primary', 30), ...(!reviewTotal ? disabledBtn : {}) }}>검토필요 {reviewTotal}건 처리</button> },
-    { label: '최종확정 (2R)', meta: `${finalConfirmedCount} / ${n}`, done: allFinal,
+    { label: '최종확정 (2R)', meta: isQuarterClosed && !allFinal ? '마감 — 확정 완료' : `${finalConfirmedCount} / ${n}`, done: allFinal || isQuarterClosed,
       action: <button type="button" disabled={!canRequestFinal || loading} title={canRequestFinal ? '' : '전원 1R 확인 + 수정요청 처리 후 가능'} onClick={requestFinalConfirmation} style={{ ...btn('secondary', 30), ...(!canRequestFinal ? disabledBtn : {}) }}>최종확정 요청 발송</button> },
-    { label: '김유림 발송', meta: reported ? '발송 완료' : '전원 확정 후', done: reported,
-      action: <button type="button" disabled={!allFinal} title={allFinal ? '' : '전원 최종확정 후 가능'} onClick={onOpenReport} style={{ ...btn('secondary', 30), ...(!allFinal ? disabledBtn : {}) }}>PDF + Excel 발송</button> },
+    { label: '김유림 발송', meta: reported ? '발송 완료' : isQuarterClosed ? '마감됨 — 받아서 보내기' : '전원 확정 후', done: reported,
+      // 담당자 확정을 앱 밖에서 끝내고 분기 마감한 경우도 있어, 마감됐으면 발송 가능. 엑셀은 바로 받기
+      action: (allFinal || isQuarterClosed)
+        ? <span style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button type="button" onClick={downloadQuarterClosingExcel} style={btn('primary', 30)}>엑셀 받기</button>
+            <button type="button" onClick={onOpenReport} style={btn('secondary', 30)}>PDF · 발송</button>
+          </span>
+        : <button type="button" disabled title="전원 최종확정 또는 분기 마감 후 가능" style={{ ...btn('secondary', 30), ...disabledBtn }}>PDF + Excel 발송</button> },
   ];
   const current = steps.findIndex(s => !s.done);
 
