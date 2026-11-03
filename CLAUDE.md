@@ -56,6 +56,7 @@
 - worktree에 node_modules 없음 — `npm i` 먼저
 - Worker: **운영 소스는 `C:\Users\User\Documents\ChatGPT\영업운영시스템\deploy-source\`** (최신 release 폴더의 `candidate/`). 이 저장소 `cloudflare-worker/` 는 옛 버전 — 배포 금지(`cloudflare-worker/NOT-LIVE.md`)
 - 운영 화면(Pages)은 이 저장소 main 병합 시 자동 배포. 영업운영시스템 쪽에서 `wrangler pages deploy` 하면 서로 덮어씀 — 2026-11-01부터 이 저장소가 기준
+- **위험 작업 차단 훅**: `.claude/hooks/guard.cjs` (PreToolUse) — wrangler·firebase 배포, 스크립트의 운영 DB 쓰기, 전역 git 설정, 실행 정책 변경, main·강제 push 를 막고 `gh pr merge` 는 사용자 승인을 받음. 막히면 우회하지 말고 사용자에게 알릴 것
 
 ## 6. 주요 파일
 
