@@ -43,6 +43,7 @@ export default function ScheduleWorkbench({
   initialListFilter = 'upcoming',
   initialSearch = '',
   initialWho = 'all',   // 담당자 계정은 본인부터
+  hideResults = false,  // 게스트 — PT 결과(승·무·패) 표시 안 함
   sidebar,             // AppSidebar props
   onAdd,                // (dateStr|null) => void
   onAddKind,            // (dateStr, kind) => void — #14a 팝오버에서 종류를 고르면 입력 창
@@ -297,7 +298,7 @@ export default function ScheduleWorkbench({
                     {dayItems.map(s => {
                       const names = assigneesOf(s);
                       const mainName = names[0];
-                      const result = s.type === 'pt' ? ((mainName && s.results?.[mainName]) || s.result) : null;
+                      const result = s.type === 'pt' && !hideResults ? ((mainName && s.results?.[mainName]) || s.result) : null;
                       const review = s.type === 'pt' && result && s.kaptVerified?.status === 'needs_review' && !Object.keys(s.evidenceFiles || {}).length;
                       const un = isUn(s);
                       return (
