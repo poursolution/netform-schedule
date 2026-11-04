@@ -39,7 +39,7 @@ import { deriveAssigneeResult, getSettlementStatus, SETTLEMENT_STATUS, calculate
 import { buildSiteHistory } from './utils/siteHistory.js';
 import { aggregateQuarterSettlement, isQuarterSettlementTarget, settlementRowsOf, quarterSettlementSummary, SETTLEMENT_EXCLUDED_NAMES } from './utils/quarterlySettlementCore.js';
 import { buildVerificationOnResultClick, VERIFICATION_STATUS } from './utils/verification.js';
-import { hasFullDataViewAccess } from './utils/accessControl.js';
+import { hasFullDataViewAccess, isGuestAccount } from './utils/accessControl.js';
 
 // 지금 정산하는 분기 = 오늘이 속한 분기의 바로 전 분기 (11월이면 Q3, 1월이면 Q4)
 const settlingQuarterKey = (d = new Date()) => {
@@ -1846,7 +1846,8 @@ const SETTLEMENT_BADGE_STYLE = {
         usersRef.on('value', (snapshot) => {
           const data = snapshot.val();
           if (data) {
-            setUserAccounts({ ...defaultAccounts, ...data });
+            // 기본값을 섞지 않는다 — 섞으면 삭제한 기본 계정이 빈 비밀번호로 되살아남
+            setUserAccounts(data);
           }
         });
 
@@ -1861,6 +1862,14 @@ const SETTLEMENT_BADGE_STYLE = {
           qcRef.off();
         };
       }, []);
+
+      // 게스트는 일정만 — 실적·금액이 나오는 메인·실적·홈(마이페이지)에 어떤 버튼으로 와도 일정으로 돌려보낸다
+      useEffect(() => {
+        if (!isGuestAccount(currentUser)) return;
+        if (showPerformance) setShowPerformance(false);
+        if (showMyPage) setShowMyPage(false);
+        if (showDashboard) setShowDashboard(false);
+      }, [showPerformance, showMyPage, showDashboard, currentUser]);
 
       // 파이프라인 자동 동기화 (오전 9시, 오후 5시)
       useEffect(() => {
@@ -2450,7 +2459,7 @@ const SETTLEMENT_BADGE_STYLE = {
       // 로그인 처리
       const handleLogin = () => {
         const account = userAccounts[loginId];
-        if (account && account.password === loginPw) {
+        if (account && account.password && account.password === loginPw) {
           if (isAccountLoginBlocked(account)) {
             setLoginError('비활성화된 계정입니다. 관리자에게 문의하세요.');
             return;
@@ -6431,7 +6440,7 @@ const SETTLEMENT_BADGE_STYLE = {
           updatePageTitle(title);
         };
         const canSettle = currentUser?.isAdmin || currentUser?.name === '한준엽';
-        const canMain = currentUser?.isAdmin || currentUser?.name === '이승우' || currentUser?.name === '황윤선';
+        const canMain = hasFullDataViewAccess(currentUser);
         const feedbackPending = feedbackList.filter(f => f.status !== 'resolved').length;
         const pendingExceptions = listPendingExceptions(ptSchedules).length;
         const screenshotPending = (ptSchedules || []).filter(p => p?.kaptVerified?.status === 'pending-admin-review').length;
@@ -6485,6 +6494,7 @@ const SETTLEMENT_BADGE_STYLE = {
         const reset = () => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); };
         const add = { key: 'add', primary: true, label: '일정추가', onClick: () => { setAddTypeModalDate(null); setShowAddTypeModal(true); } };
         const schedule = { key: 'schedule', label: '일정', icon: 'calendar', active: active === 'schedule', onClick: () => { reset(); updatePageTitle('일정'); } };
+        if (isGuestAccount(currentUser)) return [schedule, add];
         if (hasFullDataViewAccess(currentUser)) {
           return [
             { key: 'main', label: '메인', icon: 'home', active: active === 'main', onClick: () => { reset(); setShowDashboard(true); updatePageTitle('메인'); } },
@@ -6511,10 +6521,10 @@ const SETTLEMENT_BADGE_STYLE = {
         return {
           ...base,
           nav: [
-            { key: 'home', label: '홈', active: showStaffHome && !showProfilePage, onClick: goHome },
+            ...(isGuestAccount(currentUser) ? [] : [{ key: 'home', label: '홈', active: showStaffHome && !showProfilePage, onClick: goHome }]),
             { key: 'schedule', label: '내 일정', onClick: () => go('schedule', '일정') },
-            ...(currentUser?.canAccessPerformance !== false ? [{ key: 'perf', label: '내 실적', onClick: () => go('perf', '실적') }] : []),
-            { key: 'settle', label: '내 정산', onClick: () => { goHome(); setUseLegacyStaffHome(true); } },
+            ...(currentUser?.canAccessPerformance !== false && !isGuestAccount(currentUser) ? [{ key: 'perf', label: '내 실적', onClick: () => go('perf', '실적') }] : []),
+            ...(isGuestAccount(currentUser) ? [] : [{ key: 'settle', label: '내 정산', onClick: () => { goHome(); setUseLegacyStaffHome(true); } }]),
           ],
           adminNav: full ? base.adminNav : [],
         };
@@ -8070,12 +8080,12 @@ const SETTLEMENT_BADGE_STYLE = {
 
           {/* Main Tab - 3개 탭 + 톱니바퀴 */}
           <div style={{ marginBottom: '12px', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-            {(!currentUser || currentUser.isAdmin || currentUser.name === '이승우' || currentUser.name === '황윤선') && (
+            {(!currentUser || hasFullDataViewAccess(currentUser)) && (
             <button onClick={() => { setShowDashboard(true); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); updatePageTitle('메인'); }} style={{ padding: isMobile ? '10px 14px' : '12px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '14px', fontWeight: '700', cursor: 'pointer', background: showDashboard ? '#93c5fd' : '#e2e8f0', color: showDashboard ? '#1e40af' : '#64748b' }}>메인</button>
             )}
             <button onClick={() => { setShowDashboard(false); setShowPerformance(false); setShowMeetingView(false); setShowSalesView(false); setShowMyPage(false); updatePageTitle('일정'); }} style={{ padding: isMobile ? '10px 14px' : '12px 20px', borderRadius: '8px', border: 'none', fontSize: isMobile ? '12px' : '14px', fontWeight: '700', cursor: 'pointer', background: !showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage ? '#4b5563' : '#e2e8f0', color: !showDashboard && !showPerformance && !showMeetingView && !showSalesView && !showMyPage ? 'white' : '#64748b' }}>일정</button>
             {/* 실적관리 - 조현식(canAccessPerformance: false)만 제외 */}
-            {(!currentUser || currentUser.canAccessPerformance !== false) && (
+            {(!currentUser || (currentUser.canAccessPerformance !== false && !isGuestAccount(currentUser))) && (
               <button onClick={() => {
                 if (!isLoggedIn) {
                   setShowLoginModal(true);
@@ -9313,7 +9323,8 @@ const SETTLEMENT_BADGE_STYLE = {
                 workTypeOptions={allWorkTypes}
                 sidebar={hasFullDataViewAccess(currentUser)
                   ? shellSidebarProps('schedule', () => setUseLegacySchedule(true))
-                  : (sp => ({ ...sp, nav: sp.nav.map(n => ({ ...n, active: n.key === 'schedule' })), onOpenLegacy: () => setUseLegacySchedule(true) }))(staffSidebarProps())}
+                  : (sp => ({ ...sp, nav: sp.nav.map(n => ({ ...n, active: n.key === 'schedule' })), onOpenLegacy: isGuestAccount(currentUser) ? undefined : () => setUseLegacySchedule(true) }))(staffSidebarProps())}
+                hideResults={isGuestAccount(currentUser)}
                 initialWho={hasFullDataViewAccess(currentUser) ? 'all' : (assigneeList.includes(currentUser?.name) ? currentUser.name : 'all')}
                 initialView={scheduleInit.view || 'month'}
                 initialListFilter={scheduleInit.listFilter || 'upcoming'}
@@ -9323,7 +9334,7 @@ const SETTLEMENT_BADGE_STYLE = {
                 onQuickAdd={addQuickSchedule}
                 onUndoQuick={undoQuickSchedule}
                 me={currentUser?.name}
-                onOpen={handleEditClick}
+                onOpen={isGuestAccount(currentUser) ? (s => { if (s.type !== 'pt') handleEditClick(s); }) : handleEditClick}
                 briefDayCount={Math.min(7, Math.max(1, +morningBriefConfig.days || 2))}
                 onSendBrief={hasFullDataViewAccess(currentUser) ? sendMorningBrief : undefined}
                 autoSend={!!morningBriefConfig.autoSend}
@@ -13927,8 +13938,8 @@ tr.suppressed td.fname{color:#64748b;}
               todayStr={todayStr}
               holidayName={getHolidayByDateStr}
               tabs={mobileScheduleTabs()}
-              onOpen={handleEditClick}
-              onLegacy={() => setUseLegacyMobileSchedule(true)}
+              onOpen={isGuestAccount(currentUser) ? (s => { if (s.type !== 'pt') handleEditClick(s); }) : handleEditClick}
+              onLegacy={isGuestAccount(currentUser) ? undefined : () => setUseLegacyMobileSchedule(true)}
               topInset={showInstallBanner ? INSTALL_BANNER_H : 0}
             />
           )}
