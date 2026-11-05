@@ -14767,7 +14767,7 @@ tr.suppressed td.fname{color:#64748b;}
                             {!isConfirmed && (
                               <div style={{ padding: '10px 12px', background: '#fef3c7', borderRadius: 8, border: '1px solid #fde68a', fontSize: 11, color: '#92400e', lineHeight: 1.6, marginBottom: 10 }}>
                                 본인 {qKey} 실적을 [실적] 탭에서 확인 후 아래 버튼을 눌러주세요.<br />
-                                마감일: <b>{deadlineStr}</b> · 미확인 시 매일 2회 (09시·17시) 리마인드 발송
+                                마감일: <b>{deadlineStr}</b> · 미확인 시 분기 종료 다음 달 1~30일에 매일 09시 리마인드 발송
                               </div>
                             )}
                             {isConfirmed && myConfirmation.confirmedAt && (
